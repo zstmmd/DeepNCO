@@ -1,7 +1,7 @@
 from typing import List
 
 from entity.station import Station
-from point import Point
+from entity.point import Point
 
 
 class WarehouseMap:
@@ -9,7 +9,7 @@ class WarehouseMap:
 
     def __init__(self, warehouse_block_width: int, warehouse_block_length: int,
                  warehouse_block_height: int, warehouse_length_block_number: int,
-                 warehouse_width_block_number: int):
+                 warehouse_width_block_number: int,workstation_num,workstation_rows: int =3):
         """
         构造函数
         :param warehouse_block_width: 仓库块的宽度
@@ -23,15 +23,19 @@ class WarehouseMap:
         self.warehouse_block_height = warehouse_block_height
         self.warehouse_length_block_number = warehouse_length_block_number
         self.warehouse_width_block_number = warehouse_width_block_number
-
-        self.warehouse_width = (self.warehouse_block_width + 1) * warehouse_width_block_number + 1
+        self.workstation_rows = workstation_rows
+        # 更新：将仓库尺寸计算分为存储区和整个仓库
+        self.storage_area_width = (self.warehouse_block_width + 1) * warehouse_width_block_number + 1
         self.warehouse_length = (self.warehouse_block_length + 1) * warehouse_length_block_number + 1
+        self.warehouse_width = self.storage_area_width + self.workstation_rows  # 总宽度 = 存储区宽度 + 工作站行数
         self.warehouse_node_number = self.warehouse_width * self.warehouse_length
+
 
         # 初始化节点列表
         self.point_list: List[Point] = []  #所有点的列表
         self.pod_list: List[Point] = []    #所有货架点的列表
         self.node_distance_matrix = None
+        self.workstation_nums=workstation_num
         self.workStation_list: List[Station] = []  #所有工作站的列表
         self.workPoint: List[Point] = []  #所有工作站对应的点的列表
         self._initialize_nodes()
@@ -39,21 +43,27 @@ class WarehouseMap:
 
     def _initialize_nodes(self):
         """初始化节点列表"""
+        workstation_x_coords = set()
+        if self.workstation_nums > 0:
+            if self.workstation_nums == 1:
+                # 如果只有一个工作站，放在仓库中间
+                workstation_x_coords.add((self.warehouse_length - 1) // 2)
+            else:
+                # 均匀分布多个工作站，覆盖整个仓库宽度
+                spacing = (self.warehouse_length - 1) / (self.workstation_nums - 1)
+                for k in range(self.workstation_nums):
+                    workstation_x_coords.add(round(k * spacing))
         for i in range(self.warehouse_node_number):
             x = i % self.warehouse_length
             y = i // self.warehouse_length
 
             # 确定节点类型
-            if x == 0 and y == 0:
-                # picker in
-                node_type = 0
-            elif x == 0 and y == self.warehouse_width - 1:
-                # picker out
-                node_type = 1
+            if y == 0 and x in workstation_x_coords:
+                node_type = 4   # 工作站
             elif y % (self.warehouse_block_width + 1) == 0 or x % (self.warehouse_block_length + 1) == 0:
                 # aisle
                 node_type = 2
-            else:
+            elif y>= self.workstation_rows:
                 # pod
                 node_type = 3
 
@@ -62,7 +72,9 @@ class WarehouseMap:
             # 将type=3的节点加入pod_list
             if node_type == 3:
                 self.pod_list.append(point)
-
+                # 新增：将工作站节点加入workPoint列表
+            elif node_type == 4:
+                self.workPoint.append(point)
             self.point_list.append(point)
 
     def _initialize_node_distance_matrix(self):

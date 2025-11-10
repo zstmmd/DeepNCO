@@ -1,6 +1,9 @@
 from typing import List
-from SKUs import SKUs
-from point import Point
+
+from entity.SKUs import SKUs
+
+from entity.point import Point
+
 from dataclasses import dataclass
 @dataclass
 class Tote:
@@ -13,4 +16,4 @@ class Tote:
         self.store_point: Point = None  # 料箱的存放坐标
         self.layer: int = 0  # 层高
         self.status: int = 0  # 料箱状态，0表示空闲，1表示使用中
-
+        self.sku_quantity_map={} # SKU id到数量的映射
