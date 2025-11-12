@@ -14,7 +14,8 @@ class OFSConfig:
     PACKING_TIME = 5.0  # 上下存储单元时间
     LIFTING_TIME = 2.0  # 伸缩货叉时间
     ROBOT_CAPACITY = 8  # 机器人容量tote(料箱)数
-
+    REMOVE_TOP_TOTE_TIME = 2.0  # 搬运顶层tote一次的时间
+    PLACE_TOTE_TIME = 4.0  # 放置tote一次的时间
     # 工作站配置
     PICKING_TIME = 3.0  # 单个SKU拣选时间
 

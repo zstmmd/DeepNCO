@@ -14,6 +14,9 @@ class Tote:
         self.skus_list: List[SKUs] = []   # 料箱包括的SKUs
         self.capacity: List[int] = []  # 料箱中每个SKU的数量
         self.store_point: Point = None  # 料箱的存放坐标
+        self.bin_statck: List[int] = []  # 料箱id的堆叠顺序,List[0]是底部, List[-1]是顶部
+        self.max_layer:int=0 #所在点的最大层高
+        self.is_top:bool=False # 是否为顶部料箱
         self.layer: int = 0  # 层高
         self.status: int = 0  # 料箱状态，0表示空闲，1表示使用中
         self.sku_quantity_map={} # SKU id到数量的映射

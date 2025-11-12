@@ -1,4 +1,6 @@
 from typing import List
+
+from entity.point import Point
 from entity.warehouseMap import WarehouseMap
 
 from entity.order import Order
@@ -27,6 +29,10 @@ class OFSProblemDTO:
         self.skus_list: List[SKUs] = []  # SKUs信息
         self.w: int = 0  # 机器人起点数量
         self.n: int = 0  # 订单点总数
+
+        self.task_num: int = 0  # 可执行任务总数
         self.id_to_tote={} # 料箱id到料箱对象的映射
         self.id_to_sku={} # sku id到sku对象的映射
+        self.id_to_order={} # 订单id到订单对象的映射
+        self.need_points: List[Point] = []  # 搬运层需要经过的点的列表
         self.node_num: int = 0  # 搬运层需要经过的点总数

@@ -38,6 +38,7 @@ class WarehouseMap:
         self.workstation_nums=workstation_num
         self.workStation_list: List[Station] = []  #所有工作站的列表
         self.workPoint: List[Point] = []  #所有工作站对应的点的列表
+        self.id_to_Point = {}  # 点id到点对象的映射
         self._initialize_nodes()
         self._initialize_node_distance_matrix()
 
@@ -76,6 +77,7 @@ class WarehouseMap:
             elif node_type == 4:
                 self.workPoint.append(point)
             self.point_list.append(point)
+            self.id_to_Point={i: point for i, point in enumerate(self.point_list)}
 
     def _initialize_node_distance_matrix(self):
         """初始化节点距离矩阵"""

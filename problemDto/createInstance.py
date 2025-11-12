@@ -102,7 +102,7 @@ class CreateOFSProblem:
             num_sku_types=skus_num
         )
         ofs_problem_dto.order_list = orders
-
+        ofs_problem_dto.id_to_order={order.order_id:order for order in orders}
         # ----------------------------------------------------
         # 4.5. 创建 batchnum个MainBatch (大批次)
         # ----------------------------------------------------
@@ -200,7 +200,7 @@ class CreateOFSProblem:
                 for sku_in_tote in tote.skus_list:
                     sku_in_tote.storeToteList.append(tote.id)
                     sku_in_tote.storeQuantityList.append(tote.sku_quantity_map[sku_in_tote.id])
-                    sku_in_tote.tote_quantity_map={tote.id:tote.sku_quantity_map[sku_in_tote.id]}
+                    sku_in_tote.tote_quantity_map.update({tote.id:tote.sku_quantity_map[sku_in_tote.id]})
                 tote.store_point = point
                 tote.layer = layer
 
@@ -211,6 +211,14 @@ class CreateOFSProblem:
                 # 如果当前堆叠点已满，从可用点中移除
             if point in available_points and len(bin_stacks[point.idx]) >= map_.warehouse_block_height:
                 available_points.remove(point)
+        # 更新所有Tote的堆叠、最大层高和顶部状态
+        for stack in bin_stacks.values():
+            stack_ids = [t.id for t in stack]
+            max_layer_for_stack = len(stack) - 1
+            for i, tote in enumerate(stack):
+                tote.bin_statck = stack_ids
+                tote.max_layer = max_layer_for_stack
+                tote.is_top = (i == max_layer_for_stack)
 
          # 新增：检查是否有SKU未被分配
         if unassigned_skus:
@@ -243,9 +251,43 @@ class CreateOFSProblem:
             unique_ids_in_order = set(order.order_product_id_list)
             order.unique_sku_list = [sku_map[sku_id] for sku_id in unique_ids_in_order]
             unique_sku_ids.update(order.order_product_id_list)
+        # 新增：更新所有order需要的sku的存储点point列表和数量
+        sku_storepoint_list=set()
+        for order in ofs_problem_dto.order_list:
+            point_map = {}
+            order.point_sku_quantity = {}
 
+            # 遍历订单所需的所有唯一SKU
+            for sku in order.unique_sku_list:
+                # 遍历存放该SKU的所有tote
+                for tote_id in sku.storeToteList:
+                    tote = ofs_problem_dto.id_to_tote.get(tote_id)
+                    if tote and tote.store_point:
+                        point = tote.store_point
+                        point_idx = point.idx
+
+                        # 获取该tote中此sku的数量
+                        quantity_in_tote = tote.sku_quantity_map.get(sku.id, 0)
+                        if quantity_in_tote == 0:
+                            continue
+
+                        # 如果是第一次遇到这个存储点，则记录它
+                        if point_idx not in point_map:
+                            point_map[point_idx] = point
+                            sku_storepoint_list.add(point)
+                        # 初始化该点的SKU数量字典
+                        if point_idx not in order.point_sku_quantity:
+                            order.point_sku_quantity[point_idx] = {}
+
+                        # 累加该点上此SKU的总数量（因为同一位置可能有多层tote）
+                        order.point_sku_quantity[point_idx][sku.id] = \
+                            order.point_sku_quantity[point_idx].get(sku.id, 0) + quantity_in_tote
+
+            # 从point_map中生成不重复的Point对象列表
+            order.sku_storage_points = list(point_map.values())
+        ofs_problem_dto.need_points = list(sku_storepoint_list)
         ofs_problem_dto.n = len(unique_sku_ids)
-        ofs_problem_dto.node_num = map_.warehouse_node_number
+        ofs_problem_dto.node_num = len(ofs_problem_dto.need_points)
 
         return ofs_problem_dto
 
@@ -303,7 +345,7 @@ if __name__ == '__main__':
         warehouse_width_block_number=5,
         robot_num=3,
         batch_num=3,
-        order_num=20,
+        order_num=10,
         skus_num=50,
         workstation_rows=3,
         tote_num=200,

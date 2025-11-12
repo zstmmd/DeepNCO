@@ -12,7 +12,6 @@ from typing import Dict, List
 class TaskBatch:
     """
     “机器人可执行的子任务”。
-    这是连接所有决策的核心类，也是算法要优化的主要对象。
     """
     def __init__(self, task_id: int, main_batch: MainBatch):
         self.id = task_id
