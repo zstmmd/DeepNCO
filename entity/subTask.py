@@ -17,7 +17,7 @@ class SubTask:
 
     # --- 后续阶段决策结果 ---
     assigned_station_id: int = -1  # SP2 决策：分配给哪个工作站
-    station_sequence_id: int = -1  # SP2 决策：在工作站的执行顺位
+    station_sequence_rank: int = -1  # SP2 决策：在工作站的执行顺位
 
     # 预计开始处理时间 (用于计算 Makespan)
     estimated_process_start_time: float = 0.0
