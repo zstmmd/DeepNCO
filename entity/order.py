@@ -13,8 +13,9 @@ class Order:
         self.order_product_id_list: List[int] = []  # 订单SKUs的id列表
         self.order_in_time: datetime = None  # 订单入库时间
         self.order_out_time: datetime = None  # 订单出库时间
-        self.batch_id: str = ""  # 订单所属批次ID
+
         self.unique_sku_list:List[SKUs]=[] # 订单中不同SKU的列表
+
         self.sku_storage_points: List[Point] = []  # 存储点Point对象的列表
         self.point_sku_quantity: Dict[int, Dict[int, int]] = {} # {point_idx: {sku_id: quantity}}
         self.status: str = ""  # 订单状态 (例如: "pending", "shipped", "delivered", "canceled")

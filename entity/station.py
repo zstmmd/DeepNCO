@@ -16,5 +16,6 @@ class Station:
         self.picking_station_buffer = OFSConfig.DEFAULT_PICKING_STATION_BUFFER  # 工作台的分拨墙的上限
         self.task_queue:List['TaskBatch'] = []  # 工作台的任务序列 (用于决策"子任务排序")
 
-
+    def __repr__(self):
+        return f"Station(id={self.id})"
 

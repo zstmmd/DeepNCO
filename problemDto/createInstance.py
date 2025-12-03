@@ -1,8 +1,9 @@
 import random
-from typing import List, Dict, Set
+from typing import List, Dict, Set, Tuple
 from datetime import datetime, timedelta
 
 import config.ofs_config
+from entity.stack import Stack
 
 from entity.warehouseMap import WarehouseMap
 from entity.robot import Robot
@@ -11,24 +12,80 @@ from entity.SKUs import SKUs
 from entity.station import Station
 from entity.tote import Tote
 from entity.point import Point
-from entity.MainBatch import MainBatch
+
 from problemDto.ofs_problem_dto import OFSProblemDTO
 from config.ofs_config import OFSConfig
 
 
 class CreateOFSProblem:
+    @staticmethod
+    def generate_problem_by_scale(scale: str = "SMALL", seed: int = OFSConfig.RANDOM_SEED) -> OFSProblemDTO:
+        """
+        根据规模生成标准算例
+        :param scale: "SMALL", "MEDIUM", "LARGE"
+        :param seed: 随机种子，用于复现
+        """
+        # --- 规模参数配置字典 ---
+        # 格式: {
+        #   "map_size": (len_blocks, width_blocks),
+        #   "resources": (robot_num, station_num, tote_num),
+        #   "data": (order_num, sku_num),
+        #   "bom_complexity": (max_types, max_qty) -> 影响订单BOM的复杂度
+        # }
+        configs = {
+            "SMALL": {
+                "map_size": (4, 4),  # 较小的地图
+                "resources": (3, 2, 80),  # 3个机器人, 2个工作站, 80个料箱
+                "data": (2, 60),  # 3个BOM, 30种SKU
+                "bom_complexity": (20, 5)  # 每个订单最多10种SKU，每种最多5个
+            },
+            "MEDIUM": {
+                "map_size": (8, 6),
+                "resources": (8, 4, 300),  # 8个机器人, 4个工作站, 300个料箱
+                "data": (10, 100),  # 10个BOM, 50种SKU
+                "bom_complexity": (40, 10)
+            },
+            "LARGE": {
+                "map_size": (12, 10),
+                "resources": (20, 8, 1000),  # 20个机器人, 8个工作站, 1000个料箱
+                "data": (20, 200),  # 20个bom, 100种SKU
+                "bom_complexity": (60, 20)
+            }
+        }
 
+        cfg = configs.get(scale.upper(), configs["SMALL"])
+
+        map_L, map_W = cfg["map_size"]
+        rob_n, st_n, tote_n = cfg["resources"]
+        ord_n, sku_n = cfg["data"]
+        bom_types, bom_qty = cfg["bom_complexity"]
+
+        print(f">>> 生成 [{scale}] 规模实例 | Seed: {seed}")
+        print(f"    Map: {map_L}x{map_W} blocks | Robots: {rob_n} | Stations: {st_n}")
+        print(f"    Orders: {ord_n} | SKUs: {sku_n} | Totes: {tote_n}")
+
+        return CreateOFSProblem.create_ofs_problem(
+            warehouse_length_block_number=map_L,
+            warehouse_width_block_number=map_W,
+            robot_num=rob_n,
+            order_num=ord_n,
+            skus_num=sku_n,
+            tote_num=tote_n,
+            station_num=st_n,
+            workstation_rows=3,  # 默认参数
+            bom_config=(bom_types, bom_qty)
+        )
     @staticmethod
     def create_ofs_problem(
             warehouse_length_block_number: int,
             warehouse_width_block_number: int,
             robot_num: int,
-            batch_num: int,
             order_num: int,
             skus_num: int,
             tote_num: int,
             station_num: int,
-            workstation_rows: int
+            workstation_rows: int,
+            bom_config: Tuple[int, int] = (10, 5)  # (max_types, max_qty)
     ) -> OFSProblemDTO:
         """
         构造并返回一个 OFSProblemDTO 实例。
@@ -95,56 +152,28 @@ class CreateOFSProblem:
 
         # 4. 创建订单
         ofs_problem_dto.order_num = order_num
+        max_sku_types, max_sku_qty = bom_config
+        # orders = CreateOFSProblem._generate_orders(
+        #     max_sku_types_per_order=10,
+        #     max_quantity_per_sku=5,
+        #     num_orders=order_num,
+        #     num_sku_types=skus_num
+        # )
         orders = CreateOFSProblem._generate_orders(
-            max_sku_types_per_order=3,
-            max_quantity_per_sku=5,
+            max_sku_types_per_order=max_sku_types,
+            max_quantity_per_sku=max_sku_qty,
             num_orders=order_num,
-            num_sku_types=skus_num
+            skus_list=skus_list_obj  # 传入实体列表以便选择
         )
         ofs_problem_dto.order_list = orders
         ofs_problem_dto.id_to_order={order.order_id:order for order in orders}
         # ----------------------------------------------------
-        # 4.5. 创建 batchnum个MainBatch (大批次)
-        # ----------------------------------------------------
-        main_batches: List[MainBatch] = []
-
-        if batch_num > 0 and orders:
-            random.shuffle(orders)  # 随机打乱订单列表
-
-            # 将订单尽可能均匀地分配到每个批次中
-            orders_per_batch = len(orders) // batch_num
-            remainder = len(orders) % batch_num
-            current_order_idx = 0
-
-            for i in range(batch_num):
-                # 为当前批次确定订单数量
-                num_in_batch = orders_per_batch + (1 if i < remainder else 0)
-
-                if num_in_batch == 0:
-                    continue  # 如果订单数少于批次数，则不创建空批次
-
-                # 获取分配给该批次的订单
-                batch_orders = orders[current_order_idx: current_order_idx + num_in_batch]
-                current_order_idx += num_in_batch
-                main_batch_id = f"MAIN_BATCH_{i}"
-                # 创建并配置 MainBatch 实例
-                main_batch = MainBatch(f"MAIN_BATCH_{i}",batch_orders)
-
-                for order in batch_orders:
-                    order.batch_id = main_batch_id
-                # 设置一个随机的齐套窗口时间
-                main_batch.kit_delivery_window=OFSConfig.KIT_DELIVERY_WINDOW
-                main_batches.append(main_batch)
-
-
-        ofs_problem_dto.main_batch_list = main_batches
-
-        ofs_problem_dto.main_batch = main_batch
 
         # 5. 创建料箱(Totes)
         ofs_problem_dto.tote_num = tote_num
         tote_list: List[Tote] = []
-
+        stack_list: List[Stack] = []
+        point_to_stack: Dict[int, Stack] = {}
         available_points: List[Point] = list(map_.pod_list)
         if not available_points:
             raise ValueError("地图中没有 'pod' (type 3) 节点，无法放置料箱。")
@@ -153,84 +182,71 @@ class CreateOFSProblem:
         # 结构: Dict[point_idx, List[Tote]]
         # List[0] 是 layer 0 (底部), List[-1] 是顶部
         bin_stacks: Dict[int, List[Tote]] = {}
-
+        # 初始化所有可用存储点的 Stack 对象
+        for point in available_points:
+            stack = Stack(
+                stack_id=point.idx,
+                store_point=point,
+                max_height=map_.warehouse_block_height
+            )
+            stack_list.append(stack)
+            point_to_stack[point.idx] = stack
+        # 填充料箱逻辑
+        # 我们可以遍历 Stack 列表来填充，而不是原来的 while 循环
+        # 为了随机性，可以 shuffle stack_list
+        random.shuffle(stack_list)
         current_tote_id = 0
-        while current_tote_id < tote_num and available_points:
-            point = random.choice(available_points)
+        for stack in stack_list:
+            if current_tote_id >= tote_num: break
 
-            # 随机决定在此处堆叠几层
-            stack_height = random.randint(1, map_.warehouse_block_height)
-
-            if point.idx not in bin_stacks:
-                bin_stacks[point.idx] = []
+            # 随机决定该堆垛的高度 (1 ~ max)
+            stack_height = random.randint(1, stack.max_height)
 
             for layer in range(stack_height):
                 if current_tote_id >= tote_num: break
-                if len(bin_stacks[point.idx]) >= map_.warehouse_block_height:
-                    break
-                tote = Tote()
-                tote.id = current_tote_id
 
-                # 完善的库存填充逻辑
+                tote = Tote(current_tote_id)
+
+
+                # --- SKU 填充逻辑 (保持原逻辑不变) ---
                 num_skus_in_tote = random.randint(1, 2)
                 tote_skus: List[SKUs] = []
-
-                # 优先从 unassigned_skus 中选择 SKU
                 for _ in range(num_skus_in_tote):
                     if unassigned_skus:
                         sku_to_add = unassigned_skus.pop()
                         tote_skus.append(sku_to_add)
                     else:
-                        # 所有SKU都已分配过，从全部SKU中随机选择一个（确保不与当前tote中已有的SKU重复）
                         available_for_tote = [s for s in skus_list_obj if s not in tote_skus]
                         if available_for_tote:
-                            sku_to_add = random.choice(available_for_tote)
-                            tote_skus.append(sku_to_add)
+                            tote_skus.append(random.choice(available_for_tote))
                         else:
-                            break  # 没有更多不重复的SKU可选了
-
-                if not tote_skus:
-                    continue  # 如果未能为tote分配任何SKU，则不创建此tote
+                            break
+                if not tote_skus: continue
 
                 tote.skus_list = tote_skus
                 tote.capacity = [random.randint(10, 50) for _ in tote_skus]
-                #tote的sku_quantity_map
-                tote.sku_quantity_map={sku.id:cap for sku,cap in zip(tote_skus,tote.capacity)}
-                # 更新SKU的storeToteList属性
+                tote.sku_quantity_map = {sku.id: cap for sku, cap in zip(tote_skus, tote.capacity)}
+
+                # 更新SKU的反向索引
                 for sku_in_tote in tote.skus_list:
                     sku_in_tote.storeToteList.append(tote.id)
                     sku_in_tote.storeQuantityList.append(tote.sku_quantity_map[sku_in_tote.id])
-                    sku_in_tote.tote_quantity_map.update({tote.id:tote.sku_quantity_map[sku_in_tote.id]})
-                tote.store_point = point
-                tote.layer = layer
+                    sku_in_tote.tote_quantity_map.update({tote.id: tote.sku_quantity_map[sku_in_tote.id]})
 
-                bin_stacks[point.idx].append(tote)
+                # --- 关键修改：将 Tote 加入 Stack ---
+                stack.add_tote(tote)  # 这个方法会自动设置 tote.store_point, layer, is_top
+
                 tote_list.append(tote)
                 current_tote_id += 1
 
-                # 如果当前堆叠点已满，从可用点中移除
-            if point in available_points and len(bin_stacks[point.idx]) >= map_.warehouse_block_height:
-                available_points.remove(point)
-        # 更新所有Tote的堆叠、最大层高和顶部状态
-        for stack in bin_stacks.values():
-            stack_ids = [t.id for t in stack]
-            max_layer_for_stack = len(stack) - 1
-            for i, tote in enumerate(stack):
-                tote.bin_statck = stack_ids
-                tote.max_layer = max_layer_for_stack
-                tote.is_top = (i == max_layer_for_stack)
-
-         # 新增：检查是否有SKU未被分配
-        if unassigned_skus:
-            print(f"警告: 料箱数量不足，有 {len(unassigned_skus)} 个SKU未能存放入任何料箱。")
-
-        if current_tote_id < tote_num:
-            print(f"警告: 存储点不足或分配提前终止。只创建了 {current_tote_id} / {tote_num} 个料箱。")
+        # 过滤掉空的 Stack (如果没有生成)
+        final_stack_list = [s for s in stack_list if s.current_height > 0]
 
         ofs_problem_dto.tote_list = tote_list
-        #id2tote映射
-        ofs_problem_dto.id_to_tote={tote.id:tote for tote in tote_list}
-        # 6. 创建工作站
+        ofs_problem_dto.id_to_tote = {tote.id: tote for tote in tote_list}
+        ofs_problem_dto.stack_list = final_stack_list
+        ofs_problem_dto.point_to_stack = point_to_stack
+         # 6. 创建工作站
 
         ofs_problem_dto.station_num = station_num
         station_list: List[Station] = []
@@ -292,42 +308,60 @@ class CreateOFSProblem:
         return ofs_problem_dto
 
     @staticmethod
-    def _generate_orders(max_sku_types_per_order: int,
-                         max_quantity_per_sku: int,
-                         num_orders: int,
-                         num_sku_types: int) -> List[Order]:
+    def _generate_orders(
+            max_sku_types_per_order: int,
+            max_quantity_per_sku: int,
+            num_orders: int,
+            skus_list: List[SKUs]
+    ) -> List[Order]:
         """
-        在 Python 中实现的订单生成器
-
+        生成订单 (BOM)
+        :param skus_list: 具体的SKU对象列表，用于随机采样
         """
-
         orders: List[Order] = []
 
-        sku_types = list(range(num_sku_types))  # [0, 1, ..., skus_num-1]
+        # 权重分布：假设 ID 越小的 SKU 越热门 (80/20原则模拟)
+        # 这里简单模拟：前20%的SKU被选中的概率大一点
+        hot_skus_count = max(1, int(len(skus_list) * 0.2))
+        hot_skus = skus_list[:hot_skus_count]
+        cold_skus = skus_list[hot_skus_count:]
 
         for i in range(num_orders):
             order = Order(i)
 
+            # 生成时间
             base_time = datetime.now()
-            random_minutes = random.randint(0, 1440)
+            random_minutes = random.randint(0, 480)  # 8小时内
             order.order_in_time = base_time - timedelta(minutes=random_minutes)
 
-            sku_types_in_order = random.randint(1, max_sku_types_per_order)
+            # 确定 BOM 结构 (SKU 种类数)
+            # 并非均匀分布，倾向于较小的订单
+            num_types = random.randint(max_sku_types_per_order-5, max_sku_types_per_order)
 
-            random.shuffle(sku_types)
-            skus_for_this_order = sku_types[:sku_types_in_order]
+            # 选品逻辑：70%概率混入热门品
+            selected_skus = []
+            while len(selected_skus) < num_types:
+                if random.random() < 0.7 and hot_skus:
+                    s = random.choice(hot_skus)
+                elif cold_skus:
+                    s = random.choice(cold_skus)
+                else:
+                    s = random.choice(skus_list)
 
-            order_product_id_list: List[int] = []
+                if s not in selected_skus:
+                    selected_skus.append(s)
 
-            total_skus = 0
+            # 确定数量并生成 ID 列表
+            order_product_id_list = []
+            total_qty = 0
 
-            for sku_id in skus_for_this_order:
-                quantity = random.randint(1, max_quantity_per_sku)
-                order_product_id_list.extend([sku_id] * quantity)
-                total_skus += quantity
+            for sku in selected_skus:
+                qty = random.randint(1, max_quantity_per_sku)
+                order_product_id_list.extend([sku.id] * qty)
+                total_qty += qty
 
             order.order_product_id_list = order_product_id_list
-            order.order_skus_number = total_skus
+            order.order_skus_number = total_qty
             order.status = "pending"
 
             orders.append(order)
@@ -335,34 +369,31 @@ class CreateOFSProblem:
         return orders
 
 
-# --- 如何使用 (示例) ---
 if __name__ == '__main__':
 
-    print("开始创建 OFS 问题实例...")
+    # 测试生成不同规模的实例
+    scales = ["SMALL", "MEDIUM"]
 
-    problem_dto = CreateOFSProblem.create_ofs_problem(
-        warehouse_length_block_number=5,
-        warehouse_width_block_number=5,
-        robot_num=3,
-        batch_num=3,
-        order_num=10,
-        skus_num=50,
-        workstation_rows=3,
-        tote_num=200,
-        station_num=2
-    )
+    for scale in scales:
+        print(f"\n{'=' * 20} Testing {scale} Scale {'=' * 20}")
+        try:
+            dto = CreateOFSProblem.generate_problem_by_scale(scale)
 
-    print("\n--- 问题实例创建完成 ---")
-    print(f"地图尺寸 (LxW): {problem_dto.map.warehouse_length} x {problem_dto.map.warehouse_width}")
-    print(f"机器人数量: {len(problem_dto.robot_list)}")
-    print(f"订单数量: {len(problem_dto.order_list)}")
-    print(f"料箱数量 (Totes): {len(problem_dto.tote_list)}")
-    print(f"工作站数量: {len(problem_dto.station_list)}")
+            print(f"Success! Generated {scale} instance.")
+            print(f"Order 0 BOM sample:")
+            if dto.order_list:
+                o0 = dto.order_list[0]
+                print(f"  ID: {o0.order_id}, Total Items: {o0.order_skus_number}")
+                print(f"  SKU IDs: {o0.order_product_id_list}")
 
-    # --- 验证 MainBatch 是否已创建 ---
-    if hasattr(problem_dto, 'main_batch'):
-        print(f"\nMainBatch ID: {problem_dto.main_batch.id}")
-        print(f"  > 包含订单数量: {len(problem_dto.main_batch.orders)}")
-        print(f"  > 齐套窗口 (开始): {problem_dto.main_batch.kit_delivery_window_start}")  #
-    else:
-        print("\n错误: MainBatch 未被创建。")
+            # 验证堆垛
+            print(f"Total Stacks: {len(dto.stack_list)}")
+            if dto.stack_list:
+                s0 = dto.stack_list[0]
+                print(f"  Stack {s0.stack_id} Height: {s0.current_height}/{s0.max_height}")
+
+        except Exception as e:
+            print(f"Error generating {scale}: {e}")
+            import traceback
+
+            traceback.print_exc()

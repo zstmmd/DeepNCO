@@ -9,7 +9,7 @@ class OFSConfig:
     WAREHOUSE_BLOCK_HEIGHT = 10
 
     # 机器人配置
-    ROBOT_CAPACITY = 1  # 机器人载重
+
     ROBOT_SPEED = 1.0  # 机器人速度
     PACKING_TIME = 5.0  # 上下存储单元时间
     LIFTING_TIME = 2.0  # 伸缩货叉时间
