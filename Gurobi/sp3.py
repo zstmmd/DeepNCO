@@ -1,661 +1,430 @@
-
-
-import numpy as np
-from typing import List, Dict, Optional, Tuple, Set
-from entity.tote import Tote
-
-
-class SP3Variable:
-    """
-    SP3 (料箱命中) 的决策变量
-    
-    决策: 为每个任务选择哪些料箱来满足SKU需求
-    """
-    
-    def __init__(self, I_size: int, K_size: int, B_size: int):
-        """
-        Args:
-            I_size: 料箱数量
-            K_size: 机器人数量
-            B_size: 子任务数量
-        """
-        # 主要决策变量
-        self.x_ikb = np.zeros((I_size, K_size, B_size), dtype=int)  # bin i selected by robot k for task b
-        
-        # 辅助信息
-        self.bin_index_map: Dict[int, int] = {}  # bin_id → index
-        self.robot_index_map: Dict[int, int] = {}  # robot_id → index
-        
-        # 解的质量指标
-        self.objective_value: float = 0.0
-        self.is_feasible: bool = False
-        self.total_bins_used: int = 0
-        
-        # 规模信息
-        self.I_size = I_size
-        self.K_size = K_size
-        self.B_size = B_size
-        
-        # 统计信息
-        self.robot_bin_loads: List[int] = [0] * K_size  # 每个机器人搬运的料箱数
-        self.task_bin_counts: List[int] = [0] * B_size  # 每个任务使用的料箱数
-        self.bin_usage: List[int] = [0] * I_size  # 每个料箱被使用次数
-
-    def set_solution(self, 
-                     bins: List[Tote],
-                     robots: List,
-                     x_vars,
-                     obj_value: float,
-                     active_tasks: List[int]):
-        """
-        从 Gurobi 求解结果加载变量
-        
-        Args:
-            bins: 料箱列表
-            robots: 机器人列表
-            x_vars: Gurobi x[i,k,b] 变量
-            obj_value: 目标函数值
-            active_tasks: 激活的任务列表
-        """
-        # 建立索引映射
-        self.bin_index_map = {bins[i].id: i for i in range(len(bins))}
-        self.robot_index_map = {robots[k].robot_id: k for k in range(len(robots))}
-        
-        # 提取 x_ikb
-        for i in range(self.I_size):
-            for k in range(self.K_size):
-                for b in active_tasks:
-                    if b < self.B_size:
-                        try:
-                            self.x_ikb[i, k, b] = int(x_vars[i, k, b].X > 0.5)
-                        except:
-                            self.x_ikb[i, k, b] = 0
-        
-        # 设置解的质量
-        self.objective_value = obj_value
-        self.is_feasible = True
-        self.total_bins_used = int(np.sum(self.x_ikb))
-        
-        # 计算统计信息
-        self._compute_statistics(active_tasks)
-
-    def _compute_statistics(self, active_tasks: List[int]):
-        """计算统计信息"""
-        # 机器人料箱负载
-        for k in range(self.K_size):
-            self.robot_bin_loads[k] = int(np.sum(self.x_ikb[:, k, :]))
-        
-        # 任务料箱数量
-        for b in active_tasks:
-            if b < self.B_size:
-                self.task_bin_counts[b] = int(np.sum(self.x_ikb[:, :, b]))
-        
-        # 料箱使用频率
-        for i in range(self.I_size):
-            self.bin_usage[i] = int(np.sum(self.x_ikb[i, :, :]))
-
-    def get_selected_bins(self, robot_id: int, task_id: int) -> List[int]:
-        """
-        获取机器人k为任务b选择的料箱列表
-        
-        Args:
-            robot_id: 机器人ID (实际ID，非索引)
-            task_id: 任务ID
-            
-        Returns:
-            料箱索引列表
-        """
-        k_idx = self.robot_index_map.get(robot_id, robot_id)
-        if task_id >= self.B_size or k_idx >= self.K_size:
-            return []
-        
-        return [i for i in range(self.I_size) if self.x_ikb[i, k_idx, task_id] > 0]
-
-    def get_robot_workload(self, robot_id: int) -> int:
-        """
-        获取机器人总共需要搬运的料箱数
-        
-        Args:
-            robot_id: 机器人ID
-            
-        Returns:
-            料箱总数
-        """
-        k_idx = self.robot_index_map.get(robot_id, robot_id)
-        if k_idx >= self.K_size:
-            return 0
-        return self.robot_bin_loads[k_idx]
-
-    def get_task_bins(self, task_id: int) -> List[Tuple[int, int]]:
-        """
-        获取任务使用的所有料箱及其对应的机器人
-        
-        Args:
-            task_id: 任务ID
-            
-        Returns:
-            [(bin_index, robot_index), ...]
-        """
-        if task_id >= self.B_size:
-            return []
-        
-        result = []
-        for i in range(self.I_size):
-            for k in range(self.K_size):
-                if self.x_ikb[i, k, task_id] > 0:
-                    result.append((i, k))
-        return result
-
-    def get_bin_actual_id(self, bin_index: int) -> Optional[int]:
-        """
-        根据索引获取料箱的实际ID
-        
-        Args:
-            bin_index: 料箱索引
-            
-        Returns:
-            料箱实际ID
-        """
-        for bin_id, idx in self.bin_index_map.items():
-            if idx == bin_index:
-                return bin_id
-        return None
-
-    def validate_robot_capacity(self, robot_max_capacity: int) -> Dict[int, bool]:
-        """
-        验证机器人是否超载
-        
-        Args:
-            robot_max_capacity: 机器人最大堆叠容量
-            
-        Returns:
-            {robot_id: is_valid}
-        """
-        validation = {}
-        for robot_id, k_idx in self.robot_index_map.items():
-            workload = self.robot_bin_loads[k_idx]
-            validation[robot_id] = workload <= robot_max_capacity
-        return validation
-
-    def get_most_used_bins(self, top_n: int = 10) -> List[Tuple[int, int]]:
-        """
-        获取使用最频繁的料箱
-        
-        Args:
-            top_n: 返回前N个
-            
-        Returns:
-            [(bin_index, usage_count), ...] 按使用次数降序
-        """
-        bin_usage_list = [(i, self.bin_usage[i]) for i in range(self.I_size) if self.bin_usage[i] > 0]
-        bin_usage_list.sort(key=lambda x: x[1], reverse=True)
-        return bin_usage_list[:top_n]
-
-    def summary(self) -> str:
-        """返回变量摘要信息"""
-        avg_robot_load = np.mean(self.robot_bin_loads) if self.K_size > 0 else 0.0
-        max_robot_load = np.max(self.robot_bin_loads) if self.K_size > 0 else 0
-        
-        active_bins = sum(1 for u in self.bin_usage if u > 0)
-        
-        summary_str = f"""
-SP3Variable Summary:
-====================
-Total Bins Used: {self.total_bins_used}
-Active Bins (at least once): {active_bins}/{self.I_size}
-Objective Value: {self.objective_value:.2f}
-Feasible: {self.is_feasible}
-
-Robot Statistics:
------------------
-"""
-        for k in range(self.K_size):
-            summary_str += f"  Robot {k}: {self.robot_bin_loads[k]} bins\n"
-        
-        summary_str += f"\nAverage Robot Load: {avg_robot_load:.2f} bins\n"
-        summary_str += f"Max Robot Load: {max_robot_load} bins\n"
-        
-        return summary_str
-
-    def export_selection(self) -> Dict[str, any]:
-        """
-        导出料箱选择结果为字典格式
-        
-        Returns:
-            包含所有选择信息的字典
-        """
-        selection_dict = {
-            'total_bins_used': self.total_bins_used,
-            'objective': self.objective_value,
-            'robots': []
-        }
-        
-        for k in range(self.K_size):
-            robot_info = {
-                'robot_id': k,
-                'bin_count': self.robot_bin_loads[k],
-                'tasks': []
-            }
-            
-            for b in range(self.B_size):
-                bins_for_task = self.get_selected_bins(k, b)
-                if bins_for_task:
-                    robot_info['tasks'].append({
-                        'task_id': b,
-                        'bins': bins_for_task
-                    })
-            
-            if robot_info['tasks']:
-                selection_dict['robots'].append(robot_info)
-        
-        return selection_dict
-
-
-'''
-File: solve_sp3.py
-Project: OFS_Integrated_Model
-Description: 
-----------
-求解子问题3: 料箱选择 (Bin Selection)
-----------
-'''
-
 import gurobipy as gp
 from gurobipy import GRB
-from typing import List, Dict, Optional, Tuple, Set
-from problemDto.ofs_problem_dto import OFSProblemDTO
-from solver.sp3_variable import SP3Variable
-from config.ofs_config import OFSConfig
+from typing import List, Dict, Set, Tuple, Optional
+from collections import defaultdict
+
+from entity.subTask import SubTask
+from entity.task import Task
 from entity.tote import Tote
+from entity.stack import Stack
+from problemDto.ofs_problem_dto import OFSProblemDTO
+from config.ofs_config import OFSConfig
 
 
-class SolveSP3:
+class SP3_Bin_Hitter:
     """
-    求解子问题3: 料箱选择 (Bin Selection)
-    
-    目标: 为每个任务选择料箱以满足SKU需求，同时考虑机器人容量约束
-    
-    输入:
-        - SP1: z_{o,s,b} (SKU需求分配)
-        - SP4: y_{b,k} (任务-机器人分配)
-    
-    输出:
-        - x_{i,k,b}: 料箱i是否被机器人k为任务b选择
+    SP3 子问题求解器：料箱命中 (Bin Hitting)
+
+    基于 Gurobi MIP 求解。
+    Sort 模式逻辑：搬运区间 [Min_Index, Max_Index] 内的所有料箱。
     """
 
-    def __init__(self, problem_dto: OFSProblemDTO, config: OFSConfig = None):
-        """
-        初始化求解器
-        
-        Args:
-            problem_dto: 问题实例
-            config: 配置参数
-        """
-        self.problem_dto = problem_dto
-        self.config = config or OFSConfig
-        self.M = 100000  # Big-M 常数
-        
-        # 从 problem_dto 提取基本信息
-        self.totes = problem_dto.tote_list
-        self.robots = problem_dto.robot_list
-        self.skus = problem_dto.skus_list
-        
-        print(f"[SP3] 初始化完成: {len(self.totes)} 个料箱, "
-              f"{len(self.robots)} 个机器人, {len(self.skus)} 种SKU")
+    def __init__(self, problem_dto: OFSProblemDTO):
+        self.problem = problem_dto
 
-    def solve(
-        self,
-        active_tasks: List[int],  # 激活的任务列表
-        task_sku_demand: Dict[Tuple[int, int], int],  # {(task_id, sku_id): quantity} from SP1
-        task_robot_assignment: Dict[int, int],  # {task_id: robot_id} from SP4
-        time_limit: int = 3600,
-        output_flag: bool = True
-    ) -> Optional[SP3Variable]:
-        """
-        求解 SP3 模型
-        
-        Args:
-            active_tasks: 激活的任务ID列表
-            task_sku_demand: 任务SKU需求 {(task_id, sku_id): quantity}
-            task_robot_assignment: 任务机器人分配 {task_id: robot_id}
-            time_limit: 求解时间限制(秒)
-            output_flag: 是否显示Gurobi求解过程
-            
-        Returns:
-            SP3Variable 实例，失败返回 None
-        """
-        
-        print(f"\n{'='*60}")
-        print(f"开始求解 SP3 - 料箱选择")
-        print(f"{'='*60}")
-        
-        # 1. 数据准备和验证
-        if not active_tasks:
-            print("⚠️  警告: 没有激活的任务需要处理")
-            return None
-        
-        B = active_tasks  # 激活的任务列表
-        I = list(range(len(self.totes)))  # 料箱索引
-        K = list(range(len(self.robots)))  # 机器人索引
-        S = list(range(len(self.skus)))  # SKU索引
-        
-        print(f"📊 问题规模:")
-        print(f"   - 激活任务数: {len(B)}")
-        print(f"   - 料箱数: {len(I)}")
-        print(f"   - 机器人数: {len(K)}")
-        print(f"   - SKU种类数: {len(S)}")
-        
-        # 2. 预处理：构建料箱-SKU库存矩阵
-        bin_sku_inventory = self._build_bin_sku_inventory()
-        
-        # 3. 预处理
-                # 3. 预处理：验证需求可满足性
-        if not self._validate_demand_feasibility(task_sku_demand, bin_sku_inventory):
-            print("❌ 错误: SKU需求无法被当前库存满足")
-            return None
-        
-        # 4. 创建 Gurobi 模型
-        print("\n🔧 构建 Gurobi 模型...")
-        m = gp.Model("SP3_Bin_Selection")
-        m.setParam('OutputFlag', 1 if output_flag else 0)
-        m.setParam('TimeLimit', time_limit)
-        m.setParam('MIPGap', 0.01)  # 1% gap
-        
-        # 5. 决策变量
-        print("   添加决策变量...")
-        
-        # x[i,k,b]: 料箱i是否被机器人k为任务b选择
-        x = m.addVars(I, K, B, vtype=GRB.BINARY, name="x")
-        
-        # 6. 目标函数：最小化使用的料箱总数
-        print("   设置目标函数...")
-        # 方案1: 最小化料箱总数
-        m.setObjective(
-            gp.quicksum(x[i, k, b] for i in I for k in K for b in B),
-            GRB.MINIMIZE
-        )
-        
-        # 7. 约束条件
-        print("   添加约束条件...")
-        
-        # (C1) 库存满足约束 (eq:inventory_fulfillment)
-        # 对于每个任务b、机器人k、SKU s，选择的料箱必须满足需求
-        constraint_count = 0
-        for b in B:
-            k = task_robot_assignment.get(b)
-            if k is None:
-                print(f"⚠️  警告: 任务 {b} 未分配机器人，跳过")
-                continue
-            
-            for s in S:
-                demand = task_sku_demand.get((b, s), 0)
-                if demand > 0:
-                    m.addConstr(
-                        gp.quicksum(x[i, k, b] * bin_sku_inventory.get((i, s), 0) 
-                                   for i in I) >= demand,
-                        name=f"C1_inventory_{b}_{k}_{s}"
-                    )
-                    constraint_count += 1
-        
-        print(f"   ✓ C1: 库存满足约束 ({constraint_count} 个)")
-        
-        # (C2) 料箱选择链接约束 (eq:link_x_y_bk)
-        # 料箱只能由分配的机器人选择
-        constraint_count = 0
-        for i in I:
-            for b in B:
-                assigned_robot = task_robot_assignment.get(b)
-                if assigned_robot is not None:
-                    # 只有被分配的机器人才能选择料箱
-                    for k in K:
-                        if k != assigned_robot:
-                            m.addConstr(x[i, k, b] == 0, 
-                                       name=f"C2_link_{i}_{k}_{b}")
-                            constraint_count += 1
-        
-        print(f"   ✓ C2: 料箱选择链接约束 ({constraint_count} 个)")
-        
-        # (C3) 机器人堆叠高度约束 (eq:stack_height)
-        robot_max_capacity = getattr(self.config, 'ROBOT_CAPACITY', 5)
-        for b in B:
-            k = task_robot_assignment.get(b)
-            if k is not None:
-                m.addConstr(
-                    gp.quicksum(x[i, k, b] for i in I) <= robot_max_capacity,
-                    name=f"C3_stack_height_{b}_{k}"
-                )
-        
-        print(f"   ✓ C3: 机器人堆叠高度约束 ({len(B)} 个)")
-        
-        # (C4) 料箱唯一性约束 (可选)
-        # 同一个料箱不能同时被多个任务使用
-        use_uniqueness = getattr(self.config, 'BIN_UNIQUENESS_CONSTRAINT', True)
-        if use_uniqueness:
-            constraint_count = 0
-            for i in I:
-                for k in K:
-                    m.addConstr(
-                        gp.quicksum(x[i, k, b] for b in B) <= 1,
-                        name=f"C4_uniqueness_{i}_{k}"
-                    )
-                    constraint_count += 1
-            print(f"   ✓ C4: 料箱唯一性约束 ({constraint_count} 个)")
-        
-        # (C5) 优先选择顶层料箱 (软约束，通过目标函数权重)
-        # 添加惩罚项：选择非顶层料箱有额外成本
-        penalty_weight = 0.01  # 小权重，避免影响主要目标
-        penalty_terms = []
-        for i in I:
-            tote = self.totes[i]
-            if not tote.is_top:  # 如果不是顶层
-                penalty_terms.append(
-                    gp.quicksum(x[i, k, b] for k in K for b in B)
-                )
-        
-        if penalty_terms:
-            # 修改目标函数加入惩罚项
-            m.setObjective(
-                gp.quicksum(x[i, k, b] for i in I for k in K for b in B) +
-                penalty_weight * gp.quicksum(penalty_terms),
-                GRB.MINIMIZE
+        # --- 成本参数 ---
+        self.t_shift = OFSConfig.PACKING_TIME  # 机器人抓取时间
+        self.t_lift = OFSConfig.LIFTING_TIME  # 机器人移位/挖掘时间
+        self.t_move = OFSConfig.MOVE_EXTRA_TOTE_TIME  # 工作站单箱理货时间
+
+        self.alpha = 1.0  # 机器人成本权重
+        self.w_routing = 0.5  # 路径成本权重
+        self.BigM = 10000
+
+    def solve(self,
+              sub_tasks: List[SubTask],
+              beta_congestion: float = 1.0,
+              sp4_routing_costs: Dict[int, float] = None
+              ) -> Tuple[List[Task], Dict[int, List[int]], Dict[int, float]]:
+
+        print(f"  >>> [SP3] Solving Per-SubTask (No Pooling, Beta={beta_congestion:.2f})...")
+
+        physical_tasks: List[Task] = []
+        final_tote_selection = defaultdict(list)
+        final_sorting_costs = defaultdict(float)
+        self._global_task_id = 0
+
+        # 遍历每个子任务，独立求解
+        for task in sub_tasks:
+            # 如果尚未分配工作站，无法计算距离成本，跳过或由SP2处理
+            if task.assigned_station_id == -1: continue
+
+            # 为该任务求解最优选箱策略
+            p_tasks, totes, cost = self._solve_single_subtask_mip(
+                task, beta_congestion, sp4_routing_costs
             )
-            print(f"   ✓ C5: 顶层优先软约束已添加")
-        
-        # 8. 优化求解
-        print(f"\n🚀 开始求解...")
-        print(f"   时间限制: {time_limit} 秒")
-        m.update()
+
+            # 记录结果
+            physical_tasks.extend(p_tasks)
+            final_tote_selection[task.id] = totes
+            final_sorting_costs[task.id] = cost
+
+        return physical_tasks, final_tote_selection, final_sorting_costs
+
+    def _solve_single_subtask_mip(self,
+                                  task: SubTask,
+                                  beta: float,
+                                  routing_costs: Dict[int, float]) -> Tuple[List[Task], List[int], float]:
+
+        # --- A. 数据准备 ---
+        # 1. 需求统计
+        demand = defaultdict(int)
+        for sku in task.sku_list:
+            demand[sku.id] += 1
+
+        # 2. 候选堆垛与料箱
+        relevant_stack_ids = set()
+        stack_bin_map = defaultdict(list)
+
+        for sku_id in demand:
+            sku_obj = self.problem.id_to_sku[sku_id]
+            for tote_id in sku_obj.storeToteList:
+                tote = self.problem.id_to_tote[tote_id]
+                if tote.store_point:
+                    u_idx = tote.store_point.idx
+                    relevant_stack_ids.add(u_idx)
+                    if tote not in stack_bin_map[u_idx]:
+                        stack_bin_map[u_idx].append(tote)
+
+        U = list(relevant_stack_ids)
+        if not U: return [], [], 0.0
+
+        # --- B. 构建 MIP ---
+        m = gp.Model(f"SP3_Task_{task.id}")
+        m.Params.OutputFlag = 0
+
+        # 变量
+        m_flip = m.addVars(U, vtype=GRB.BINARY, name="m_flip")
+        m_sort = m.addVars(U, vtype=GRB.BINARY, name="m_sort")
+
+        all_bins = [b for u in U for b in stack_bin_map[u]]
+        bin_ids = [b.id for b in all_bins]
+        u_use = m.addVars(bin_ids, vtype=GRB.BINARY, name="u_use")
+
+        # 辅助变量
+        idx_high = m.addVars(U, vtype=GRB.INTEGER, name="idx_h")
+        idx_low = m.addVars(U, vtype=GRB.INTEGER, name="idx_l")
+
+        cost_rc = m.addVars(U, vtype=GRB.CONTINUOUS, name="c_rc")
+        cost_sc = m.addVars(U, vtype=GRB.CONTINUOUS, name="c_sc")  # 这是我们要回传的重点
+        cost_fc = m.addVars(U, vtype=GRB.CONTINUOUS, name="c_fc")
+
+        # --- C. 约束条件 ---
+
+        # 1. 需求覆盖
+        for sku_id, qty in demand.items():
+            lhs = gp.LinExpr()
+            sku_obj = self.problem.id_to_sku[sku_id]
+            for tote_id in sku_obj.storeToteList:
+                if tote_id in u_use:
+                    tote = self.problem.id_to_tote[tote_id]
+                    q = tote.sku_quantity_map.get(sku_id, 0)
+                    lhs += u_use[tote_id] * q
+            m.addConstr(lhs >= qty)
+
+        total_load = gp.LinExpr()
+
+        for u in U:
+            bins = stack_bin_map[u]
+            stack_obj = self.problem.point_to_stack[u]
+            max_h = stack_obj.current_height  # 物理高度
+            top_tote = max(bins, key=lambda b: b.layer)  # 顶层箱
+
+            # 模式互斥与激活 (保持不变)
+            bin_sum = gp.quicksum(u_use[b.id] for b in bins)
+            m.addConstr(m_flip[u] + m_sort[u] <= 1)
+            m.addConstr(bin_sum <= self.BigM * (m_flip[u] + m_sort[u]))
+            m.addConstr(m_flip[u] + m_sort[u] <= bin_sum)
+
+            # --- Range 约束 (Sort 模式核心) ---
+            # idx_high: 选中箱子的最大层级 (Active时有效)
+            # idx_low: 选中箱子的最小层级 (Active时有效)
+            for b in bins:
+                l = b.layer
+                m.addConstr(idx_high[u] >= l * u_use[b.id])
+                # 如果选中，low <= l；如果不选中，low <= M (不约束)
+                # 配合最小化 Range 的逻辑，low 会逼近最小值
+                m.addConstr(idx_low[u] <= l * u_use[b.id] + max_h * (1 - u_use[b.id]))
+
+            # --- 容量计算 (Load Calculation) ---
+            load_u = m.addVar(vtype=GRB.CONTINUOUS, name=f"load_{u}")
+
+            # Case 1: Flip Mode -> Load = bin_sum (选中几个占几个)
+            m.addConstr(load_u >= bin_sum - self.BigM * (1 - m_flip[u]))
+
+            # Case 2: Sort Mode -> Load = Range Size (idx_high - idx_low + 1)
+            # 【修正点】不再是 max_h，而是动态计算的区间跨度
+            range_size = idx_high[u] - idx_low[u] + 1
+            m.addConstr(load_u >= range_size - self.BigM * (1 - m_sort[u]))
+
+            total_load += load_u
+
+            # --- 成本计算 (保持不变) ---
+            # Flip Cost
+            flip_val = gp.LinExpr()
+            for b in bins:
+                is_deep = 1 if b.layer < (max_h - 1) else 0
+                c = self.alpha * (self.t_shift + is_deep * self.t_lift)
+                flip_val += u_use[b.id] * c
+            m.addConstr(cost_fc[u] >= flip_val - self.BigM * (1 - m_flip[u]))
+
+            # Robot Sort Cost
+            # 如果是 Sort 模式，是否需要移开顶层？
+            # 逻辑：如果 Range 包含顶层 (idx_high == max_h-1)，则不需要额外 Lift
+            # 或者沿用之前的逻辑：如果 top_tote 被选中，则不需要 Lift。
+            # 但现在的 Sort 是区间搬运，如果区间本身就包含顶层（比如拿 Layer 3-5, 5是顶），那么就没有阻挡。
+            # 如果区间是 Layer 1-2，顶层是 5，那么其实需要把 3-5 都搬走或者移开。
+            # 这里假设 Sort 模式下，机器人把 [idx_low, idx_high] 这一段搬走。
+            # 如果 idx_high < max_h - 1 (没包含顶层)，物理上是无法直接抽出来的，通常需要先把顶层移开。
+            # 因此这里保留 Lift 惩罚：如果 idx_high != 顶层，则产生 Lift 成本。
+            # 简化实现：沿用之前的 u_use[top] 判断
+
+            is_top_used = u_use[top_tote.id] if top_tote.id in u_use else 0
+            rc_expr = self.alpha * (self.t_shift + self.t_lift * (1 - is_top_used))
+            m.addConstr(cost_rc[u] >= rc_expr - self.BigM * (1 - m_sort[u]))
+
+            # Station Sort Cost (SC_u)
+            # Noise = Range - Useful
+            noise_expr = range_size - bin_sum
+            sc_raw = beta * self.t_move * noise_expr
+            m.addConstr(cost_sc[u] >= sc_raw - self.BigM * (1 - m_sort[u]))
+
+            # 非负约束
+            m.addConstr(cost_fc[u] >= 0)
+            m.addConstr(cost_rc[u] >= 0)
+            m.addConstr(cost_sc[u] >= 0)
+
+
+
+        # 3. 添加容量硬约束
+        m.addConstr(total_load <= self.robot_capacity, name="Capacity_Limit")
+
+        # --- D. 目标函数 ---
+        obj = gp.LinExpr()
+        obj += gp.quicksum(cost_rc[u] + cost_sc[u] + cost_fc[u] for u in U)
+
+        # 路径成本软耦合
+        if routing_costs:
+            for u in U:
+                r_cost = routing_costs.get(u, 0.0)
+                obj += self.w_routing * r_cost * (m_flip[u] + m_sort[u])
+
+        m.setObjective(obj, GRB.MINIMIZE)
         m.optimize()
-        
-        # 9. 解析结果
-        return self._parse_solution(m, x, active_tasks, I, K)
 
-    def _build_bin_sku_inventory(self) -> Dict[Tuple[int, int], int]:
-        """
-        构建料箱-SKU库存矩阵
-        
-        Returns:
-            {(bin_index, sku_id): quantity}
-        """
-        print("\n📦 构建料箱-SKU库存矩阵...")
-        
-        inventory = {}
-        
-        for i, tote in enumerate(self.totes):
-            for sku in tote.skus_list:
-                quantity = tote.sku_quantity_map.get(sku.id, 0)
-                if quantity > 0:
-                    inventory[(i, sku.id)] = quantity
-        
-        print(f"   共 {len(inventory)} 个料箱-SKU库存记录")
-        
-        return inventory
+        # --- E. 结果解析 ---
+        p_tasks = []
+        selected_totes = []
+        total_sc_cost = 0.0
 
-    def _validate_demand_feasibility(
-        self,
-        task_sku_demand: Dict[Tuple[int, int], int],
-        bin_sku_inventory: Dict[Tuple[int, int], int]
-    ) -> bool:
-        """
-        验证SKU需求是否可以被库存满足
-        
-        Args:
-            task_sku_demand: {(task_id, sku_id): quantity}
-            bin_sku_inventory: {(bin_index, sku_id): quantity}
-            
-        Returns:
-            是否可行
-        """
-        print("\n✅ 验证需求可满足性...")
-        
-        # 统计每个SKU的总需求
-        total_demand = {}
-        for (task_id, sku_id), qty in task_sku_demand.items():
-            total_demand[sku_id] = total_demand.get(sku_id, 0) + qty
-        
-        # 统计每个SKU的总库存
-        total_inventory = {}
-        for (bin_idx, sku_id), qty in bin_sku_inventory.items():
-            total_inventory[sku_id] = total_inventory.get(sku_id, 0) + qty
-        
-        # 检查每个SKU
-        infeasible_skus = []
-        for sku_id, demand in total_demand.items():
-            inventory = total_inventory.get(sku_id, 0)
-            if inventory < demand:
-                infeasible_skus.append((sku_id, demand, inventory))
-                print(f"   ❌ SKU {sku_id}: 需求={demand}, 库存={inventory} (不足)")
-        
-        if infeasible_skus:
-            print(f"\n   共 {len(infeasible_skus)} 种SKU库存不足")
-            return False
-        
-        print("   ✓ 所有SKU库存充足")
-        return True
+        if m.status in [GRB.OPTIMAL, GRB.TIME_LIMIT]:
+            for u in U:
+                if m_flip[u].X > 0.5 or m_sort[u].X > 0.5:
+                    mode = 'SORT' if m_sort[u].X > 0.5 else 'FLIP'
 
-    def _parse_solution(
-        self,
-        model: gp.Model,
-        x_vars,
-        active_tasks: List[int],
-        bins: List[int],
-        robots: List[int]
-    ) -> Optional[SP3Variable]:
-        """
-        解析 Gurobi 求解结果并创建 SP3Variable
-        
-        Args:
-            model: Gurobi 模型
-            x_vars: 决策变量
-            active_tasks: 激活的任务列表
-            bins: 料箱索引列表
-            robots: 机器人索引列表
-            
-        Returns:
-            SP3Variable 实例，失败返回 None
-        """
-        
-        print(f"\n{'='*60}")
-        print(f"求解完成")
-        print(f"{'='*60}")
-        
-        if model.Status == GRB.OPTIMAL:
-            print(f"✅ 状态: OPTIMAL")
-            print(f"📊 目标值 (料箱总数): {model.ObjVal:.0f}")
-            
-            # 创建变量容器
-            max_task_id = max(active_tasks) if active_tasks else 0
-            B_size = max_task_id + 1
-            I_size = len(bins)
-            K_size = len(robots)
-            
-            sp3_var = SP3Variable(I_size=I_size, K_size=K_size, B_size=B_size)
-            
-            # 提取解
-            try:
-                sp3_var.set_solution(
-                    bins=self.totes,
-                    robots=self.robots,
-                    x_vars=x_vars,
-                    obj_value=model.ObjVal,
-                    active_tasks=active_tasks
-                )
-                
-                # 打印详细结果
-                self._print_solution_summary(sp3_var, active_tasks)
-                
-                return sp3_var
-                
-            except Exception as e:
-                print(f"❌ 解析解时发生错误: {str(e)}")
-                import traceback
-                traceback.print_exc()
-                return None
-        
-        elif model.Status == GRB.TIME_LIMIT:
-            print(f"⏱️  状态: TIME_LIMIT")
-            print(f"📊 当前目标值: {model.ObjVal:.0f}")
-            print(f"📊 最优界: {model.ObjBound:.0f}")
-            print(f"📊 Gap: {model.MIPGap*100:.2f}%")
-            
-            # 即使超时，也尝试提取当前解
-            if model.SolCount > 0:
-                print("✓ 找到可行解，尝试提取...")
-                
-                max_task_id = max(active_tasks) if active_tasks else 0
-                B_size = max_task_id + 1
-                I_size = len(bins)
-                K_size = len(robots)
-                
-                sp3_var = SP3Variable(I_size=I_size, K_size=K_size, B_size=B_size)
-                
-                try:
-                    sp3_var.set_solution(
-                        bins=self.totes,
-                        robots=self.robots,
-                        x_vars=x_vars,
-                        obj_value=model.ObjVal,
-                        active_tasks=active_tasks
+                    target_totes = [b.id for b in stack_bin_map[u] if u_use[b.id].X > 0.5]
+                    selected_totes.extend(target_totes)
+
+                    # 累计 SC_u
+                    if mode == 'SORT':
+                        total_sc_cost += cost_sc[u].X
+
+                    # 计算服务时间
+                    svc_time = cost_rc[u].X if mode == 'SORT' else cost_fc[u].X
+
+                    # 创建物理任务 (1对1)
+                    new_task = Task(
+                        task_id=self._global_task_id,
+                        sub_task_id=task.id,  # 精准对应
+                        target_stack_id=u,
+                        target_station_id=task.assigned_station_id,
+                        operation_mode=mode,
+                        target_tote_ids=target_totes
                     )
-                    
-                    self._print_solution_summary(sp3_var, active_tasks)
-                    return sp3_var
-                    
-                except Exception as e:
-                    print(f"❌ 解析解时发生错误: {str(e)}")
-                    return None
-            else:
-                print("❌ 未找到可行解")
-                return None
-        
-        elif model.Status == GRB.INFEASIBLE:
-            print(f"❌ 状态: INFEASIBLE (无可行解)")
-            print("正在计算IIS (不可行子系统)...")
-            
-            try:
-                model.computeIIS()
-                iis_file = "sp3_infeasible_model.ilp"
-                model.write(iis_file)
-                print(f"已将IIS写入文件: {iis_file}")
-                
-                # 打印部分冲突约束
-                print("\n冲突约束示例:")
-                count = 0
-                for constr in model.getConstrs():
-                    if constr.IISConstr and count < 10:
-                        print(f"  - {constr.ConstrName}")
-                        count += 1
-                        
-            except Exception as e:
-                print(f"计算IIS时出错: {str(e)}")
-            
-            return None
-        
-        elif model.Status == GRB.UNBOUNDED:
-            print(f"❌ 状态: UNBOUNDED (无界)")
-            return None
-        
+                    new_task.estimated_service_time = svc_time
+                    p_tasks.append(new_task)
+                    self._global_task_id += 1
         else:
-            print(f"⚠️  状态: {model.Status} (未知状态)")
-            return None
+            # 处理无解情况 (容量不足)
+            print(f"  [SP3] Task {task.id} Infeasible (Likely Capacity). Regret Feedback needed.")
+            # 这里可以返回空的 selected_totes，触发外层 Capacity Feedback
+            pass
 
+        return p_tasks, selected_totes, total_sc_cost
+
+    class SP3_Heuristic_Solver:
+        """
+        SP3 启发式求解器 (Heuristic Solver)
+        功能：快速生成 SP3 的初始解，不依赖 Gurobi。
+        策略：贪婪覆盖 (Greedy Set Cover) + 成本对比 (Cost Benefit Analysis)。
+        """
+
+        def __init__(self, problem_dto: OFSProblemDTO):
+            self.problem = problem_dto
+
+            # --- 成本参数 ---
+            self.t_shift = OFSConfig.PACKING_TIME
+            self.t_lift = OFSConfig.LIFTING_TIME
+            self.t_move = OFSConfig.PLACE_TOTE_TIME  # Station sorting move time
+            self.robot_capacity = OFSConfig.ROBOT_CAPACITY
+            self.alpha = 1.0
+
+        def solve(self,
+                  sub_tasks: List[SubTask],
+                  beta_congestion: float = 1.0
+                  ) -> Tuple[List[Task], Dict[int, List[int]], Dict[int, float]]:
+
+            print(f"  >>> [SP3 Heuristic] Generating Initial Solution (Beta={beta_congestion:.2f})...")
+
+            physical_tasks: List[Task] = []
+            final_tote_selection = defaultdict(list)
+            final_sorting_costs = defaultdict(float)
+            self._global_task_id = 0
+
+            # 遍历每个子任务独立求解
+            for task in sub_tasks:
+                # 1. 贪婪选箱：决定去哪些堆垛拿哪些箱子
+                # 返回: {stack_idx: [tote_obj, ...]}
+                stack_plan = self._greedy_tote_selection(task)
+
+                # 2. 模式决策：对每个涉及的堆垛决定 Flip 还是 Sort
+                for stack_idx, target_totes in stack_plan.items():
+                    stack = self.problem.point_to_stack[stack_idx]
+
+                    # 决策模式并计算成本
+                    mode, cost_sc, svc_time = self._decide_operation_mode(
+                        stack, target_totes, beta_congestion
+                    )
+
+                    # 创建物理任务
+                    new_task = Task(
+                        task_id=self._global_task_id,
+                        related_subtask_ids=[task.id],  # 独立求解，只关联自己
+                        target_stack_id=stack_idx,
+                        target_station_id=task.assigned_station_id,
+                        operation_mode=mode,
+                        target_tote_ids=[t.id for t in target_totes]
+                    )
+                    new_task.estimated_service_time = svc_time
+                    physical_tasks.append(new_task)
+                    self._global_task_id += 1
+
+                    # 记录反馈数据
+                    final_tote_selection[task.id].extend([t.id for t in target_totes])
+                    if cost_sc > 0:
+                        final_sorting_costs[task.id] += cost_sc
+
+            return physical_tasks, final_tote_selection, final_sorting_costs
+
+        def _greedy_tote_selection(self, task: SubTask) -> Dict[int, List[Tote]]:
+            """
+            贪婪策略：寻找最少的堆垛覆盖所有 SKU
+            """
+            # 待满足的 SKU 集合
+            pending_skus = set(sku.id for sku in task.sku_list)
+            # SKU -> {tote_id: tote_obj} 缓存
+            sku_availability = defaultdict(list)
+
+            # 1. 构建索引：SKU 在哪里？
+            for sku_id in pending_skus:
+                sku_obj = self.problem.id_to_sku[sku_id]
+                for tote_id in sku_obj.storeToteList:
+                    tote = self.problem.id_to_tote[tote_id]
+                    if tote.store_point:
+                        sku_availability[sku_id].append(tote)
+
+            selected_stacks_map = defaultdict(list)  # stack_idx -> list[Tote]
+
+            # 2. 贪婪循环
+            while pending_skus:
+                # 评分：每个堆垛包含多少个"当前还需要的" SKU
+                stack_score = defaultdict(int)
+                stack_candidate_totes = defaultdict(list)  # stack -> [tote_to_pick]
+
+                # 遍历所有待满足 SKU 的候选位置
+                for sku_id in pending_skus:
+                    candidates = sku_availability[sku_id]
+                    for tote in candidates:
+                        s_idx = tote.store_point.idx
+
+                        # 关键逻辑：如果这个 Stack 已经被选中过，优先复用（成本极低）
+                        score_bonus = 100 if s_idx in selected_stacks_map else 1
+
+                        # 简单评分：包含一个需要的 SKU +1分
+                        # 注意：这里简化处理，假设一个 Tote 只满足一个 SKU，或者被选中一次就把所有需要的都带走
+                        if tote not in stack_candidate_totes[s_idx]:
+                            stack_score[s_idx] += score_bonus
+                            stack_candidate_totes[s_idx].append(tote)
+
+                if not stack_score:
+                    # 理论上不应发生，除非无库存
+                    print(f"Error: Cannot find totes for remaining SKUs: {pending_skus}")
+                    break
+
+                # 选择得分最高的堆垛
+                best_stack_idx = max(stack_score, key=stack_score.get)
+                chosen_totes = stack_candidate_totes[best_stack_idx]
+
+                # 将选中的 Tote 加入结果
+                for t in chosen_totes:
+                    if t not in selected_stacks_map[best_stack_idx]:
+                        selected_stacks_map[best_stack_idx].append(t)
+
+                    # 标记这些 Tote 覆盖了哪些 SKU
+                    for s_in_tote in t.skus_list:
+                        if s_in_tote.id in pending_skus:
+                            pending_skus.remove(s_in_tote.id)
+
+            return selected_stacks_map
+
+        def _decide_operation_mode(self,
+                                   stack: Stack,
+                                   target_totes: List[Tote],
+                                   beta: float) -> Tuple[str, float, float]:
+            """
+            成本对比与模式决策
+            Returns: (Mode, SC_cost, Service_Time)
+            """
+            # --- 准备数据 ---
+            # 目标箱子的层级索引 (0=Bottom, N=Top)
+            target_indices = [t.layer for t in target_totes]
+            top_index = stack.current_height - 1
+
+            # --- 1. 计算 FLIP 成本 ---
+            # Flip Load = 选中箱子数
+            flip_load = len(target_totes)
+
+            cost_flip = 0.0
+            for idx in target_indices:
+                is_deep = 1 if idx < top_index else 0
+                cost_flip += self.alpha * (self.t_shift + is_deep * self.t_lift)
+
+            # --- 2. 计算 SORT 成本 ---
+            deepest_index = min(target_indices)
+            highest_index = max(target_indices)  # 选中箱子中的最高层
+
+            # Sort Load = 区间跨度
+            range_size = highest_index - deepest_index + 1
+
+            # 容量校验：如果区间太大，背不动，只能 Flip
+            if range_size > self.robot_capacity:
+                return 'FLIP', 0.0, cost_flip
+
+            # Robot Cost (Sort):
+            # 如果区间包含顶层 (highest_index == top_index)，则无需 Lift，直接背走
+            # 否则需要先移开顶层
+            is_top_included = (highest_index == top_index)
+            cost_robot_sort = self.alpha * (self.t_shift + self.t_lift * (0 if is_top_included else 1))
+
+            # Station Cost (Sort): SC = Beta * move * Noise
+            useful_count = len(target_totes)
+            noise_count = range_size - useful_count
+            cost_sc = beta * self.t_move * noise_count
+
+            total_sort_cost = cost_robot_sort + cost_sc
+
+            # --- 3. 决策 ---
+            if total_sort_cost < cost_flip:
+                return 'SORT', cost_sc, cost_robot_sort
+            else:
+                return 'FLIP', 0.0, cost_flip

@@ -27,8 +27,13 @@ class SubTask:
 
     @property
     def capacity_usage(self) -> int:
-        """计算该任务占用的物理容量 (假设 1 SKU = 1 Slot)"""
-        return len(self.sku_list)
+        """
+        修正：计算容量占用。
+        机器人的槽位限制是基于 '料箱数' 或 'SKU种类数' 的。
+        假设 1 种 SKU 主要集中在 1 个料箱中，则占用 1 个容量。
+        """
+        unique_ids = set(s.id for s in self.sku_list)
+        return len(unique_ids)
 
     def __str__(self):
         return (f"SubTask(id={self.id}, order={self.parent_order.order_id}, "

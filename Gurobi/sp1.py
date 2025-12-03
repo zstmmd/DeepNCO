@@ -1,11 +1,11 @@
 # solver/sp1_bom_splitter.py
 
 import math
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple,DefaultDict
 from collections import defaultdict
 import gurobipy as gp
 from gurobipy import GRB
-
+from entity.SKUs import SKUs
 from problemDto.createInstance import CreateOFSProblem
 from problemDto.ofs_problem_dto import OFSProblemDTO
 from config.ofs_config import OFSConfig
@@ -65,7 +65,7 @@ class SP1_BOM_Splitter:
             if use_mip:
                 tasks = self._split_order_by_mip(order)
             else:
-                tasks = self._split_order_by_spatial_clustering(order)
+                tasks = self._split_order_by_unique_types(order)
 
             all_sub_tasks.extend(tasks)
 
@@ -137,66 +137,158 @@ class SP1_BOM_Splitter:
 
         return sub_tasks
 
+    def _split_order_by_unique_types(self, order) -> List[SubTask]:
+        """
+        核心逻辑修正：
+        1. 聚合：Order [A, A, B, C, C, C] -> {A: [A,A], B: [B], C: [C,C,C]}
+        2. 空间排序：根据 A, B, C 的物理位置排序 -> [A, C, B] (假设位置关系)
+        3. 切分：容量=2 -> Task1(A, C), Task2(B)
+        """
+        # 1. 获取容量限制 (Max Unique SKUs per Task)
+        cap_limit = self.order_capacity_limits.get(order.order_id, OFSConfig.ROBOT_CAPACITY)
+
+        # 2. 聚合 SKU 实例
+        # sku_groups: SKU_ID -> List[SKUs objects]
+        sku_groups: DefaultDict[int, List[SKUs]] = defaultdict(list)
+
+        for sku_id in order.order_product_id_list:
+            sku_obj = self.problem.id_to_sku.get(sku_id)
+            if sku_obj:
+                sku_groups[sku_id].append(sku_obj)
+
+        unique_sku_ids = list(sku_groups.keys())
+
+        # 3. 准备空间排序数据
+        # location_info: {'sku_id': int, 'x': int, 'y': int}
+        location_info_list = []
+
+        for sku_id in unique_sku_ids:
+            sku_obj = sku_groups[sku_id][0]  # 取第一个对象查位置即可
+
+            # 确定参考坐标 (取第一个有库存的料箱位置)
+            ref_x, ref_y = 0, 0
+            if sku_obj.storeToteList:
+                first_tote_id = sku_obj.storeToteList[0]
+                tote = self.problem.id_to_tote.get(first_tote_id)
+                if tote and tote.store_point:
+                    ref_x = tote.store_point.x
+                    ref_y = tote.store_point.y
+
+            location_info_list.append({
+                'sku_id': sku_id,
+                'x': ref_x,
+                'y': ref_y
+            })
+
+        # 4. 空间排序 (Spatial Sort)
+        # 确保物理相近的 SKU 种类被分在同一组
+        location_info_list.sort(key=lambda k: (k['y'], k['x']))
+
+        sorted_unique_ids = [item['sku_id'] for item in location_info_list]
+
+        # 5. 切分并生成 SubTask
+        sub_tasks = []
+        total_types = len(sorted_unique_ids)
+
+        # 按“种类”步进切分
+        for i in range(0, total_types, cap_limit):
+            # 这一组包含的 SKU 种类 ID
+            chunk_ids = sorted_unique_ids[i: i + cap_limit]
+
+            # 还原为完整的 SKU 对象列表 (包含数量)
+            # Task1: 种类 [A, C] -> 列表 [A, A, C, C, C]
+            task_full_sku_list = []
+            for sid in chunk_ids:
+                task_full_sku_list.extend(sku_groups[sid])
+
+            # 创建子任务
+            task = SubTask(
+                id=self._global_task_id,
+                parent_order=order,
+                sku_list=task_full_sku_list
+            )
+            sub_tasks.append(task)
+            self._global_task_id += 1
+
+        return sub_tasks
     # =========================================================================
     #  基于 MIP 的精确覆盖
     # =========================================================================
     def _split_order_by_mip(self, order) -> List[SubTask]:
-        """
-        使用 Gurobi 求解 Set Partitioning 问题。
-        仅当需要极度优化任务数量，且不在乎 SKUs 空间离散度时使用。
-        """
+
+        # 1. 获取容量限制 (Max Unique SKUs per Task)
         cap_limit = self.order_capacity_limits.get(order.order_id, OFSConfig.ROBOT_CAPACITY)
-        skus = [self.problem.id_to_sku[sid] for sid in order.order_product_id_list]
-        n_items = len(skus)
 
-        # 估算最大任务数 K
-        max_k = math.ceil(n_items / 1.0)
+        # 2. 聚合 SKU：找出该订单包含的所有唯一 SKU 对象
+        # sku_groups: SKU_ID -> List[SKUs objects] (即该 SKU 的所有实例)
+        sku_groups: Dict[int, List[SKUs]] = defaultdict(list)
+        for sku_id in order.order_product_id_list:
+            sku_obj = self.problem.id_to_sku.get(sku_id)
+            if sku_obj:
+                sku_groups[sku_id].append(sku_obj)
 
+        # 唯一 SKU 列表 (MIP 的操作对象)
+        unique_skus = [self.problem.id_to_sku[sid] for sid in sku_groups.keys()]
+        n_types = len(unique_skus)
+
+        # 估算最大任务数 K (最坏情况：每个种类一个任务)
+        max_k = math.ceil(n_types / 1.0)
+        K_range = range(max_k)
+
+        # --- 构建模型 ---
         m = gp.Model(f"SP1_Order_{order.order_id}")
         m.Params.OutputFlag = 0
 
-        # y[i, k]: 第 i 个 SKU 是否放入 第 k 个任务
-        y = m.addVars(n_items, max_k, vtype=GRB.BINARY, name="y")
+        # 决策变量
+        # x[j, k]: 第 j 种 SKU 是否放入 第 k 个任务
+        x = m.addVars(n_types, max_k, vtype=GRB.BINARY, name="x")
         # z[k]: 第 k 个任务是否启用
         z = m.addVars(max_k, vtype=GRB.BINARY, name="z")
 
-        # 约束 1: 覆盖 (Cover)
-        for i in range(n_items):
-            m.addConstr(gp.quicksum(y[i, k] for k in range(max_k)) == 1)
+        # 约束 1: 覆盖 (每个种类必须且只能分配给一个任务)
+        for j in range(n_types):
+            m.addConstr(gp.quicksum(x[j, k] for k in K_range) == 1, name=f"Cover_{j}")
 
-        # 约束 2: 容量 (Capacity)
-        for k in range(max_k):
-            m.addConstr(gp.quicksum(y[i, k] for i in range(n_items)) <= cap_limit * z[k])
+        # 约束 2: 容量 (限制每个任务包含的种类数量)
+        for k in K_range:
+            # sum(x[j,k]) <= Limit * z[k]
+            m.addConstr(gp.quicksum(x[j, k] for j in range(n_types)) <= cap_limit * z[k], name=f"Cap_{k}")
 
-        # 目标: 最小化任务数
-        m.setObjective(gp.quicksum(z[k] for k in range(max_k)), GRB.MINIMIZE)
+        # 目标: 最小化任务数 (及潜在的软耦合惩罚)
+        # 如果有软耦合(SKU互斥)，可以在这里加二次项 obj += x[a,k]*x[b,k]*penalty
+        m.setObjective(gp.quicksum(z[k] for k in K_range), GRB.MINIMIZE)
 
         m.optimize()
 
+        # --- 结果解析 ---
         generated = []
         if m.status == GRB.OPTIMAL:
-            for k in range(max_k):
+            for k in K_range:
                 if z[k].X > 0.5:
-                    task_skus = []
-                    for i in range(n_items):
-                        if y[i, k].X > 0.5:
-                            task_skus.append(skus[i])
+                    # 这个任务包含哪些种类？
+                    task_full_sku_list = []
 
-                    if task_skus:
+                    for j in range(n_types):
+                        if x[j, k].X > 0.5:
+                            sku_id = unique_skus[j].id
+                            # 【关键】把该种类的所有实例全部加进去
+                            # 保证同一种 SKU 不会被拆散到两个任务（除非我们允许 Split，但当前逻辑是 Grouping）
+                            task_full_sku_list.extend(sku_groups[sku_id])
+
+                    if task_full_sku_list:
                         task = SubTask(
                             id=self._global_task_id,
                             parent_order=order,
-                            sku_list=task_skus
+                            sku_list=task_full_sku_list
                         )
                         generated.append(task)
                         self._global_task_id += 1
         else:
-            # Fallback if MIP fails
-            return self._split_order_by_spatial_clustering(order)
+            print(f"Warning: SP1 MIP failed for order {order.order_id}, falling back to heuristic.")
+            return self._split_order_by_spatial_clustering(order)  # 这里的启发式也需要确保是按种类切分的逻辑
 
         return generated
 if __name__ == "__main__":
-    # 测试代码可以放在这里
     # 初始化问题和求解器
     scales = ["SMALL", "MEDIUM"]
     problem_dto = CreateOFSProblem.generate_problem_by_scale('SMALL')
@@ -216,9 +308,9 @@ if __name__ == "__main__":
         generated_skus = sorted(order_to_skus[order.order_id])
         assert original_skus == generated_skus, f"Order {order.order_id} SKU mismatch!"
     print("Initial task generation verified: all orders covered correctly.")
-    # 2. 模拟软耦合反馈：SP3 发现 Order 5 的某些任务因为容量太满无法使用 Sort 模式
+    #  模拟软耦合反馈：SP3 发现 Order 5 的某些任务因为容量太满无法使用 Sort 模式
     # 反馈：将 Order 5 的子任务容量限制降为 4
     sp1_solver.update_capacity_feedback(order_id=5, new_limit=4)
 
-    # 3. 重新生成（Order 5 将被拆得更细，其余保持不变）
+    #  重新生成（Order 5 将被拆得更细，其余保持不变）
     refined_tasks = sp1_solver.solve(use_mip=False)

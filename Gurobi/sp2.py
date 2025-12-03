@@ -238,13 +238,12 @@ class SP2_Station_Assigner:
                         tasks[k].estimated_process_start_time = t[p, s].X
                         break
 if __name__ == "__main__":
-    # 测试代码可以放在这里
     # 初始化问题和求解器
     scales = ["SMALL", "MEDIUM"]
     problem_dto = CreateOFSProblem.generate_problem_by_scale('SMALL')
     sp1_solver = SP1_BOM_Splitter(problem_dto)
 
-    # 1. 默认生成（基于空间聚类，使用全局容量限制）
+    #  默认生成（基于空间聚类，使用全局容量限制）
     initial_tasks = sp1_solver.solve(use_mip=False)
     #验证是否覆盖order的所有sku
     order_to_skus: Dict[int, List[int]] = defaultdict(list)

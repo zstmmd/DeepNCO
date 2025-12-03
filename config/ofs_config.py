@@ -11,13 +11,15 @@ class OFSConfig:
     # 机器人配置
 
     ROBOT_SPEED = 1.0  # 机器人速度
-    PACKING_TIME = 5.0  # 上下存储单元时间
-    LIFTING_TIME = 2.0  # 伸缩货叉时间
+    PACKING_TIME = 2.0  # 上下存储单元时间
+    LIFTING_TIME = 1.0  # 伸缩货叉时间
     ROBOT_CAPACITY = 8  # 机器人容量tote(料箱)数
     REMOVE_TOP_TOTE_TIME = 2.0  # 搬运顶层tote一次的时间
     PLACE_TOTE_TIME = 4.0  # 放置tote一次的时间
+
     # 工作站配置
     PICKING_TIME = 3.0  # 单个SKU拣选时间
+    MOVE_EXTRA_TOTE_TIME = 1.0  # 额外移动一个不需要的tote时间
 
     DEFAULT_PICKING_STATION_BUFFER = 10  # 默认拣选站缓存上限10个tote
     # 存储区最高层高
