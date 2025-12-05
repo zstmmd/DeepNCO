@@ -272,7 +272,7 @@ class SP1_BOM_Splitter:
                         if x[j, k].X > 0.5:
                             sku_id = unique_skus[j].id
                             # 【关键】把该种类的所有实例全部加进去
-                            # 保证同一种 SKU 不会被拆散到两个任务（除非我们允许 Split，但当前逻辑是 Grouping）
+                            # 保证同一种 SKU 不会被拆散到两个任务
                             task_full_sku_list.extend(sku_groups[sku_id])
 
                     if task_full_sku_list:
@@ -298,16 +298,27 @@ if __name__ == "__main__":
     initial_tasks = sp1_solver.solve(use_mip=True)
     #验证是否覆盖order的所有sku
     order_to_skus: Dict[int, List[int]] = defaultdict(list)
+    order_unique_count_check: Dict[int, int] = defaultdict(int)
     for task in initial_tasks:
         order_id = task.parent_order.order_id
         sku_ids = [sku.id for sku in task.sku_list]
         order_to_skus[order_id].extend(sku_ids)
+        order_unique_count_check[order_id] += task.sku_quantity
 
     for order in problem_dto.order_list:
+        # 1. 验证所有 SKU 实例是否都存在
         original_skus = sorted(order.order_product_id_list)
         generated_skus = sorted(order_to_skus[order.order_id])
         assert original_skus == generated_skus, f"Order {order.order_id} SKU mismatch!"
-    print("Initial task generation verified: all orders covered correctly.")
+
+        # 2. 验证 Unique SKU 数量统计
+        original_unique_count = len(set(order.order_product_id_list))
+        task_unique_sum = order_unique_count_check[order.order_id]
+
+        print(f"Order {order.order_id}: Original Unique={original_unique_count}, Sum from Tasks={task_unique_sum}")
+        assert original_unique_count == task_unique_sum, f"Order {order.order_id} Unique SKU count mismatch!"
+
+    print("Initial task generation verified: all orders covered correctly and unique counts match.")
     #  模拟软耦合反馈：SP3 发现 Order 5 的某些任务因为容量太满无法使用 Sort 模式
     # 反馈：将 Order 5 的子任务容量限制降为 4
     sp1_solver.update_capacity_feedback(order_id=5, new_limit=4)
