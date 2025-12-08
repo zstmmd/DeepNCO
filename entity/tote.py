@@ -22,3 +22,13 @@ class Tote:
         self.sku_quantity_map={} # SKU id到数量的映射
     def __repr__(self):
         return f"Tote(id={self.id}, skus={len(self.skus_list)})"
+
+    def __hash__(self):
+        # 使用 id 进行哈希，确保可以在 set 中去重
+        return hash(self.id)
+
+    def __eq__(self, other):
+        # 判断两个 Tote 是否相等，只看 ID
+        if isinstance(other, Tote):
+            return self.id == other.id
+        return False

@@ -37,10 +37,27 @@ class Task:
     # 预计到达堆垛的时间
     arrival_time_at_stack: float = 0.0
 
-    estimated_service_time: float = 0.0  # 预计在这个点消耗的时间(挖掘或移位)
+    # --- 耗时统计 ---
+    # 机器人操作耗时 (挖掘/移位 + 抓取)
+    robot_service_time: float = 0.0
+    # 工作台操作耗时 (剔除噪音箱 + 拣选)
+    station_service_time: float = 0.0
 
     #预计到达工作站的时间 (用于软耦合时间窗检查)
     arrival_time_at_station: float = 0.0
+
+    @property
+    def total_load_count(self) -> int:
+        return len(self.target_tote_ids)
+
+    @property
+    def total_service_time(self) -> float:
+        """总耗时 = 机器人耗时 + 工作台耗时"""
+        return self.robot_service_time + self.station_service_time
+
+    @property
+    def estimated_service_time(self) -> float:
+        return self.total_service_time
 
     @property
     def total_load_count(self) -> int:
