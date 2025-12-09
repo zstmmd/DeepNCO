@@ -394,6 +394,8 @@ class SP4_Robot_Router:
                     'start_time': current_trip_tasks[0].arrival_time_at_stack if current_trip_tasks else current_time,
                     'end_time': current_time,
                     'tasks': current_trip_tasks,
+                    'depot_used': target_station_pt,  # ✅ 新增
+                    'depot_layer': trip_sequence,
                     'load': trip_load  # <--- [FIXED] 添加 load 字段，供后续打印使用
                 })
                 trip_sequence += 1
@@ -659,10 +661,83 @@ class SP4_Robot_Router:
                 for other in nodes[1:]:
                     for r in R:
                         m.addConstr(y[base, r] == y[other, r])
+        robot_subtask_groups = defaultdict(list)
+        for st_id, nodes in subtask_nodes.items():
+            st = next(t for t in valid_tasks if t.id == st_id)
+            if st.station_sequence_rank >= 0:  # 只处理有排序信息的任务
+                # 获取该 SubTask 的代表节点（取第一个）
+                repr_node = nodes[0]
+                robot_subtask_groups[st.assigned_station_id].append((st, repr_node))
+        # 为每个机器人添加约束
+        for r in R:
+            # 收集该机器人可能执行的 SubTask（按 station_sequence_rank 排序）
+            candidate_subtasks = []
+            for station_id, st_nodes_list in robot_subtask_groups.items():
+                for st, repr_node in st_nodes_list:
+                    # 如果该节点可能被机器人 r 访问
+                    candidate_subtasks.append((st, repr_node, st.station_sequence_rank))
+            
+            if len(candidate_subtasks) < 2:
+                continue  # 少于 2 个任务不需要排序约束
+            
+            # 按 station_sequence_rank 排序
+            candidate_subtasks.sort(key=lambda x: x[2])
+            
+            # 添加时间序约束：如果两个 SubTask 都被机器人 r 执行，
+            # 则 rank 小的必须在时间上早于 rank 大的
+            for idx in range(len(candidate_subtasks) - 1):
+                st_early, node_early, rank_early = candidate_subtasks[idx]
+                st_late, node_late, rank_late = candidate_subtasks[idx + 1]
+                if st_early.assigned_station_id != st_late.assigned_station_id:
+                    early_nodes = subtask_nodes[st_early.id]
+                    late_nodes = subtask_nodes[st_late.id]
+                    
+                    # 对于每一对 early-late 节点
+                    for i in early_nodes:
+                        for j in late_nodes:
+                            # 如果两者都被 r 访问，则 T[i] + service[i] <= T[j]
+                            both_flag = m.addVar(vtype=GRB.BINARY)
+                            m.addConstr(both_flag <= y[i, r])
+                            m.addConstr(both_flag <= y[j, r])
+                            m.addConstr(both_flag >= y[i, r] + y[j, r] - 1)
+                            
+                            # Indicator 约束
+                            m.addGenConstrIndicator(
+                                both_flag, True, 
+                                T[i, r] + service_time[i] <= T[j, r],
+                                name=f"SeqRank_{i}_{j}_{r}"
+                            )
+               
+        # 7. 对称性破缺约束 (防止机器人互换产生等价解)
+        m.addConstrs(
+            gp.quicksum(y[i, r] for i in stack_nodes_indices) >=  # ✅ 修复
+            gp.quicksum(y[i, r + 1] for i in stack_nodes_indices)  # ✅ 修复
+            for r in range(len(R) - 1)
+        )
+        # 1. 定义 Makespan 变量 Z
+        Z = m.addVar(vtype=GRB.CONTINUOUS, name="Makespan")
 
-        # 目标函数：最小化总距离
-        obj = gp.quicksum(tau[i, j] * x[i, j, r] for i, j, r in x)
-        m.setObjective(obj, GRB.MINIMIZE)
+        # 2. 收集所有的 Depot 节点索引
+        # depot_layer_nodes 结构是: {station_id: {trip_layer_k: node_id}}
+        all_depot_nodes = []
+        for station_dict in depot_layer_nodes.values():
+            for node_id in station_dict.values():
+                all_depot_nodes.append(node_id)
+
+        # 3. 添加 Makespan 约束
+        # 逻辑：对于每一个机器人 r，如果它访问了某个 Depot 节点 d，那么 Z 必须大于该节点的到达时间
+        for r in R:
+            for d in all_depot_nodes:
+                # 使用 Indicator Constraint: if y[d, r] == 1, then Z >= T[d, r]
+                # 注意：如果有卸货时间(t_drop), 应该是 Z >= T[d, r] + t_drop
+                m.addGenConstrIndicator(y[d, r], True, Z >= T[d, r])
+
+        # 4. 设置目标函数：最小化 Makespan
+        # 加上一点点总距离惩罚(epsilon)，用于在时间相同时选择路程更短的方案
+        epsilon = 0.01
+        total_dist = gp.quicksum(tau[i, j] * x[i, j, r] for i, j, r in x)
+
+        m.setObjective(Z + epsilon * total_dist, GRB.MINIMIZE)
 
         print("  >>> [SP4] Generating heuristic warm start...")
         # 1. 运行启发式获取物理路径
