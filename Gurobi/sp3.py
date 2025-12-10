@@ -407,7 +407,7 @@ class SP3_Bin_Hitter:
 
                 stack_plan = self._greedy_tote_selection_v2(task)
 
-                accumulated_load = 0
+                # accumulated_load = 0
                 current_batch_tasks = []
 
                 for stack_idx in stack_plan.keys():
@@ -443,56 +443,49 @@ class SP3_Bin_Hitter:
                         noise_totes_ids = []
                         layer_range = None
 
-                    current_task_load = len(physical_totes_ids)
+                    all_physical_ids = physical_totes_ids
 
-                    # ✅ 关键修复：检查单个任务容量
-                    if current_task_load > self.robot_capacity:
-                        continue
+                    # 只要还有未处理的箱子，就继续生成 Task
+                    while all_physical_ids:
+                        # 1. 切分当前批次 (最大为 robot_capacity)
+                        batch_ids = all_physical_ids[:self.robot_capacity]
+                        all_physical_ids = all_physical_ids[self.robot_capacity:]  # 剩余的
 
-                    # ✅ 关键修复：检查累加后容量
-                    if accumulated_load + current_task_load > self.robot_capacity:
-                        print(f"  ⚠️ [Heuristic] SubTask {task.id} would exceed capacity "
-                              f"({accumulated_load} + {current_task_load} > {self.robot_capacity})")
-                        print(f"      Stopping at this Stack to avoid over-capacity.")
-                        break  # ✅ 停止本 SubTask 的后续 Stack 处理
+                        batch_set = set(batch_ids)
 
-                    # 生成 Task
-                    new_task = Task(
-                        task_id=self._global_task_id,
-                        sub_task_id=task.id,
-                        target_stack_id=stack_idx,
-                        target_station_id=task.assigned_station_id,
-                        operation_mode=mode,
-                        target_tote_ids=physical_totes_ids,
-                        hit_tote_ids=hit_totes_ids,
-                        robot_service_time=rc_time,
-                        station_service_time=sc_time,
-                        noise_tote_ids=noise_totes_ids,
-                        sort_layer_range=layer_range
-                    )
+                        # 2. 区分当前批次中的 Hit 和 Noise
+                        batch_hits = [t for t in hit_totes_ids if t in batch_set]
+                        batch_noise = [t for t in noise_totes_ids if t in batch_set]
 
-                    task.add_execution_detail(new_task, stack)
-                    physical_tasks.append(new_task)
-                    current_batch_tasks.append(new_task)
+                        # 3. 生成 Task
+                        new_task = Task(
+                            task_id=self._global_task_id,
+                            sub_task_id=task.id,
+                            target_stack_id=stack_idx,
+                            target_station_id=task.assigned_station_id,
+                            operation_mode=mode,
+                            target_tote_ids=batch_ids,
+                            hit_tote_ids=batch_hits,
+                            robot_service_time=rc_time,  # 注意：这里简化处理，每次都算一次服务时间
+                            station_service_time=sc_time,
+                            noise_tote_ids=batch_noise,
+                            sort_layer_range=layer_range
+                        )
 
-                    # 累加负载
-                    accumulated_load += current_task_load
+                        task.add_execution_detail(new_task, stack)
+                        physical_tasks.append(new_task)
+                        current_batch_tasks.append(new_task)
 
-                    self._global_task_id += 1
-                    self._apply_stack_modification(new_task)
+                        self._global_task_id += 1
 
-                    final_tote_selection[task.id].extend(physical_totes_ids)
-                    if sc_time > 0:
-                        final_sorting_costs[task.id] += sc_time
+                        # 4. 模拟出库 (关键：每次 Task 生成后都要更新虚拟层级，这样下一趟次的状态才是对的)
+                        self._apply_stack_modification(new_task)
 
-                # ✅ 最终验证
-                if accumulated_load > self.robot_capacity:
-                    print(f"  ❌ CRITICAL: SubTask {task.id} final load = {accumulated_load} > {self.robot_capacity}!")
-                    for t in current_batch_tasks:
-                        print(f"      Task {t.task_id}: Stack {t.target_stack_id}, Load={len(t.target_tote_ids)}")
+                        final_tote_selection[task.id].extend(batch_ids)
+                        if sc_time > 0:
+                            final_sorting_costs[task.id] += sc_time
 
             return physical_tasks, final_tote_selection, final_sorting_costs
-        
         def _initialize_stack_snapshots(self):
             """初始化堆垛快照和虚拟层级"""
             for stack in self.problem.stack_list:
@@ -595,7 +588,6 @@ class SP3_Bin_Hitter:
             改进的贪婪选箱策略：
             1. 优先选择浅层 Tote
             2. 考虑 Bundle 效应（多 SKU 同堆垛）
-            3. 预估容量消耗
             """
             pending_skus = set(sku.id for sku in task.sku_list)
             sku_availability = defaultdict(list)
@@ -619,7 +611,6 @@ class SP3_Bin_Hitter:
                     sku_availability[sku_id].append(tote)
 
             selected_stacks_map = defaultdict(list)
-            estimated_load = 0  # ✅ 全局容量追踪
 
             while pending_skus:
                 stack_score = {}  # {stack_idx: score}
@@ -643,28 +634,8 @@ class SP3_Bin_Hitter:
                         normalized_layer = virtual_layer / max(stack_height - 1, 1)
                         layer_bonus = 10 * (1 - normalized_layer)  # 顶层 10 分，底层 0 分
 
-                        # ✅ 评分因素 3: 预估容量消耗（优先低消耗）
-                        if s_idx not in stack_estimated_cost:
-                            # 粗略估计：如果选这个 Stack，最坏情况需要搬多少层
-                            needed_totes_in_stack = [
-                                t for t in current_snapshot
-                                if any(sku.id in pending_skus for sku in t.skus_list)
-                            ]
-                            if needed_totes_in_stack:
-                                layers = [self._get_virtual_layer(t.id) for t in needed_totes_in_stack]
-                                estimated_range = max(layers) - min(layers) + 1
-                                stack_estimated_cost[s_idx] = min(estimated_range, self.robot_capacity)
-                            else:
-                                stack_estimated_cost[s_idx] = 1
-
-                        # 容量惩罚（如果预估超容量，降低分数）
-                        capacity_penalty = 0
-                        if estimated_load + stack_estimated_cost[s_idx] > self.robot_capacity:
-                            capacity_penalty = 50  # 大幅降低分数
-
                         # ✅ 综合评分
-                        total_score = bundle_bonus + layer_bonus - capacity_penalty
-
+                        total_score = bundle_bonus + layer_bonus
                         if s_idx not in stack_score:
                             stack_score[s_idx] = 0
                         stack_score[s_idx] += total_score
@@ -680,19 +651,6 @@ class SP3_Bin_Hitter:
                 best_stack_idx = max(stack_score, key=stack_score.get)
                 chosen_totes = stack_candidate_totes[best_stack_idx]
 
-                # ✅ 容量检查：如果加入这个 Stack 会超容量，停止贪婪
-                projected_cost = stack_estimated_cost.get(best_stack_idx, 1)
-                if estimated_load + projected_cost > self.robot_capacity:
-                    print(f"  ⚠️ [Heuristic] Adding Stack {best_stack_idx} would exceed capacity "
-                          f"({estimated_load} + {projected_cost} > {self.robot_capacity})")
-                    # 尝试只选部分 Tote（浅层优先）
-                    chosen_totes = sorted(chosen_totes, key=lambda t: self._get_virtual_layer(t.id), reverse=True)
-                    chosen_totes = chosen_totes[:self.robot_capacity - estimated_load]
-
-                    if not chosen_totes:
-                        print(f"  ⚠️ [Heuristic] No space left, stopping greedy selection.")
-                        break
-
                 # 更新选择
                 for t in chosen_totes:
                     if t not in selected_stacks_map[best_stack_idx]:
@@ -702,9 +660,8 @@ class SP3_Bin_Hitter:
                         if s_in_tote.id in pending_skus:
                             pending_skus.remove(s_in_tote.id)
 
-                estimated_load += projected_cost
-
             return selected_stacks_map
+
         def _decide_operation_mode(self,
                                    stack: Stack,
                                    target_totes: List[Tote],
