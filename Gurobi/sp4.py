@@ -987,7 +987,9 @@ if __name__ == "__main__":
     print(f"  ✓ Station load distribution:")
     for s_id, count in sorted(station_loads.items()):
         print(f"      Station {s_id}: {count} tasks")
-
+    #输出每个subtask被分配到的工作站
+    for task in sub_tasks:
+        print(f"    SubTask {task.id} assigned to Station {task.assigned_station_id}")
     # 4. SP3: 选箱决策
     sp3 = SP3_Bin_Hitter(problem_dto)
     physical_tasks, tote_selection, sorting_costs = sp3.SP3_Heuristic_Solver(problem_dto).solve(
@@ -1013,7 +1015,11 @@ if __name__ == "__main__":
     print(f"\n=== SP3 Results ===")
     print(f"Generated {len(physical_tasks)} physical tasks")
     print(f"Total sorting cost: {sum(sorting_costs.values()):.2f}")
-
+    #验证每个task的选箱结果
+    for task in physical_tasks:
+        print(f"Physical Task {task.task_id}: SubTask {task.sub_task_id}, "
+              f"Stack {task.target_stack_id}, Tote {task.hit_tote_ids}, noise {task.noise_tote_ids}"
+              f"Load {task.total_load_count}, Service Time {task.robot_service_time}s")
     # 5. SP4: 机器人路径规划
     sp4 = SP4_Robot_Router(problem_dto)
     arrival_times, robot_assign = sp4.solve(sub_tasks, use_mip=True)
