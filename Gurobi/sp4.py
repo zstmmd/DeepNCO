@@ -33,133 +33,242 @@ class SP4_Robot_Router:
         self.robot_speed = OFSConfig.ROBOT_SPEED
         self.t_shift = OFSConfig.PACKING_TIME
         self.t_lift = OFSConfig.LIFTING_TIME
-
     def _apply_warm_start_layered(self,
-                                  model: gp.Model,
-                                  x: gp.tupledict,
-                                  y: gp.tupledict,
-                                  T: gp.tupledict,
-                                  L: gp.tupledict,
-                                  trip: gp.tupledict,
-                                  heu_robot_assign: Dict[int, int],
-                                  heu_arrival_times: Dict[int, float],
-                                  nodes_map: Dict,
-                                  depot_layer_nodes: Dict,
-                                  robot_start_nodes: Dict,
-                                  stack_nodes_indices: List[int],
-                                  tau: Dict,
-                                  demand: Dict,
-                                  service_time: Dict,
-                                  max_trips: int):
+                              model: gp.Model,
+                              x: gp.tupledict,
+                              y: gp.tupledict,
+                              T: gp.tupledict,
+                              L: gp.tupledict,
+                              trip: gp.tupledict,
+                              heu_robot_assign: Dict[int, int],
+                              heu_arrival_times: Dict[int, float],
+                              nodes_map: Dict,
+                              depot_layer_nodes: Dict,
+                              robot_start_nodes: Dict,
+                              stack_nodes_indices: List[int],
+                              tau: Dict,
+                              demand: Dict,
+                              service_time: Dict,
+                              max_trips: int):
         """
-        [修复版] 分层图 Warm Start 注入逻辑
+        [完全重构版] 启发式路径 -> MIP 分层图映射
         """
-        print(f"  >>> [SP4] Applying Layered Warm Start...")
-
-        point_id_to_node = {}
-        for i in stack_nodes_indices:
-            pt_obj = nodes_map[i][0]
-            point_id_to_node[pt_obj.idx] = i
-
-        robot_tasks = defaultdict(list)
-        for st_id, r_id in heu_robot_assign.items():
-            st_obj = next(t for t in self.problem.subtask_list if t.id == st_id)
-            for task in st_obj.execution_tasks:
-                pt_idx = self.problem.point_to_stack[task.target_stack_id].store_point.idx
-                if pt_idx in heu_arrival_times:
-                    node_id = point_id_to_node.get(pt_idx)
-                    if node_id is not None:
-                        robot_tasks[r_id].append((heu_arrival_times[pt_idx], node_id, st_obj))
-
-        injected_vars = {'x': {}, 'y': {}, 'T': {}, 'L': {}, 'trip': {}}
-
-        for r_id, tasks in robot_tasks.items():
-            tasks.sort(key=lambda x: x[0])
-
+        print(f"  >>> [SP4] Applying Layered Warm Start (Fixed Version)...")
+        
+        # ===== 第一步：建立物理位置 -> MIP 节点的映射 =====
+        # 1.1 Stack 节点映射 (Point.idx -> MIP node_id)
+        # 🔧 修复：使用多重键匹配 (subtask_id, stack_id)
+        point_to_stack_nodes = defaultdict(list)
+        for node_id in stack_nodes_indices:
+            pt_obj, subtask, task_obj, _, _ = nodes_map[node_id]
+            point_to_stack_nodes[pt_obj.idx].append({
+                'node_id': node_id,
+                'subtask_id': subtask.id,
+                'stack_id': task_obj.target_stack_id,  # 🔧 改用 stack_id
+                'task_obj': task_obj  # 保留引用，但不用于匹配
+            })
+        
+        # 1.2 Depot 节点映射 (Station ID -> Layer -> MIP node_id)
+        # depot_layer_nodes 已经是 {station_id: {trip_k: node_id}} 格式
+        
+        # ===== 第二步：从启发式结果中提取机器人路径 =====
+        robot_physical_routes = defaultdict(list)
+        
+        for subtask in self.problem.subtask_list:
+            if not subtask.execution_tasks:
+                continue
+            
+            r_id = heu_robot_assign.get(subtask.id)
+            if r_id is None:
+                continue
+            
+            for task in subtask.execution_tasks:
+                # 从启发式结果中获取关键信息
+                arrival_time = getattr(task, 'arrival_time_at_stack', None)
+                trip_idx = getattr(task, 'robot_visit_sequence', 0)
+                
+                if arrival_time is None:
+                    print(f"  ⚠️ Task (SubTask {task.sub_task_id}, Stack {task.target_stack_id}) missing arrival_time, skipping")
+                    continue
+                
+                stack_obj = self.problem.point_to_stack[task.target_stack_id]
+                point_idx = stack_obj.store_point.idx
+                
+                robot_physical_routes[r_id].append({
+                    'time': arrival_time,
+                    'trip': trip_idx,
+                    'point_idx': point_idx,
+                    'stack_id': task.target_stack_id,  # 🔧 新增：显式记录 stack_id
+                    'subtask': subtask,
+                    'task_obj': task,
+                    'demand': task.total_load_count,
+                    'service_time': task.robot_service_time
+                })
+        
+        # 按时间和 trip 排序（确保顺序正确）
+        for r_id in robot_physical_routes:
+            robot_physical_routes[r_id].sort(key=lambda x: (x['trip'], x['time']))
+        
+        # ===== 第三步：映射到 MIP 图并注入 =====
+        injected = {'x': {}, 'y': {}, 'T': {}, 'L': {}, 'trip': {}}
+        
+        for r_id, route in robot_physical_routes.items():
+            if not route:
+                continue
+            
+            print(f"\n  [Robot {r_id}] Processing {len(route)} visits...")
+            
+            # 起点：机器人起始节点
             current_node = robot_start_nodes[r_id]
             current_time = 0.0
             current_load = 0.0
-            current_trip = 1
-
-            # 🔧 修复：起点设置
+            current_trip = 1  # MIP 中的 Trip 从 1 开始
+            
+            # 注入起点
             if (current_node, r_id) in y:
                 y[current_node, r_id].Start = 1
                 T[current_node, r_id].Start = 0.0
-                # ⚠️ 起点不设置 L (如果不在定义域)
-                if (current_node, r_id) in L:
-                    L[current_node, r_id].Start = 0.0
-
-                injected_vars['y'][(current_node, r_id)] = 1
-                injected_vars['T'][(current_node, r_id)] = 0.0
-
-            for i, (arrival_guess, next_node, st_obj) in enumerate(tasks):
-                node_demand = demand[next_node]
-                target_station = st_obj.assigned_station_id
-
-                is_new_trip = False
-
-                if current_load + node_demand > self.robot_capacity + 0.001:
-                    is_new_trip = True
-
-                if is_new_trip:
-                    if current_trip >= max_trips:
-                        print(f"  ⚠️ Warning: Robot {r_id} exceeds max_trips. Truncating.")
-                        break
-
-                    prev_st_obj = tasks[i - 1][2] if i > 0 else st_obj
-                    depot_node = depot_layer_nodes[prev_st_obj.assigned_station_id][current_trip]
-
+                injected['y'][(current_node, r_id)] = 1
+                injected['T'][(current_node, r_id)] = 0.0
+            
+            last_subtask = None
+            last_station_id = None
+            
+            for idx, visit in enumerate(route):
+                point_idx = visit['point_idx']
+                stack_id = visit['stack_id']  # 🔧 新增
+                visit_time = visit['time']
+                visit_trip = visit['trip']
+                visit_demand = visit['demand']
+                visit_service = visit['service_time']
+                subtask = visit['subtask']
+                task_obj = visit['task_obj']
+                
+                # ===== 关键：检测是否需要回 Depot =====
+                need_depot_return = False
+                target_station_id = subtask.assigned_station_id
+                
+                if idx > 0:
+                    prev_visit = route[idx - 1]
+                    
+                    # 条件 1: 容量检查
+                    if current_load + visit_demand > self.robot_capacity + 0.001:
+                        need_depot_return = True
+                    
+                    # 条件 2: SubTask 切换
+                    if subtask.id != last_subtask.id:
+                        need_depot_return = True
+                    
+                    # 条件 3: 启发式 Trip 变化
+                    if visit_trip != prev_visit['trip']:
+                        need_depot_return = True
+                
+                # ===== 执行 Depot 返回逻辑 =====
+                if need_depot_return:
+                    prev_station = last_station_id
+                    depot_node = depot_layer_nodes[prev_station][current_trip]
+                    
+                    # Stack -> Depot 边
                     if (current_node, depot_node, r_id) in x:
                         x[current_node, depot_node, r_id].Start = 1
-                        injected_vars['x'][(current_node, depot_node, r_id)] = 1
-
-                    travel_time = tau.get((current_node, depot_node), 1000)
-                    current_time += service_time.get(current_node, 0) + travel_time
-
-                    # 🔧 修复：Depot 节点不设置 trip 变量（它不在定义域内）
+                        injected['x'][(current_node, depot_node, r_id)] = 1
+                    
+                    # 更新时间
+                    travel_time = tau.get((current_node, depot_node), 0)
+                    prev_service = service_time.get(current_node, 0)
+                    current_time += prev_service + travel_time
+                    
+                    # 注入 Depot 节点
                     if (depot_node, r_id) in y:
                         y[depot_node, r_id].Start = 1
                         T[depot_node, r_id].Start = current_time
-                        if (depot_node, r_id) in L:
-                            L[depot_node, r_id].Start = 0.0
-
-                        injected_vars['y'][(depot_node, r_id)] = 1
-                        injected_vars['T'][(depot_node, r_id)] = current_time
-
-                    current_node = depot_node
+                        injected['y'][(depot_node, r_id)] = 1
+                        injected['T'][(depot_node, r_id)] = current_time
+                    
+                    # 清空负载，进入下一 Trip
                     current_load = 0.0
+                    current_node = depot_node
                     current_trip += 1
-
-                # 前往 Stack
-                if (current_node, next_node, r_id) in x:
-                    x[current_node, next_node, r_id].Start = 1
-                    injected_vars['x'][(current_node, next_node, r_id)] = 1
-
-                travel_time = tau.get((current_node, next_node), 1000)
-                prev_service = service_time.get(current_node, 0.0)
+                    
+                    if current_trip > max_trips:
+                        print(f"  ⚠️ Robot {r_id} exceeds max_trips={max_trips}, truncating")
+                        break
+                
+                # ===== 访问 Stack 节点 =====
+                # 🔧 修复：使用 (subtask_id, stack_id) 组合键匹配
+                candidates = point_to_stack_nodes.get(point_idx, [])
+                target_node = None
+                
+                for cand in candidates:
+                    # 精确匹配：SubTask ID + Stack ID
+                    if cand['subtask_id'] == subtask.id and cand['stack_id'] == stack_id:
+                        target_node = cand['node_id']
+                        break
+                
+                if target_node is None:
+                    print(f"  ❌ Cannot find MIP node for Point {point_idx} "
+                        f"(SubTask {subtask.id}, Stack {stack_id})")
+                    print(f"      Available candidates: {[(c['subtask_id'], c['stack_id']) for c in candidates]}")
+                    continue
+                
+                # 注入边: current_node -> target_node
+                if (current_node, target_node, r_id) in x:
+                    x[current_node, target_node, r_id].Start = 1
+                    injected['x'][(current_node, target_node, r_id)] = 1
+                else:
+                    print(f"  ⚠️ Arc ({current_node}, {target_node}, {r_id}) not in model, skipping")
+                
+                # 更新时间和负载
+                travel_time = tau.get((current_node, target_node), 0)
+                prev_service = service_time.get(current_node, 0)
                 current_time += prev_service + travel_time
-                current_load += node_demand
-
-                # 🔧 修复：只为 Stack 节点设置 trip
-                if (next_node, r_id) in y:
-                    y[next_node, r_id].Start = 1
-                    T[next_node, r_id].Start = current_time
-                    L[next_node, r_id].Start = current_load
-
-                    # ✅ trip 只在 stack_nodes_indices 中定义
-                    if next_node in stack_nodes_indices and (next_node, r_id) in trip:
-                        trip[next_node, r_id].Start = current_trip
-                        injected_vars['trip'][(next_node, r_id)] = current_trip
-
-                    injected_vars['y'][(next_node, r_id)] = 1
-                    injected_vars['T'][(next_node, r_id)] = current_time
-                    injected_vars['L'][(next_node, r_id)] = current_load
-
-                current_node = next_node
-
-        print(f"  >>> Layered Warm Start Injection Complete.")
-        self._verify_warm_start_solution(injected_vars, nodes_map, depot_layer_nodes, tau, demand, service_time)
-
+                current_load += visit_demand
+                
+                # 注入 Stack 节点变量
+                if (target_node, r_id) in y:
+                    y[target_node, r_id].Start = 1
+                    T[target_node, r_id].Start = current_time
+                    L[target_node, r_id].Start = current_load
+                    
+                    # Trip 变量 (只有 Stack 节点有)
+                    if (target_node, r_id) in trip:
+                        trip[target_node, r_id].Start = current_trip
+                        injected['trip'][(target_node, r_id)] = current_trip
+                    
+                    injected['y'][(target_node, r_id)] = 1
+                    injected['T'][(target_node, r_id)] = current_time
+                    injected['L'][(target_node, r_id)] = current_load
+                
+                # 更新状态
+                current_node = target_node
+                last_subtask = subtask
+                last_station_id = target_station_id
+            
+            # ===== 路径结束：回到最后一个 SubTask 的目标 Station =====
+            if last_station_id is not None:
+                final_depot = depot_layer_nodes[last_station_id][current_trip]
+                
+                if (current_node, final_depot, r_id) in x:
+                    x[current_node, final_depot, r_id].Start = 1
+                    injected['x'][(current_node, final_depot, r_id)] = 1
+                
+                travel_time = tau.get((current_node, final_depot), 0)
+                prev_service = service_time.get(current_node, 0)
+                current_time += prev_service + travel_time
+                
+                if (final_depot, r_id) in y:
+                    y[final_depot, r_id].Start = 1
+                    T[final_depot, r_id].Start = current_time
+                    injected['y'][(final_depot, r_id)] = 1
+                    injected['T'][(final_depot, r_id)] = current_time
+        
+        print(f"  >>> Warm Start Injection Complete.")
+        print(f"      - x: {len(injected['x'])} arcs")
+        print(f"      - y: {len(injected['y'])} nodes")
+        print(f"      - trip: {len(injected['trip'])} assignments")
+        
+        # 验证注入解的可行性
+        self._verify_warm_start_solution(injected, nodes_map, depot_layer_nodes, tau, demand, service_time)
     def _verify_warm_start_solution(self,
                                     vals: Dict,
                                     nodes_map: Dict,
@@ -168,54 +277,89 @@ class SP4_Robot_Router:
                                     demand: Dict,
                                     service_time: Dict):
         """
-        [修复版] 验证注入解的可行性
+        验证注入解的逻辑正确性
         """
-        print(f"  >>> [SP4] Verifying Warm Start Logic...")
+        print(f"  >>> [SP4] Verifying Warm Start Solution...")
+        
         x_s = vals.get('x', {})
         y_s = vals.get('y', {})
         trip_s = vals.get('trip', {})
-
+        T_s = vals.get('T', {})
+        L_s = vals.get('L', {})
+        
         violations = []
-
+        
         # 1. 流守恒检查
+        node_flow = defaultdict(lambda: {'in': 0, 'out': 0})
         for (i, j, r), val in x_s.items():
             if val > 0.5:
+                node_flow[(i, r)]['out'] += 1
+                node_flow[(j, r)]['in'] += 1
+                
+                # 检查端点是否激活
                 if y_s.get((i, r), 0) < 0.5:
                     violations.append(f"Flow error: x[{i},{j},{r}]=1 but y[{i},{r}]=0")
                 if y_s.get((j, r), 0) < 0.5:
                     violations.append(f"Flow error: x[{i},{j},{r}]=1 but y[{j},{r}]=0")
-
-        # 2. 层级逻辑检查（只检查有 trip 值的节点）
+        
+        # 检查度数平衡（除起点外）
+        for (node, r), flow in node_flow.items():
+            node_type = nodes_map[node][3]
+            if node_type != 'robot_start' and flow['in'] != flow['out']:
+                violations.append(f"Flow imbalance at node {node} (r={r}): in={flow['in']}, out={flow['out']}")
+        
+        # 2. Trip 逻辑检查
         for (i, j, r), val in x_s.items():
-            if val > 0.5:
-                type_i = nodes_map[i][3]
-                type_j = nodes_map[j][3]
-
-                # 🔧 修复：安全获取 trip 值
-                trip_i = trip_s.get((i, r))
-                trip_j = trip_s.get((j, r))
-
-                if type_i == 'depot' and type_j == 'stack':
-                    depot_layer = nodes_map[i][4]
-                    if trip_j is not None and trip_j != depot_layer + 1:
-                        violations.append(f"Layer error: Depot(L={depot_layer})->Stack, but Stack trip={trip_j}")
-
-                elif type_i == 'stack' and type_j == 'depot':
-                    depot_layer = nodes_map[j][4]
-                    if trip_i is not None and trip_i != depot_layer:
-                        violations.append(f"Layer error: Stack(trip={trip_i})->Depot(L={depot_layer})")
-
-                elif type_i == 'stack' and type_j == 'stack':
-                    if trip_i is not None and trip_j is not None and trip_i != trip_j:
-                        violations.append(f"Trip error: Stack->Stack jump from {trip_i} to {trip_j}")
-
+            if val < 0.5:
+                continue
+            
+            type_i = nodes_map[i][3]
+            type_j = nodes_map[j][3]
+            
+            trip_i = trip_s.get((i, r))
+            trip_j = trip_s.get((j, r))
+            
+            # Stack -> Stack: trip 必须相同
+            if type_i == 'stack' and type_j == 'stack':
+                if trip_i is not None and trip_j is not None and trip_i != trip_j:
+                    violations.append(f"Stack->Stack trip jump: {i}(trip={trip_i}) -> {j}(trip={trip_j})")
+            
+            # Stack -> Depot: Stack.trip 必须等于 Depot.layer
+            if type_i == 'stack' and type_j == 'depot':
+                depot_layer = nodes_map[j][4]
+                if trip_i is not None and trip_i != depot_layer:
+                    violations.append(f"Stack->Depot mismatch: Stack {i}(trip={trip_i}) -> Depot {j}(layer={depot_layer})")
+            
+            # Depot -> Stack: Stack.trip 必须等于 Depot.layer + 1
+            if type_i == 'depot' and type_j == 'stack':
+                depot_layer = nodes_map[i][4]
+                if trip_j is not None and trip_j != depot_layer + 1:
+                    violations.append(f"Depot->Stack mismatch: Depot {i}(layer={depot_layer}) -> Stack {j}(trip={trip_j})")
+        
+        # 3. 容量检查
+        for (node, r), load in L_s.items():
+            if load > self.robot_capacity + 0.01:
+                violations.append(f"Capacity violation at node {node} (r={r}): load={load:.2f}")
+        
+        # 4. 时间单调性检查（沿路径）
+        for (i, j, r), val in x_s.items():
+            if val < 0.5:
+                continue
+            
+            t_i = T_s.get((i, r))
+            t_j = T_s.get((j, r))
+            
+            if t_i is not None and t_j is not None:
+                expected_t_j = t_i + service_time.get(i, 0) + tau.get((i, j), 0)
+                if t_j < expected_t_j - 0.01:
+                    violations.append(f"Time violation: {i}->{j}, T[{j}]={t_j:.2f} < expected {expected_t_j:.2f}")
+        
         if violations:
             print(f"  ❌ Verification Failed ({len(violations)} errors):")
-            for v in violations[:5]:
+            for v in violations[:10]:  # 只显示前 10 个
                 print(f"     - {v}")
         else:
-            print(f"  ✅ Warm Start Logic Verified.")
-
+            print(f"  ✅ Warm Start Solution Verified.")
     def _extract_sequence(self, x, y, T, trip, nodes_map, N, R, depot_layer_nodes, robot_start_nodes,
                           stack_nodes_indices):
         """

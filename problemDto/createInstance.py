@@ -35,19 +35,19 @@ class CreateOFSProblem:
         configs = {
             "SMALL": {
                 "map_size": (4, 4),  # 较小的地图
-                "resources": (3, 2, 80),  # 3个机器人, 2个工作站, 80个料箱
+                "resources": (3, 2, 200),  # 3个机器人, 2个工作站, 200个料箱
                 "data": (2, 60),  # 3个BOM, 30种SKU
                 "bom_complexity": (20, 5)  # 每个订单最多10种SKU，每种最多5个
             },
             "MEDIUM": {
                 "map_size": (8, 6),
-                "resources": (8, 4, 300),  # 8个机器人, 4个工作站, 300个料箱
+                "resources": (8, 4, 800),  # 8个机器人, 4个工作站, 800个料箱
                 "data": (10, 100),  # 10个BOM, 50种SKU
                 "bom_complexity": (40, 10)
             },
             "LARGE": {
                 "map_size": (12, 10),
-                "resources": (20, 8, 1000),  # 20个机器人, 8个工作站, 1000个料箱
+                "resources": (20, 8, 2000),  # 20个机器人, 8个工作站, 2000个料箱
                 "data": (20, 200),  # 20个bom, 100种SKU
                 "bom_complexity": (60, 20)
             }
@@ -177,7 +177,16 @@ class CreateOFSProblem:
         available_points: List[Point] = list(map_.pod_list)
         if not available_points:
             raise ValueError("地图中没有 'pod' (type 3) 节点，无法放置料箱。")
-        unassigned_skus = set(skus_list_obj)
+        hot_sku_count = max(1, int(skus_num * 0.2))
+        hot_skus = skus_list_obj[:hot_sku_count]  
+        cold_skus = skus_list_obj[hot_sku_count:]
+        def sample_sku_by_popularity() -> SKUs:
+            """按热门度加权采样 SKU"""
+            if random.random() < 0.8:  # 80% 概率选热门品
+                return random.choice(hot_skus)
+            else:
+                return random.choice(cold_skus) if cold_skus else random.choice(hot_skus)
+
         # 关键：定义 3D 堆叠。
         # 结构: Dict[point_idx, List[Tote]]
         # List[0] 是 layer 0 (底部), List[-1] 是顶部
@@ -191,51 +200,106 @@ class CreateOFSProblem:
             )
             stack_list.append(stack)
             point_to_stack[point.idx] = stack
+        min_redundancy_per_hot_sku = 5  # 每个热门 SKU 至少在 5 个 Stack 中
+        desired_tote_count = max(
+            tote_num,
+            hot_sku_count * min_redundancy_per_hot_sku  # 动态下界
+        )
+        unassigned_skus = set(skus_list_obj)
+        random.shuffle(stack_list)  # 随机化 Stack 顺序
         # 填充料箱逻辑
         # 我们可以遍历 Stack 列表来填充，而不是原来的 while 循环
         # 为了随机性，可以 shuffle stack_list
         random.shuffle(stack_list)
         current_tote_id = 0
+        initial_assignment_stacks = []
+
         for stack in stack_list:
-            if current_tote_id >= tote_num: break
+            if not unassigned_skus or current_tote_id >= desired_tote_count:
+                break
+            
+            # 为该 Stack 创建一个 Tote
+            tote = Tote(current_tote_id)
+            
+            # 从未分配集合中选 1-2 个 SKU (确保快速覆盖)
+            num_skus = min(2, len(unassigned_skus))
+            selected = random.sample(list(unassigned_skus), num_skus)
+            
+            tote.skus_list = selected
+            tote.capacity = [random.randint(15, 50) for _ in selected]
+            tote.sku_quantity_map = {sku.id: cap for sku, cap in zip(selected, tote.capacity)}
+            
+            # 更新 SKU 反向索引
+            for sku in selected:
+                sku.storeToteList.append(tote.id)
+                sku.storeQuantityList.append(tote.sku_quantity_map[sku.id])
+                sku.tote_quantity_map[tote.id] = tote.sku_quantity_map[sku.id]
+                unassigned_skus.discard(sku)
+            
+            # 加入 Stack
+            stack.add_tote(tote)
+            tote_list.append(tote)
+            initial_assignment_stacks.append(stack)
+            current_tote_id += 1
+        # 重新 Shuffle Stack 列表,确保后续填充的随机性
+        random.shuffle(stack_list)
 
-            # 随机决定该堆垛的高度 (1 ~ max)
-            stack_height = random.randint(1, stack.max_height)
-
-            for layer in range(stack_height):
-                if current_tote_id >= tote_num: break
-
+        for stack in stack_list:
+            if current_tote_id >= desired_tote_count:
+                break
+            
+            # 随机决定该 Stack 的高度 (1 ~ max_height)
+            current_height = stack.current_height
+            max_additional = stack.max_height - current_height
+            
+            if max_additional <= 0:
+                continue
+            
+            # 随机决定要填充的层数 (1 到剩余空间)
+            layers_to_fill = random.randint(1, max_additional)
+            
+            for _ in range(layers_to_fill):
+                if current_tote_id >= desired_tote_count:
+                    break
+                
                 tote = Tote(current_tote_id)
-
-
-                # --- SKU 填充逻辑 (保持原逻辑不变) ---
-                num_skus_in_tote = random.randint(1, 2)
+                
+                # ===== 关键修改: 加权随机采样 SKU =====
+                num_skus_in_tote = random.randint(3, 5)  # 增加到 3-5 种
                 tote_skus: List[SKUs] = []
+                
                 for _ in range(num_skus_in_tote):
-                    if unassigned_skus:
-                        sku_to_add = unassigned_skus.pop()
-                        tote_skus.append(sku_to_add)
-                    else:
-                        available_for_tote = [s for s in skus_list_obj if s not in tote_skus]
-                        if available_for_tote:
-                            tote_skus.append(random.choice(available_for_tote))
-                        else:
+                    attempts = 0
+                    while attempts < 10:  # 防止死循环
+                        candidate = sample_sku_by_popularity()
+                        # 避免重复
+                        if candidate not in tote_skus:
+                            tote_skus.append(candidate)
                             break
-                if not tote_skus: continue
-
+                        attempts += 1
+                
+                if not tote_skus:
+                    continue
+                # 设置库存 (热门品给更多库存)
+                tote.capacity = []
+                for sku in tote_skus:
+                    if sku in hot_skus:
+                        qty = random.randint(20, 60)  # 热门品库存更多
+                    else:
+                        qty = random.randint(10, 40)  # 冷门品适中
+                    tote.capacity.append(qty)
+                
                 tote.skus_list = tote_skus
-                tote.capacity = [random.randint(10, 50) for _ in tote_skus]
                 tote.sku_quantity_map = {sku.id: cap for sku, cap in zip(tote_skus, tote.capacity)}
-
-                # 更新SKU的反向索引
-                for sku_in_tote in tote.skus_list:
-                    sku_in_tote.storeToteList.append(tote.id)
-                    sku_in_tote.storeQuantityList.append(tote.sku_quantity_map[sku_in_tote.id])
-                    sku_in_tote.tote_quantity_map.update({tote.id: tote.sku_quantity_map[sku_in_tote.id]})
-
-                # --- 关键修改：将 Tote 加入 Stack ---
-                stack.add_tote(tote)  # 这个方法会自动设置 tote.store_point, layer, is_top
-
+                
+                # 更新 SKU 反向索引
+                for sku in tote_skus:
+                    sku.storeToteList.append(tote.id)
+                    sku.storeQuantityList.append(tote.sku_quantity_map[sku.id])
+                    sku.tote_quantity_map[tote.id] = tote.sku_quantity_map[sku.id]
+                
+                # 加入 Stack
+                stack.add_tote(tote)
                 tote_list.append(tote)
                 current_tote_id += 1
 
