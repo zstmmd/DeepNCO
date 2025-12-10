@@ -14,7 +14,6 @@ from config.ofs_config import OFSConfig
 import copy
 
 
-
 class SP3_Bin_Hitter:
     """
     SP3 子问题求解器：料箱命中
@@ -33,13 +32,13 @@ class SP3_Bin_Hitter:
         self.robot_capacity = OFSConfig.ROBOT_CAPACITY
         self.alpha = 1.0
         self.w_routing = 0.5
-        self.stack_allocation: Dict[int, int] = {} 
+        self.stack_allocation: Dict[int, int] = {}
         self.BigM = 10000
 
         # ✅ 虚拟层级管理
         self.stack_snapshots: Dict[int, List[Tote]] = {}  # {stack_id: [current_totes]}
         self.layer_mapping: Dict[int, int] = {}  # {tote_id: virtual_layer}
-        
+
     def solve(self,
               sub_tasks: List[SubTask],
               beta_congestion: float = 1.0,
@@ -53,25 +52,25 @@ class SP3_Bin_Hitter:
         final_tote_selection = defaultdict(list)
         final_sorting_costs = defaultdict(float)
         self._global_task_id = 0
-        
+
         sorted_tasks = sorted(sub_tasks, key=lambda t: (
             len(t.unique_sku_list),
             t.station_sequence_rank if t.station_sequence_rank >= 0 else 999
         ))
-        
+
         for task in sorted_tasks:
             task.reset_execution_details()
-            if task.assigned_station_id == -1: 
+            if task.assigned_station_id == -1:
                 continue
 
             p_tasks, totes, cost = self._solve_single_subtask_mip(
                 task, beta_congestion, sp4_routing_costs
             )
-            
+
             # 先占用堆垛
             for pt in p_tasks:
                 self.stack_allocation[pt.target_stack_id] = task.id
-            
+
             # 再模拟出库（更新虚拟层级）
             for pt in p_tasks:
                 self._apply_stack_modification(pt)
@@ -79,9 +78,9 @@ class SP3_Bin_Hitter:
             physical_tasks.extend(p_tasks)
             final_tote_selection[task.id] = totes
             final_sorting_costs[task.id] = cost
-        
+
         return physical_tasks, final_tote_selection, final_sorting_costs
-    
+
     def _initialize_stack_snapshots(self):
         """
         初始化堆垛快照和虚拟层级映射
@@ -90,55 +89,56 @@ class SP3_Bin_Hitter:
         for stack in self.problem.stack_list:
             # 浅拷贝列表（Tote 对象共享）
             self.stack_snapshots[stack.stack_id] = list(stack.totes)
-            
+
             # ✅ 初始化虚拟层级（基于原始位置）
             for i, tote in enumerate(stack.totes):
                 self.layer_mapping[tote.id] = i
-    
+
     def _get_virtual_layer(self, tote_id: int) -> int:
         """获取 Tote 的虚拟层级"""
         return self.layer_mapping.get(tote_id, -1)
-    
+
     def _apply_stack_modification(self, task: Task):
         """
         模拟出库并更新虚拟层级
         关键：不修改 tote.layer 和 stack.totes
         """
         stack_id = task.target_stack_id
-        
+
         if stack_id not in self.stack_snapshots:
             print(f"  [Warning] Stack {stack_id} not in snapshots.")
             return
-        
+
         current_totes = self.stack_snapshots[stack_id]
-        
+
         # 1. 根据操作模式计算剩余 Tote
         if task.operation_mode == 'FLIP':
             removed_ids = set(task.target_tote_ids)
             remaining_totes = [t for t in current_totes if t.id not in removed_ids]
-            
+
             print(f"  [SP3] Stack {stack_id} FLIP: Removed {len(removed_ids)} totes, {len(remaining_totes)} remain.")
-        
+
         elif task.operation_mode == 'SORT':
             if task.sort_layer_range is None:
                 return
-            
+
             low, high = task.sort_layer_range
             # ✅ 使用虚拟层级判断
             remaining_totes = [
-                t for t in current_totes 
+                t for t in current_totes
                 if not (low <= self._get_virtual_layer(t.id) <= high)
             ]
-            
-            print(f"  [SP3] Stack {stack_id} SORT [{low}, {high}]: Removed {len(current_totes) - len(remaining_totes)} totes.")
-        
+
+            print(
+                f"  [SP3] Stack {stack_id} SORT [{low}, {high}]: Removed {len(current_totes) - len(remaining_totes)} totes.")
+
         else:
             return
-        
+
         # 2. ✅ 更新虚拟层级（不修改 Tote 对象）
         for i, tote in enumerate(remaining_totes):
             self.layer_mapping[tote.id] = i  # 只更新映射表
-        
+
         # 3. 更新快照列表
         self.stack_snapshots[stack_id] = remaining_totes
 
@@ -160,24 +160,24 @@ class SP3_Bin_Hitter:
                 tote = self.problem.id_to_tote.get(tote_id)
                 if not (tote and tote.store_point):
                     continue
-                
+
                 stack_idx = tote.store_point.idx
-                
+
                 if stack_idx not in self.stack_snapshots:
                     continue
-                
+
                 current_totes_in_stack = self.stack_snapshots[stack_idx]
                 tote_still_exists = any(t.id == tote_id for t in current_totes_in_stack)
-                
+
                 if not tote_still_exists:
                     continue
-                
+
                 candidate_stack_indices.add(stack_idx)
-                    
+
         U = list(candidate_stack_indices)
-        if not U: 
+        if not U:
             return [], [], 0.0
-        
+
         stack_bin_map = {}
         for u in U:
             if u in self.stack_snapshots:
@@ -230,7 +230,7 @@ class SP3_Bin_Hitter:
             current_totes = self.stack_snapshots.get(u, [])
             max_h = len(current_totes)
             top_layer_idx = max_h - 1
-            
+
             bin_sum = gp.quicksum(u_use[b.id] for b in bins)
             m.addConstr(m_flip[u] + m_sort[u] <= 1)
             m.addConstr(bin_sum <= self.BigM * (m_flip[u] + m_sort[u]))
@@ -300,7 +300,7 @@ class SP3_Bin_Hitter:
                     layer_range = None
                     robot_time_val = 0.0
                     station_time_val = 0.0
-                    
+
                     all_totes_in_stack = stack_bin_map[u]
 
                     if is_sort_mode:
@@ -347,7 +347,7 @@ class SP3_Bin_Hitter:
                             noise_tote_ids=noise_totes,
                             sort_layer_range=layer_range
                         )
-                        
+
                         target_stack_obj = self.problem.point_to_stack.get(u)
                         if target_stack_obj:
                             task.add_execution_detail(new_task, target_stack_obj)
@@ -361,8 +361,6 @@ class SP3_Bin_Hitter:
 
         return p_tasks, selected_totes_for_feedback, total_sc_cost
 
-
-    
     class SP3_Heuristic_Solver:
         """SP3 启发式求解器（使用虚拟层级）"""
 
@@ -375,13 +373,10 @@ class SP3_Bin_Hitter:
             self.alpha = 2.0
             self.stack_allocation: Dict[int, int] = {}
             self._global_task_id = 0
-            
+
             # ✅ 虚拟层级管理
             self.stack_snapshots: Dict[int, List[Tote]] = {}
             self.layer_mapping: Dict[int, int] = {}
-
-
-
 
         def solve(self,
                   sub_tasks: List[SubTask],
@@ -394,7 +389,7 @@ class SP3_Bin_Hitter:
             final_tote_selection = defaultdict(list)
             final_sorting_costs = defaultdict(float)
             self.stack_allocation = {}
-            
+
             sorted_tasks = sorted(sub_tasks, key=lambda t: (
                 len(t.unique_sku_list),
                 t.station_sequence_rank if t.station_sequence_rank >= 0 else 999
@@ -486,26 +481,27 @@ class SP3_Bin_Hitter:
                             final_sorting_costs[task.id] += sc_time
 
             return physical_tasks, final_tote_selection, final_sorting_costs
+
         def _initialize_stack_snapshots(self):
             """初始化堆垛快照和虚拟层级"""
             for stack in self.problem.stack_list:
                 self.stack_snapshots[stack.stack_id] = list(stack.totes)
                 for i, tote in enumerate(stack.totes):
                     self.layer_mapping[tote.id] = i
-        
+
         def _get_virtual_layer(self, tote_id: int) -> int:
             """获取 Tote 的虚拟层级"""
             return self.layer_mapping.get(tote_id, -1)
-        
+
         def _apply_stack_modification(self, task: Task):
             """模拟出库并更新虚拟层级"""
             stack_id = task.target_stack_id
-            
+
             if stack_id not in self.stack_snapshots:
                 return
-            
+
             current_totes = self.stack_snapshots[stack_id]
-            
+
             if task.operation_mode == 'FLIP':
                 removed_ids = set(task.target_tote_ids)
                 remaining_totes = [t for t in current_totes if t.id not in removed_ids]
@@ -514,18 +510,18 @@ class SP3_Bin_Hitter:
                     return
                 low, high = task.sort_layer_range
                 remaining_totes = [
-                    t for t in current_totes 
+                    t for t in current_totes
                     if not (low <= self._get_virtual_layer(t.id) <= high)
                 ]
             else:
                 return
-            
+
             # ✅ 只更新虚拟层级
             for i, tote in enumerate(remaining_totes):
                 self.layer_mapping[tote.id] = i
-            
+
             self.stack_snapshots[stack_id] = remaining_totes
-        
+
         def _greedy_tote_selection(self, task: SubTask) -> Dict[int, List[Tote]]:
             """贪婪选箱策略"""
             pending_skus = set(sku.id for sku in task.sku_list)
@@ -537,17 +533,17 @@ class SP3_Bin_Hitter:
                     tote = self.problem.id_to_tote.get(tote_id)
                     if not (tote and tote.store_point):
                         continue
-                    
+
                     stack_idx = tote.store_point.idx
                     if stack_idx not in self.stack_snapshots:
                         continue
-                    
+
                     current_totes_in_stack = self.stack_snapshots[stack_idx]
                     tote_still_exists = any(t.id == tote_id for t in current_totes_in_stack)
-                    
+
                     if not tote_still_exists:
                         continue
-                    
+
                     sku_availability[sku_id].append(tote)
 
             selected_stacks_map = defaultdict(list)
@@ -588,51 +584,96 @@ class SP3_Bin_Hitter:
             改进的贪婪选箱策略：
             1. 优先选择浅层 Tote
             2. 考虑 Bundle 效应（多 SKU 同堆垛）
+            3. ✅ 实时检查虚拟层级可用性
             """
             pending_skus = set(sku.id for sku in task.sku_list)
-            sku_availability = defaultdict(list)
-
-            # 收集所有候选 Tote
-            for sku_id in pending_skus:
-                sku_obj = self.problem.id_to_sku[sku_id]
-                for tote_id in sku_obj.storeToteList:
-                    tote = self.problem.id_to_tote.get(tote_id)
-                    if not (tote and tote.store_point):
-                        continue
-
-                    stack_idx = tote.store_point.idx
-                    if stack_idx not in self.stack_snapshots:
-                        continue
-
-                    current_totes_in_stack = self.stack_snapshots[stack_idx]
-                    if not any(t.id == tote_id for t in current_totes_in_stack):
-                        continue
-
-                    sku_availability[sku_id].append(tote)
 
             selected_stacks_map = defaultdict(list)
 
             while pending_skus:
-                stack_score = {}  # {stack_idx: score}
-                stack_candidate_totes = defaultdict(list)
-                stack_estimated_cost = {}  # ✅ 预估每个 Stack 的容量消耗
+                # ✅ 关键修复：每轮重新计算 sku_availability
+                sku_availability = defaultdict(list)
 
                 for sku_id in pending_skus:
-                    candidates = sku_availability[sku_id]
+                    sku_obj = self.problem.id_to_sku[sku_id]
+                    for tote_id in sku_obj.storeToteList:
+                        tote = self.problem.id_to_tote.get(tote_id)
+                        if not (tote and tote.store_point):
+                            continue
+
+                        stack_idx = tote.store_point.idx
+
+                        # ✅ 检查 1: Stack 是否已被其他 SubTask 占用
+                        if stack_idx in self.stack_allocation:
+                            allocated_to = self.stack_allocation[stack_idx]
+                            if allocated_to != task.id:  # 被其他任务占用
+                                continue
+
+                        # ✅ 检查 2: Tote 是否还在虚拟堆垛中
+                        if stack_idx not in self.stack_snapshots:
+                            continue
+
+                        current_totes_in_stack = self.stack_snapshots[stack_idx]
+                        if not any(t.id == tote_id for t in current_totes_in_stack):
+                            continue
+
+                        sku_availability[sku_id].append(tote)
+
+                # ✅ 检查是否有可用候选
+                if not sku_availability:
+                    print(f"  ⚠️ [Heuristic] Cannot find totes for remaining SKUs: {pending_skus}")
+                    print(f"      SubTask: {task.id}")
+                    print(f"      Stack Allocation: {dict(self.stack_allocation)}")
+
+                    # 🔍 诊断信息：打印每个 SKU 的存储位置
+                    for sku_id in pending_skus:
+                        sku_obj = self.problem.id_to_sku[sku_id]
+                        print(f"      SKU {sku_id} stored in totes: {sku_obj.storeToteList}")
+
+                        for tote_id in sku_obj.storeToteList:
+                            tote = self.problem.id_to_tote.get(tote_id)
+                            if not tote:
+                                continue
+
+                            stack_idx = tote.store_point.idx if tote.store_point else None
+
+                            if stack_idx is None:
+                                print(f"        - Tote {tote_id}: No store point")
+                            elif stack_idx not in self.stack_snapshots:
+                                print(f"        - Tote {tote_id} @ Stack {stack_idx}: Stack not in snapshots")
+                            else:
+                                current_totes = self.stack_snapshots[stack_idx]
+                                still_exists = any(t.id == tote_id for t in current_totes)
+                                allocation_status = self.stack_allocation.get(stack_idx, "Free")
+
+                                print(f"        - Tote {tote_id} @ Stack {stack_idx}: "
+                                      f"Exists={still_exists}, "
+                                      f"Allocated to={allocation_status}, "
+                                      f"Virtual Layer={self._get_virtual_layer(tote_id)}")
+                    break
+
+                stack_score = {}
+                stack_candidate_totes = defaultdict(list)
+
+                for sku_id in pending_skus:
+                    candidates = sku_availability.get(sku_id, [])
                     for tote in candidates:
                         s_idx = tote.store_point.idx
 
-                        # ✅ 评分因素 1: Bundle 效应（已选过的 Stack 加分）
+                        # ✅ 评分因素 1: Bundle 效应
                         bundle_bonus = 100 if s_idx in selected_stacks_map else 1
 
-                        # ✅ 评分因素 2: 层级惩罚（浅层优先）
+                        # ✅ 评分因素 2: 层级惩罚
                         virtual_layer = self._get_virtual_layer(tote.id)
                         current_snapshot = self.stack_snapshots.get(s_idx, [])
                         stack_height = len(current_snapshot)
 
-                        # 归一化层级 (0=Bottom, 1=Top)
-                        normalized_layer = virtual_layer / max(stack_height - 1, 1)
-                        layer_bonus = 10 * (1 - normalized_layer)  # 顶层 10 分，底层 0 分
+                        if stack_height > 1:
+                            normalized_layer = virtual_layer / (stack_height - 1)
+                        else:
+                            normalized_layer = 0  # 只有一个箱子，没有深度概念
+
+                        layer_bonus = 10 * (1 - normalized_layer)
 
                         # ✅ 综合评分
                         total_score = bundle_bonus + layer_bonus
@@ -644,7 +685,7 @@ class SP3_Bin_Hitter:
                             stack_candidate_totes[s_idx].append(tote)
 
                 if not stack_score:
-                    print(f"  ⚠️ [Heuristic] Cannot find totes for remaining SKUs: {pending_skus}")
+                    print(f"  ⚠️ [Heuristic] No valid stack candidates for SKUs: {pending_skus}")
                     break
 
                 # 选择最高分的 Stack
@@ -668,12 +709,14 @@ class SP3_Bin_Hitter:
                                    beta: float) -> Tuple[str, Optional[Tuple[int, int]], float, float]:
             """模式决策（使用虚拟层级）"""
             stack_id = stack.stack_id
+            if stack_id ==1916:
+                print('1')
             current_snapshot = self.stack_snapshots.get(stack_id, [])
             current_height = len(current_snapshot)
-            
+
             if current_height == 0:
                 return ('FLIP', None, 0.0, 0.0)
-            
+
             # ✅ 使用虚拟层级
             target_indices = [self._get_virtual_layer(t.id) for t in target_totes]
             top_layer_idx = current_height - 1
@@ -732,7 +775,6 @@ class SP3_Bin_Hitter:
                 return res_flip
 
 
-
 if __name__ == "__main__":
 
     # ==========================================
@@ -785,6 +827,8 @@ if __name__ == "__main__":
             problem.id_to_tote[t.id] = t
 
         return problem, [sku1, sku2, sku3]
+
+
     def run_test():
         # 1. 准备环境
         problem, target_skus = create_mock_problem()
@@ -847,7 +891,6 @@ if __name__ == "__main__":
     # ==========================================
     # 2. Test Execution
     # ==========================================
-
 
     def verify_result(solver_name, tasks):
         if not tasks:

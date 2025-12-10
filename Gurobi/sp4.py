@@ -563,7 +563,7 @@ class SP4_Robot_Router:
             for route in routes:
                 print(f"  Trip {route['trip']}: {len(route['tasks'])} tasks, "
                       f"load={route['load']}/{self.robot_capacity}, "
-                      f"time [{route['start_time']:.1f}s, {route['end_time']:.1f}s]")
+                      f"time [{route['start_time']:.1f}s, {route['end_time']:.1f}s]，depot use {route['depot_used']},depot layer {route['depot_layer']}  ")
 
                 for seq, task in enumerate(route['tasks']):
                     print(f"    [{seq}] Stack {task.target_stack_id} @ {task.arrival_time_at_stack:.1f}s "
@@ -932,6 +932,85 @@ class SP4_Robot_Router:
         return robot_arrival_times, subtask_robot_assign
 
 
+def checksp3hit(
+        sub_tasks: List[SubTask], problem):
+    print(f"  >>>🔍 SP3 结果验证：检查料箱命中是否满足 SubTask 的 SKU 需求  ...")
+
+    for st in sub_tasks:
+        if st.assigned_station_id == -1:
+            print(f" >>>warning1！！！！")
+
+        # 1. 统计 SubTask 的 SKU 需求
+        required_skus = {}  # {sku_id: required_quantity}
+        for sku in st.sku_list:
+            required_skus[sku.id] = required_skus.get(sku.id, 0) + 1
+
+        # 2. 统计 execution_tasks 中所有 hit_tote_ids 提供的 SKU
+        provided_skus = {}  # {sku_id: provided_quantity}
+
+        for task in st.execution_tasks:
+            for tote_id in task.hit_tote_ids:
+                tote = problem.id_to_tote.get(tote_id)
+                if not tote:
+                    print(f"  ❌ [SubTask {st.id}] Tote {tote_id} not found in problem.id_to_tote")
+                    validation_passed = False
+                    continue
+
+                # 累加该料箱提供的 SKU 数量
+                for sku_id, qty in tote.sku_quantity_map.items():
+                    provided_skus[sku_id] = provided_skus.get(sku_id, 0) + qty
+
+        # 3. 检查覆盖性
+        missing_skus = []
+        excess_skus = []
+
+        for sku_id, required_qty in required_skus.items():
+            provided_qty = provided_skus.get(sku_id, 0)
+
+            if provided_qty < required_qty:
+                missing_skus.append((sku_id, required_qty - provided_qty))
+                validation_passed = False
+            elif provided_qty > required_qty:
+                excess_skus.append((sku_id, provided_qty - required_qty))
+
+        # 4. 检查是否有不需要的 SKU
+        unexpected_skus = []
+        for sku_id in provided_skus:
+            if sku_id not in required_skus:
+                unexpected_skus.append((sku_id, provided_skus[sku_id]))
+
+        # 5. 输出验证结果
+        if missing_skus :
+            print(f"\n  ❌ [SubTask {st.id}] Validation FAILED:")
+            print(f"      Required SKUs: {required_skus}")
+            print(f"      Provided SKUs: {provided_skus}")
+
+            if missing_skus:
+                print(f"      ⚠️ Missing SKUs:")
+                for sku_id, shortage in missing_skus:
+                    print(f"         - SKU {sku_id}: Need {shortage} more")
+
+
+
+            # 详细列出涉及的料箱
+            print(f"      📦 Hit Totes ({len(st.assigned_tote_ids)} total):")
+            for task_idx, task in enumerate(st.execution_tasks):
+                print(f"         Task {task_idx} @ Stack {task.target_stack_id}:")
+                print(f"           - Hit: {task.hit_tote_ids}")
+                print(f"           - Noise: {task.noise_tote_ids}")
+                for tote_id in task.hit_tote_ids:
+                    tote = problem.id_to_tote.get(tote_id)
+                    if tote:
+                        print(f"             Tote {tote_id}: {tote.sku_quantity_map}")
+
+        else:
+            print(f"  ✅ [SubTask {st.id}] Validation PASSED "
+                  f"({len(required_skus)} SKU types, {sum(required_skus.values())} units)")
+
+
+    print(f"  >>> ✅ SP3 Validation Complete. All SubTasks have sufficient tote coverage.\n")
+
+
 if __name__ == "__main__":
     from Gurobi.sp1 import SP1_BOM_Splitter
     from Gurobi.sp2 import SP2_Station_Assigner
@@ -1020,7 +1099,9 @@ if __name__ == "__main__":
         print(f"Physical Task {task.task_id}: SubTask {task.sub_task_id}, "
               f"Stack {task.target_stack_id}, Tote {task.hit_tote_ids}, noise {task.noise_tote_ids}"
               f"Load {task.total_load_count}, Service Time {task.robot_service_time}s")
-    # 5. SP4: 机器人路径规划
+    # #验证hit
+    # checksp3hit(sub_tasks,problem_dto)
+    # # 5. SP4: 机器人路径规划
     sp4 = SP4_Robot_Router(problem_dto)
     arrival_times, robot_assign = sp4.solve(sub_tasks, use_mip=True)
     # ✅ 回填结果
@@ -1048,3 +1129,4 @@ if __name__ == "__main__":
     for st_id, r_id in robot_assign.items():
         st = next(t for t in sub_tasks if t.id == st_id)
         print(f"SubTask {st_id} -> Robot {r_id} | Tasks: {len(st.execution_tasks)}")
+
