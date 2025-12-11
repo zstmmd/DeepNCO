@@ -33,241 +33,205 @@ class SP4_Robot_Router:
         self.robot_speed = OFSConfig.ROBOT_SPEED
         self.t_shift = OFSConfig.PACKING_TIME
         self.t_lift = OFSConfig.LIFTING_TIME
+        # --- 初始化 Logger ---
+        log_dir = os.path.join(ROOT_DIR, 'log')
+        # 实例化 logger
+        self.logger = SP4Logger(log_dir, filename="sp4_debug.txt")
     def _apply_warm_start_layered(self,
-                              model: gp.Model,
-                              x: gp.tupledict,
-                              y: gp.tupledict,
-                              T: gp.tupledict,
-                              L: gp.tupledict,
-                              trip: gp.tupledict,
-                              heu_robot_assign: Dict[int, int],
-                              heu_arrival_times: Dict[int, float],
-                              nodes_map: Dict,
-                              depot_layer_nodes: Dict,
-                              robot_start_nodes: Dict,
-                              stack_nodes_indices: List[int],
-                              tau: Dict,
-                              demand: Dict,
-                              service_time: Dict,
-                              max_trips: int):
+                                  model: gp.Model,
+                                  x: gp.tupledict,
+                                  y: gp.tupledict,
+                                  T: gp.tupledict,
+                                  L: gp.tupledict,
+                                  trip: gp.tupledict,
+                                  heu_robot_assign: Dict[int, int],
+                                  heu_arrival_times: Dict[int, float],
+                                  nodes_map: Dict,
+                                  depot_layer_nodes: Dict,
+                                  robot_start_nodes: Dict,
+                                  stack_nodes_indices: List[int],
+                                  tau: Dict,
+                                  demand: Dict,
+                                  service_time: Dict,
+                                  max_trips: int):
         """
-        [完全重构版] 启发式路径 -> MIP 分层图映射
+        [完全重构版] 启发式路径 -> MIP 分层图映射，并记录日志
         """
         print(f"  >>> [SP4] Applying Layered Warm Start (Fixed Version)...")
-        
+
         # ===== 第一步：建立物理位置 -> MIP 节点的映射 =====
-        # 1.1 Stack 节点映射 (Point.idx -> MIP node_id)
-        # 🔧 修复：使用多重键匹配 (subtask_id, stack_id)
         point_to_stack_nodes = defaultdict(list)
         for node_id in stack_nodes_indices:
             pt_obj, subtask, task_obj, _, _ = nodes_map[node_id]
             point_to_stack_nodes[pt_obj.idx].append({
                 'node_id': node_id,
                 'subtask_id': subtask.id,
-                'stack_id': task_obj.target_stack_id,  # 🔧 改用 stack_id
-                'task_obj': task_obj  # 保留引用，但不用于匹配
+                'stack_id': task_obj.target_stack_id,
+                'task_obj': task_obj
             })
-        
-        # 1.2 Depot 节点映射 (Station ID -> Layer -> MIP node_id)
-        # depot_layer_nodes 已经是 {station_id: {trip_k: node_id}} 格式
-        
+
         # ===== 第二步：从启发式结果中提取机器人路径 =====
         robot_physical_routes = defaultdict(list)
-        
+
         for subtask in self.problem.subtask_list:
             if not subtask.execution_tasks:
                 continue
-            
+
             r_id = heu_robot_assign.get(subtask.id)
             if r_id is None:
                 continue
-            
+
             for task in subtask.execution_tasks:
-                # 从启发式结果中获取关键信息
                 arrival_time = getattr(task, 'arrival_time_at_stack', None)
                 trip_idx = getattr(task, 'robot_visit_sequence', 0)
-                
+
                 if arrival_time is None:
-                    print(f"  ⚠️ Task (SubTask {task.sub_task_id}, Stack {task.target_stack_id}) missing arrival_time, skipping")
                     continue
-                
+
                 stack_obj = self.problem.point_to_stack[task.target_stack_id]
                 point_idx = stack_obj.store_point.idx
-                
+
                 robot_physical_routes[r_id].append({
                     'time': arrival_time,
                     'trip': trip_idx,
                     'point_idx': point_idx,
-                    'stack_id': task.target_stack_id,  # 🔧 新增：显式记录 stack_id
+                    'stack_id': task.target_stack_id,
                     'subtask': subtask,
                     'task_obj': task,
                     'demand': task.total_load_count,
                     'service_time': task.robot_service_time
                 })
-        
-        # 按时间和 trip 排序（确保顺序正确）
+
         for r_id in robot_physical_routes:
             robot_physical_routes[r_id].sort(key=lambda x: (x['trip'], x['time']))
-        
+
         # ===== 第三步：映射到 MIP 图并注入 =====
         injected = {'x': {}, 'y': {}, 'T': {}, 'L': {}, 'trip': {}}
-        
+
         for r_id, route in robot_physical_routes.items():
             if not route:
                 continue
-            
-            print(f"\n  [Robot {r_id}] Processing {len(route)} visits...")
-            
+
             # 起点：机器人起始节点
             current_node = robot_start_nodes[r_id]
             current_time = 0.0
             current_load = 0.0
-            current_trip = 1  # MIP 中的 Trip 从 1 开始
-            
+            current_trip = 1
+
             # 注入起点
             if (current_node, r_id) in y:
                 y[current_node, r_id].Start = 1
                 T[current_node, r_id].Start = 0.0
                 injected['y'][(current_node, r_id)] = 1
                 injected['T'][(current_node, r_id)] = 0.0
-            
+
             last_subtask = None
             last_station_id = None
-            
+
             for idx, visit in enumerate(route):
                 point_idx = visit['point_idx']
-                stack_id = visit['stack_id']  # 🔧 新增
-                visit_time = visit['time']
+                stack_id = visit['stack_id']
                 visit_trip = visit['trip']
                 visit_demand = visit['demand']
-                visit_service = visit['service_time']
                 subtask = visit['subtask']
-                task_obj = visit['task_obj']
-                
-                # ===== 关键：检测是否需要回 Depot =====
+
+                # 检测是否需要回 Depot
                 need_depot_return = False
                 target_station_id = subtask.assigned_station_id
-                
+
                 if idx > 0:
                     prev_visit = route[idx - 1]
-                    
-                    # 条件 1: 容量检查
                     if current_load + visit_demand > self.robot_capacity + 0.001:
                         need_depot_return = True
-                    
-                    # 条件 2: SubTask 切换
                     if subtask.id != last_subtask.id:
                         need_depot_return = True
-                    
-                    # 条件 3: 启发式 Trip 变化
                     if visit_trip != prev_visit['trip']:
                         need_depot_return = True
-                
-                # ===== 执行 Depot 返回逻辑 =====
+
+                # 执行 Depot 返回逻辑
                 if need_depot_return:
                     prev_station = last_station_id
                     depot_node = depot_layer_nodes[prev_station][current_trip]
-                    
-                    # Stack -> Depot 边
+
                     if (current_node, depot_node, r_id) in x:
                         x[current_node, depot_node, r_id].Start = 1
                         injected['x'][(current_node, depot_node, r_id)] = 1
-                    
-                    # 更新时间
+
                     travel_time = tau.get((current_node, depot_node), 0)
                     prev_service = service_time.get(current_node, 0)
                     current_time += prev_service + travel_time
-                    
-                    # 注入 Depot 节点
+
                     if (depot_node, r_id) in y:
                         y[depot_node, r_id].Start = 1
                         T[depot_node, r_id].Start = current_time
                         injected['y'][(depot_node, r_id)] = 1
                         injected['T'][(depot_node, r_id)] = current_time
-                    
-                    # 清空负载，进入下一 Trip
+
                     current_load = 0.0
                     current_node = depot_node
                     current_trip += 1
-                    
+
                     if current_trip > max_trips:
-                        print(f"  ⚠️ Robot {r_id} exceeds max_trips={max_trips}, truncating")
                         break
-                
-                # ===== 访问 Stack 节点 =====
-                # 🔧 修复：使用 (subtask_id, stack_id) 组合键匹配
+
+                # 访问 Stack 节点
                 candidates = point_to_stack_nodes.get(point_idx, [])
                 target_node = None
-                
                 for cand in candidates:
-                    # 精确匹配：SubTask ID + Stack ID
                     if cand['subtask_id'] == subtask.id and cand['stack_id'] == stack_id:
                         target_node = cand['node_id']
                         break
-                
+
                 if target_node is None:
-                    print(f"  ❌ Cannot find MIP node for Point {point_idx} "
-                        f"(SubTask {subtask.id}, Stack {stack_id})")
-                    print(f"      Available candidates: {[(c['subtask_id'], c['stack_id']) for c in candidates]}")
                     continue
-                
-                # 注入边: current_node -> target_node
+
+                # 注入边
                 if (current_node, target_node, r_id) in x:
                     x[current_node, target_node, r_id].Start = 1
                     injected['x'][(current_node, target_node, r_id)] = 1
-                else:
-                    print(f"  ⚠️ Arc ({current_node}, {target_node}, {r_id}) not in model, skipping")
-                
-                # 更新时间和负载
+
                 travel_time = tau.get((current_node, target_node), 0)
                 prev_service = service_time.get(current_node, 0)
                 current_time += prev_service + travel_time
                 current_load += visit_demand
-                
-                # 注入 Stack 节点变量
+
                 if (target_node, r_id) in y:
                     y[target_node, r_id].Start = 1
                     T[target_node, r_id].Start = current_time
                     L[target_node, r_id].Start = current_load
-                    
-                    # Trip 变量 (只有 Stack 节点有)
+
                     if (target_node, r_id) in trip:
                         trip[target_node, r_id].Start = current_trip
                         injected['trip'][(target_node, r_id)] = current_trip
-                    
+
                     injected['y'][(target_node, r_id)] = 1
                     injected['T'][(target_node, r_id)] = current_time
                     injected['L'][(target_node, r_id)] = current_load
-                
-                # 更新状态
+
                 current_node = target_node
                 last_subtask = subtask
                 last_station_id = target_station_id
-            
-            # ===== 路径结束：回到最后一个 SubTask 的目标 Station =====
+
+            # 路径结束
             if last_station_id is not None:
                 final_depot = depot_layer_nodes[last_station_id][current_trip]
-                
                 if (current_node, final_depot, r_id) in x:
                     x[current_node, final_depot, r_id].Start = 1
                     injected['x'][(current_node, final_depot, r_id)] = 1
-                
+
                 travel_time = tau.get((current_node, final_depot), 0)
                 prev_service = service_time.get(current_node, 0)
                 current_time += prev_service + travel_time
-                
+
                 if (final_depot, r_id) in y:
                     y[final_depot, r_id].Start = 1
                     T[final_depot, r_id].Start = current_time
                     injected['y'][(final_depot, r_id)] = 1
                     injected['T'][(final_depot, r_id)] = current_time
-        
-        print(f"  >>> Warm Start Injection Complete.")
-        print(f"      - x: {len(injected['x'])} arcs")
-        print(f"      - y: {len(injected['y'])} nodes")
-        print(f"      - trip: {len(injected['trip'])} assignments")
-        
-        # 验证注入解的可行性
+
+        self.logger.log_heuristic_solution(injected, nodes_map)
+
+        # 验证注入解的可行性 (保留原有逻辑)
         self._verify_warm_start_solution(injected, nodes_map, depot_layer_nodes, tau, demand, service_time)
     def _verify_warm_start_solution(self,
                                     vals: Dict,
@@ -640,6 +604,8 @@ class SP4_Robot_Router:
                 nodes_map[node_id] = (station.point, None, None, 'depot', k)
                 node_id += 1
 
+        self.logger.log_node_definitions(nodes_map)
+
         N = range(node_id)
         R = range(len(self.problem.robot_list))
 
@@ -932,6 +898,92 @@ class SP4_Robot_Router:
         return robot_arrival_times, subtask_robot_assign
 
 
+import os
+from typing import Dict, List
+
+
+class SP4Logger:
+    def __init__(self, log_dir: str, filename: str = "sp4_debug.txt"):
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
+        self.file_path = os.path.join(log_dir, filename)
+        # 初始化时清空文件，避免追加混乱
+        with open(self.file_path, 'w', encoding='utf-8') as f:
+            f.write(f"=== SP4 Solver Debug Log ===\n")
+
+    def _get_node_desc(self, n_id: int, nodes_map: Dict) -> str:
+        """内部辅助函数：将 MIP node_id 转为人类可读字符串"""
+        if n_id not in nodes_map:
+            return f"Unknown_Node_{n_id}"
+
+        # nodes_map 结构: (point_obj, subtask, task_obj, type, layer)
+        pt, subtask, task_obj, n_type, layer = nodes_map[n_id]
+
+        if n_type == 'robot_start':
+            return f"StackPoint:{pt.idx}（x,y):({pt.x},{pt.y}) (Robot_Start)"
+
+        elif n_type == 'stack':
+            stack_id = task_obj.target_stack_id if task_obj else "Unknown"
+            st_id = subtask.id if subtask else "?"
+            return f"Stack_{stack_id}，StackPoint:{pt.idx}（x,y):({pt.x},{pt.y}),task_id:{task_obj.task_id} ，task_service_time：{task_obj.robot_service_time},task_mode:{task_obj.operation_mode},(SubTask_{st_id})"
+
+        elif n_type == 'depot':
+            # Depot 节点包含层级信息 (Trip)
+            return f"Station_Point_{pt.idx} (Trip_Layer_{layer})"
+
+        return f"Node_{n_id} ({n_type})"
+
+    def log_node_definitions(self, nodes_map: Dict):
+        """功能 1: 记录节点定义 (ID -> 物理含义)"""
+        print(f"  >>> [Log] Writing node definitions to {self.file_path} ...")
+        with open(self.file_path, 'a', encoding='utf-8') as f:
+            f.write("\n" + "=" * 60 + "\n")
+            f.write("PART 1: Node Definitions (MIP Graph Mapping)\n")
+            f.write("=" * 60 + "\n")
+            f.write(f"{'Node ID':<10} | {'Type':<12} | {'Description'}\n")
+            f.write("-" * 60 + "\n")
+
+            # 按 ID 排序输出
+            for n_id in sorted(nodes_map.keys()):
+                point, _, _, n_type, _ = nodes_map[n_id]
+                desc = self._get_node_desc(n_id, nodes_map)
+                f.write(f"{n_id:<10} | {n_type:<12} | {desc}\n")
+            f.write("\n")
+
+    def log_heuristic_solution(self, injected: Dict, nodes_map: Dict):
+        """功能 2: 记录启发式解的变量详情"""
+        print(f"  >>> [Log] Writing heuristic variables to {self.file_path} ...")
+        with open(self.file_path, 'a', encoding='utf-8') as f:
+            f.write("\n" + "=" * 60 + "\n")
+            f.write("PART 2: Heuristic Warm Start Variables\n")
+            f.write("=" * 60 + "\n")
+
+            # 1. 写入 X 变量
+            f.write("\n[Variables: x(i, j, r)]\n")
+            f.write(f"{'Variable':<25} | {'Val':<3} | {'Description (From -> To)'}\n")
+            f.write("-" * 80 + "\n")
+
+            # 排序：按机器人 -> 起点ID
+            sorted_x = sorted(injected['x'].items(), key=lambda item: (item[0][2], item[0][0]))
+
+            for (i, j, r), val in sorted_x:
+                desc_from = self._get_node_desc(i, nodes_map)
+                desc_to = self._get_node_desc(j, nodes_map)
+                f.write(f"x[{i}, {j}, {r}] = {val}     # Robot_{r}: {desc_from} --> {desc_to}\n")
+
+            # 2. 写入 Y 变量
+            f.write("\n[Variables: y(i, r)]\n")
+            sorted_y = sorted(injected['y'].items(), key=lambda item: (item[0][1], item[0][0]))
+            for (i, r), val in sorted_y:
+                desc = self._get_node_desc(i, nodes_map)
+                f.write(f"y[{i}, {r}] = {val}        # Robot_{r} visits {desc}\n")
+
+            # 3. 写入 T 变量
+            f.write("\n[Variables: T(i, r)]\n")
+            sorted_T = sorted(injected['T'].items(), key=lambda item: (item[0][1], item[1]))
+            for (i, r), val in sorted_T:
+                desc = self._get_node_desc(i, nodes_map)
+                f.write(f"T[{i}, {r}] = {val:.2f}s    # Robot_{r} at {desc}\n")
 def checksp3hit(
         sub_tasks: List[SubTask], problem):
     print(f"  >>>🔍 SP3 结果验证：检查料箱命中是否满足 SubTask 的 SKU 需求  ...")

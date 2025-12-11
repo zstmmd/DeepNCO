@@ -410,60 +410,105 @@ class SP3_Bin_Hitter:
 
                 for stack_idx, needed_totes in stack_plan.items():
                     stack = self.problem.point_to_stack[stack_idx]
-                    mode, layer_range, sc_time, rc_time = self._decide_operation_mode(
-                        stack, needed_totes, beta_congestion
-                    )
+                    pending_totes = list(needed_totes)
+                    while pending_totes:
+                        pending_totes.sort(key=lambda t: self._get_virtual_layer(t.id))
+                        if len(pending_totes) <= self.robot_capacity:
+                            current_batch = pending_totes
+                        else:
+                            # 计算最大连续层级数
+                            layers = [self._get_virtual_layer(t.id) for t in pending_totes]
+                            max_len = 0
+                            max_start_idx = 0
+                            curr_len = 1
+                            curr_start = 0
 
-                    # 计算物理负载
-                    physical_totes_ids = []
-                    hit_totes_ids = []
-                    noise_totes_ids = []
-                    needed_tote_ids_set = set(t.id for t in needed_totes)
-
-                    if mode == 'SORT':
-                        low, high = layer_range
-                        current_snapshot = self.stack_snapshots.get(stack_idx, [])
-
-                        for tote in current_snapshot:
-                            virtual_layer = self._get_virtual_layer(tote.id)
-                            if low <= virtual_layer <= high:
-                                physical_totes_ids.append(tote.id)
-                                if tote.id in needed_tote_ids_set:
-                                    hit_totes_ids.append(tote.id)
+                            # 遍历寻找最长连续序列
+                            for i in range(1, len(layers)):
+                                if layers[i] == layers[i - 1] + 1:
+                                    curr_len += 1
                                 else:
-                                    noise_totes_ids.append(tote.id)
-                    else:
-                        physical_totes_ids = [t.id for t in needed_totes]
-                        hit_totes_ids = [t.id for t in needed_totes]
+                                    if curr_len > max_len:
+                                        max_len = curr_len
+                                        max_start_idx = curr_start
+                                    curr_len = 1
+                                    curr_start = i
+                            # 检查最后一段
+                            if curr_len > max_len:
+                                max_len = curr_len
+                                max_start_idx = curr_start
+
+                            # --- 策略分支 ---
+                            if max_len > self.robot_capacity:
+                                # 策略 A: 最大连续层级 > 容量
+                                # -> 取该连续段的最低层开始，长度为 Capacity 的一段
+                                batch_indices = set(range(max_start_idx, max_start_idx + self.robot_capacity))
+                                current_batch = [pending_totes[i] for i in range(len(pending_totes)) if
+                                                     i in batch_indices]
+                            elif max_len < 2:
+                                # 策略 B: 离散分布 (最大连续数 < 2)
+                                # -> 均分 (取前一半，但不超过容量)
+                                take_count = min(len(pending_totes) // 2, self.robot_capacity)
+                                take_count = max(take_count, 1)  # 至少取1个防止死循环
+                                current_batch = pending_totes[:take_count]
+
+                            else:
+                                # 策略 C: 存在连续层级 (>=2)
+                                # -> 取最大连续段 (传入连续层级，剩余的留给下一轮)
+                                end_idx = max_start_idx + max_len
+                                batch_indices = set(range(max_start_idx, end_idx))
+                                current_batch = [pending_totes[i] for i in range(len(pending_totes)) if
+                                                 i in batch_indices]
+
+
+                        mode, layer_range, sc_time, rc_time = self._decide_operation_mode(
+                            stack, current_batch, beta_congestion
+                        )
+
+                        # 计算物理负载
+                        physical_totes_ids = []
+                        hit_totes_ids = []
                         noise_totes_ids = []
-                        layer_range = None
+                        needed_tote_ids_set = set(t.id for t in needed_totes)
 
-                    all_physical_ids = physical_totes_ids
+                        if mode == 'SORT':
+                            low, high = layer_range
+                            current_snapshot = self.stack_snapshots.get(stack_idx, [])
 
-                    # 只要还有未处理的箱子，就继续生成 Task
-                    while all_physical_ids:
-                        # 1. 切分当前批次 (最大为 robot_capacity)
-                        batch_ids = all_physical_ids[:self.robot_capacity]
-                        all_physical_ids = all_physical_ids[self.robot_capacity:]  # 剩余的
+                            for tote in current_snapshot:
+                                virtual_layer = self._get_virtual_layer(tote.id)
+                                if low <= virtual_layer <= high:
+                                    physical_totes_ids.append(tote.id)
 
-                        batch_set = set(batch_ids)
+                        else:
+                            physical_totes_ids = [t.id for t in current_batch]
 
-                        # 2. 区分当前批次中的 Hit 和 Noise
-                        batch_hits = [t for t in hit_totes_ids if t in batch_set]
-                        batch_noise = [t for t in noise_totes_ids if t in batch_set]
+                            layer_range = None
 
-                        # 3. 生成 Task
+                        # 5. 区分 Hit 和 Noise (基于该 Stack 的所有需求)
+                        # 注意：这里使用 all_needed_ids 而不是 current_batch，
+                        # 因为如果操作范围意外覆盖了 pending_totes 中其他的箱子，也应算作 Hit
+                        hit_totes_ids = []
+                        noise_totes_ids = []
+                        needed_tote_ids_set = set(t.id for t in needed_totes)
+
+                        for tid in physical_totes_ids:
+                            if tid in needed_tote_ids_set:
+                                hit_totes_ids.append(tid)
+                            else:
+                                noise_totes_ids.append(tid)
+                        # 6. 生成 Task
                         new_task = Task(
                             task_id=self._global_task_id,
                             sub_task_id=task.id,
                             target_stack_id=stack_idx,
                             target_station_id=task.assigned_station_id,
                             operation_mode=mode,
-                            target_tote_ids=batch_ids,
-                            hit_tote_ids=batch_hits,
-                            robot_service_time=rc_time,  # 注意：这里简化处理，每次都算一次服务时间
+                            target_tote_ids=physical_totes_ids,
+                            hit_tote_ids=hit_totes_ids,
+                            robot_service_time=rc_time,
                             station_service_time=sc_time,
-                            noise_tote_ids=batch_noise,
+                            noise_tote_ids=noise_totes_ids,
                             sort_layer_range=layer_range
                         )
 
@@ -473,13 +518,21 @@ class SP3_Bin_Hitter:
 
                         self._global_task_id += 1
 
-                        # 4. 模拟出库 (关键：每次 Task 生成后都要更新虚拟层级，这样下一趟次的状态才是对的)
+                        # 7. 模拟出库 (更新虚拟层级)
                         self._apply_stack_modification(new_task)
 
-                        final_tote_selection[task.id].extend(batch_ids)
+                        final_tote_selection[task.id].extend(physical_totes_ids)
                         if sc_time > 0:
                             final_sorting_costs[task.id] += sc_time
 
+                        # 8. ✅ 关键：从 pending_totes 中移除已经被带走的箱子 (Hits)
+                        # 这样下一轮循环时，pending_totes 就是剩余未命中的箱子
+                        carried_hits_set = set(hit_totes_ids)
+                        pending_totes = [t for t in pending_totes if t.id not in carried_hits_set]
+
+                        # 安全检查：如果生成的任务没有带走任何东西（异常情况），强制退出防止死循环
+                        if not physical_totes_ids:
+                            break
             return physical_tasks, final_tote_selection, final_sorting_costs
 
         def _initialize_stack_snapshots(self):
@@ -709,8 +762,7 @@ class SP3_Bin_Hitter:
                                    beta: float) -> Tuple[str, Optional[Tuple[int, int]], float, float]:
             """模式决策（使用虚拟层级）"""
             stack_id = stack.stack_id
-            if stack_id ==1916:
-                print('1')
+
             current_snapshot = self.stack_snapshots.get(stack_id, [])
             current_height = len(current_snapshot)
 
@@ -762,6 +814,7 @@ class SP3_Bin_Hitter:
                     cost_sc_b = beta * self.t_move * noise_b
 
                     candidates.append((cost_rc_b + cost_sc_b, 'SORT', range_b, self.t_move * noise_b, time_rc_b))
+
 
             if not candidates:
                 return res_flip
