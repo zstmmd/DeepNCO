@@ -231,9 +231,10 @@ class SP4_Robot_Router:
                 if (final_depot, r_id) in y:
                     y[final_depot, r_id].Start = 1
                     T[final_depot, r_id].Start = current_time
+                    L[final_depot, r_id].Start = current_load
                     injected['y'][(final_depot, r_id)] = 1
                     injected['T'][(final_depot, r_id)] = current_time
-
+                    injected['L'][(final_depot, r_id)] = current_load
 
         self.logger.log_heuristic_solution(injected, nodes_map)
 
@@ -680,7 +681,7 @@ class SP4_Robot_Router:
         L = m.addVars(N, R, vtype=GRB.CONTINUOUS, lb=0, ub=self.robot_capacity, name="L")
         # trip[i,r]: 记录 Stack 属于哪一趟 (Depot 节点不需要此变量，因为自带层级)
         trip = m.addVars(stack_nodes_indices, R, vtype=GRB.INTEGER, lb=1, ub=max_trips, name="trip")
-
+        M_load = self.robot_capacity
         M = 2000
 
         # --- 约束 ---
@@ -813,24 +814,55 @@ class SP4_Robot_Router:
                             name=f"Time_{i}_{j}"
                         )
 
-                        #容量推演逻辑修正
+                        # 🔧 容量推演逻辑修正
                         type_i = nodes_map[i][3]
                         type_j = nodes_map[j][3]
 
-                        # Case 1:  (Stack->Stack, robot_start->Stack, Stack->Depot)
-                        if (type_i in ['stack', 'robot_start'] and type_j == 'stack') or \
-                           (type_i == 'stack' and type_j == 'depot'):
+                        # Case 1: Stack -> Stack (负载累加)
+                        if type_i == 'stack' and type_j == 'stack':
                             m.addConstr(
                                 L[j, r] >= L[i, r] + demand[j] - M * (1 - x[i, j, r]),
                                 name=f"LoadInc_{i}_{j}"
                             )
-
-                        # Case 3: Depot -> 任意节点 (从Depot出发，负载归零)
-                        elif type_i == 'depot' and type_j == 'stack':
                             m.addConstr(
-                                L[j, r] >= demand[j] - M * (1 - x[i, j, r]),
-                                name=f"LoadReset_{i}_{j}"
+                                L[j, r] <= self.robot_capacity,
+                                name=f"LoadCap_{j}_{r}"
                             )
+                        # 🔧 修复3: 起点 -> Stack (初始负载 = demand[j])
+                        elif type_i == 'robot_start' and type_j == 'stack':
+                            # 如果从起点直接去 Stack，负载应该等于 Stack 的需求
+                            m.addGenConstrIndicator(
+                                x[i, j, r], True,
+                                L[j, r] == demand[j],
+                                name=f"StartToStack_{i}_{j}_{r}"
+                            )
+
+                        # 🔧 修复4: Depot -> Stack (负载重置 = demand[j])
+                        elif type_i == 'depot' and type_j == 'stack':
+                            # 从 Depot 出发后，下一个 Stack 的负载只包含自身需求
+                            m.addGenConstrIndicator(
+                                x[i, j, r], True,
+                                L[j, r] == demand[j],
+                                name=f"DepotToStack_{i}_{j}_{r}"
+                            )
+
+                        # 🔧 修复5: Stack -> Depot (负载保持)
+                        elif type_i == 'stack' and type_j == 'depot':
+                            # 到达 Depot 时，负载等于前一个 Stack 的负载
+                            m.addConstr(
+                                L[j, r] >= L[i, r] - M_load * (1 - x[i, j, r]),
+                                name=f"StackToDepot_{i}_{j}_{r}"
+                            )
+                            m.addConstr(
+                                L[j, r] <= L[i, r] + M_load * (1 - x[i, j, r]),
+                                name=f"StackToDepot2_{i}_{j}_{r}"
+                            )
+        for r in R:
+            for i in stack_nodes_indices:
+                m.addConstr(
+                    L[i, r] <= self.robot_capacity,
+                    name=f"GlobalCapacity_{i}_{r}"
+                )
 
         # 6. 同 SubTask 同机器人约束
         for st_id, nodes in subtask_nodes.items():
@@ -935,6 +967,11 @@ class SP4_Robot_Router:
             service_time,
             max_trips
         )
+        m.Params.TimeLimit = 300  # 5分钟限制
+        m.Params.MIPFocus = 1  # 专注于找可行解
+        m.Params.Heuristics = 0.2  # 20% 时间用于启发式
+        m.Params.Cuts = 2  # 激进割平面
+        m.Params.Presolve = 2  # 激进预处理
         m.optimize()
 
         # --- 结果解析 ---
