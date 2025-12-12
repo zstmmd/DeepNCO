@@ -47,6 +47,7 @@ class SP4_Robot_Router:
                                   heu_robot_assign: Dict[int, int],
                                   heu_arrival_times: Dict[int, float],
                                   nodes_map: Dict,
+
                                   depot_layer_nodes: Dict,
                                   robot_start_nodes: Dict,
                                   stack_nodes_indices: List[int],
@@ -984,9 +985,18 @@ class SP4Logger:
             for (i, r), val in sorted_T:
                 desc = self._get_node_desc(i, nodes_map)
                 f.write(f"T[{i}, {r}] = {val:.2f}s    # Robot_{r} at {desc}\n")
+
+    def log_validation(self, message: str):
+        """功能 3: 记录验证信息"""
+        with open(self.file_path, 'a', encoding='utf-8') as f:
+            f.write(message + "\n")
 def checksp3hit(
-        sub_tasks: List[SubTask], problem):
-    print(f"  >>>🔍 SP3 结果验证：检查料箱命中是否满足 SubTask 的 SKU 需求  ...")
+        sub_tasks: List[SubTask], problem, logger: SP4Logger = None):
+    header = f"  >>>🔍 SP3 结果验证：检查料箱命中是否满足 SubTask 的 SKU 需求 (含冗余检查) ..."
+    print(header)
+    if logger:
+        logger.log_validation("\n" + "=" * 60 + "\nPART 3: SP3 Hit Validation\n" + "=" * 60)
+        logger.log_validation(header)
 
     for st in sub_tasks:
         if st.assigned_station_id == -1:
@@ -1000,21 +1010,39 @@ def checksp3hit(
         # 2. 统计 execution_tasks 中所有 hit_tote_ids 提供的 SKU
         provided_skus = {}  # {sku_id: provided_quantity}
 
+        # --- 新增：冗余检查逻辑 ---
+        remaining_req = required_skus.copy()
+        redundant_totes_info = []
+        # -----------------------
+
         for task in st.execution_tasks:
             for tote_id in task.hit_tote_ids:
                 tote = problem.id_to_tote.get(tote_id)
                 if not tote:
                     print(f"  ❌ [SubTask {st.id}] Tote {tote_id} not found in problem.id_to_tote")
-                    validation_passed = False
                     continue
 
-                # 累加该料箱提供的 SKU 数量
+                # 累加该料箱提供的 SKU 数量 (用于总覆盖检查)
                 for sku_id, qty in tote.sku_quantity_map.items():
                     provided_skus[sku_id] = provided_skus.get(sku_id, 0) + qty
+
+                # --- 冗余判断 ---
+                is_useful = False
+                for sku_id, qty in tote.sku_quantity_map.items():
+                    if remaining_req.get(sku_id, 0) > 0:
+                        is_useful = True
+                        # 扣减需求（贪婪扣减）
+                        take = min(remaining_req[sku_id], qty)
+                        remaining_req[sku_id] -= take
+
+                if not is_useful:
+                    redundant_totes_info.append(f"Tote {tote_id} (Stack {task.target_stack_id})")
+                # ----------------
 
         # 3. 检查覆盖性
         missing_skus = []
         excess_skus = []
+        validation_passed = True
 
         for sku_id, required_qty in required_skus.items():
             provided_qty = provided_skus.get(sku_id, 0)
@@ -1032,36 +1060,70 @@ def checksp3hit(
                 unexpected_skus.append((sku_id, provided_skus[sku_id]))
 
         # 5. 输出验证结果
-        if missing_skus :
-            print(f"\n  ❌ [SubTask {st.id}] Validation FAILED:")
-            print(f"      Required SKUs: {required_skus}")
-            print(f"      Provided SKUs: {provided_skus}")
+        log_lines = []
+        if missing_skus:
+            msg = f"\n  ❌ [SubTask {st.id}] Validation FAILED:"
+            print(msg)
+            log_lines.append(msg)
+
+            msg = f"      Required SKUs: {required_skus}"
+            print(msg)
+            log_lines.append(msg)
+
+            msg = f"      Provided SKUs: {provided_skus}"
+            print(msg)
+            log_lines.append(msg)
 
             if missing_skus:
-                print(f"      ⚠️ Missing SKUs:")
+                msg = f"      ⚠️ Missing SKUs:"
+                print(msg)
+                log_lines.append(msg)
                 for sku_id, shortage in missing_skus:
-                    print(f"         - SKU {sku_id}: Need {shortage} more")
-
-
+                    msg = f"         - SKU {sku_id}: Need {shortage} more"
+                    print(msg)
+                    log_lines.append(msg)
 
             # 详细列出涉及的料箱
-            print(f"      📦 Hit Totes ({len(st.assigned_tote_ids)} total):")
+            msg = f"      📦 Hit Totes ({len(st.assigned_tote_ids)} total):"
+            print(msg)
+            log_lines.append(msg)
             for task_idx, task in enumerate(st.execution_tasks):
-                print(f"         Task {task_idx} @ Stack {task.target_stack_id}:")
-                print(f"           - Hit: {task.hit_tote_ids}")
-                print(f"           - Noise: {task.noise_tote_ids}")
+                msg = f"         Task {task_idx} @ Stack {task.target_stack_id}:"
+                print(msg)
+                log_lines.append(msg)
+                msg = f"           - Hit: {task.hit_tote_ids}"
+                print(msg)
+                log_lines.append(msg)
+                msg = f"           - Noise: {task.noise_tote_ids}"
+                print(msg)
+                log_lines.append(msg)
                 for tote_id in task.hit_tote_ids:
                     tote = problem.id_to_tote.get(tote_id)
                     if tote:
-                        print(f"             Tote {tote_id}: {tote.sku_quantity_map}")
+                        msg = f"             Tote {tote_id}: {tote.sku_quantity_map}"
+                        print(msg)
+                        log_lines.append(msg)
 
         else:
-            print(f"  ✅ [SubTask {st.id}] Validation PASSED "
-                  f"({len(required_skus)} SKU types, {sum(required_skus.values())} units)")
+            msg = f"  ✅ [SubTask {st.id}] Validation PASSED ({len(required_skus)} SKU types, {sum(required_skus.values())} units)"
+            print(msg)
+            log_lines.append(msg)
+
+        # --- 输出冗余信息 ---
+        if redundant_totes_info:
+            msg = f"      ⚠️ Redundant Totes Found ({len(redundant_totes_info)}): {redundant_totes_info}"
+            print(msg)
+            log_lines.append(msg)
+
+        if logger:
+            for line in log_lines:
+                logger.log_validation(line)
 
 
-    print(f"  >>> ✅ SP3 Validation Complete. All SubTasks have sufficient tote coverage.\n")
-
+    final_msg = f"  >>> ✅ SP3 Validation Complete. All SubTasks have sufficient tote coverage.\n"
+    print(final_msg)
+    if logger:
+        logger.log_validation(final_msg)
 
 if __name__ == "__main__":
     from Gurobi.sp1 import SP1_BOM_Splitter
@@ -1151,10 +1213,10 @@ if __name__ == "__main__":
         print(f"Physical Task {task.task_id}: SubTask {task.sub_task_id}, "
               f"Stack {task.target_stack_id}, Tote {task.hit_tote_ids}, noise {task.noise_tote_ids}"
               f"Load {task.total_load_count}, Service Time {task.robot_service_time}s")
-    # #验证hit
-    # checksp3hit(sub_tasks,problem_dto)
+
     # # 5. SP4: 机器人路径规划
     sp4 = SP4_Robot_Router(problem_dto)
+    checksp3hit(sub_tasks,problem_dto,logger=sp4.logger)
     arrival_times, robot_assign = sp4.solve(sub_tasks, use_mip=True)
     # ✅ 回填结果
     # (1) 到达时间已在 _solve_mip() 中回填到 Task.arrival_time_at_stack

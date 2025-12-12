@@ -274,7 +274,8 @@ class SP3_Bin_Hitter:
         # --- D. 目标函数 ---
         obj = gp.LinExpr()
         obj += gp.quicksum(cost_rc[u] + cost_sc[u] + cost_fc[u] for u in U)
-
+        penalty_per_tote = beta * self.t_move + 0.5
+        obj += penalty_per_tote * gp.quicksum(u_use)
         if routing_costs:
             for u in U:
                 r_cost = routing_costs.get(u, 0.0)
@@ -745,14 +746,21 @@ class SP3_Bin_Hitter:
                 best_stack_idx = max(stack_score, key=stack_score.get)
                 chosen_totes = stack_candidate_totes[best_stack_idx]
 
-                # 更新选择
-                for t in chosen_totes:
-                    if t not in selected_stacks_map[best_stack_idx]:
-                        selected_stacks_map[best_stack_idx].append(t)
+                # 1. 按包含 pending_skus 的数量降序排列
+                chosen_totes.sort(key=lambda t: len(set(s.id for s in t.skus_list) & pending_skus), reverse=True)
 
-                    for s_in_tote in t.skus_list:
-                        if s_in_tote.id in pending_skus:
-                            pending_skus.remove(s_in_tote.id)
+                for t in chosen_totes:
+                    # 检查该料箱是否贡献了尚未满足的 SKU
+                    tote_sku_ids = set(s.id for s in t.skus_list)
+                    contributes = not pending_skus.isdisjoint(tote_sku_ids)
+
+                    if contributes:
+                        if t not in selected_stacks_map[best_stack_idx]:
+                            selected_stacks_map[best_stack_idx].append(t)
+
+                        for s_in_tote in t.skus_list:
+                            if s_in_tote.id in pending_skus:
+                                pending_skus.remove(s_in_tote.id)
 
             return selected_stacks_map
 
