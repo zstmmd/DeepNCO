@@ -124,9 +124,10 @@ class SP4_Robot_Router:
             if (current_node, r_id) in y:
                 y[current_node, r_id].Start = 1
                 T[current_node, r_id].Start = 0.0
+                L[current_node, r_id].Start = 0.0
                 injected['y'][(current_node, r_id)] = 1
                 injected['T'][(current_node, r_id)] = 0.0
-
+                injected['L'][(current_node, r_id)] = 0.0
             last_subtask = None
             last_station_id = None
 
@@ -166,10 +167,10 @@ class SP4_Robot_Router:
                     if (depot_node, r_id) in y:
                         y[depot_node, r_id].Start = 1
                         T[depot_node, r_id].Start = current_time
-                        L[depot_node, r_id].Start = 0.0
+                        L[depot_node, r_id].Start = current_load
                         injected['y'][(depot_node, r_id)] = 1
                         injected['T'][(depot_node, r_id)] = current_time
-                        injected['L'][(depot_node, r_id)] = 0.0
+                        injected['L'][(depot_node, r_id)] = current_load
 
                     current_load = 0.0
                     current_node = depot_node
@@ -230,10 +231,9 @@ class SP4_Robot_Router:
                 if (final_depot, r_id) in y:
                     y[final_depot, r_id].Start = 1
                     T[final_depot, r_id].Start = current_time
-                    L[final_depot, r_id].Start = 0.0
                     injected['y'][(final_depot, r_id)] = 1
                     injected['T'][(final_depot, r_id)] = current_time
-                    injected['L'][(final_depot, r_id)] = 0.0
+
 
         self.logger.log_heuristic_solution(injected, nodes_map)
 
@@ -813,17 +813,22 @@ class SP4_Robot_Router:
                             name=f"Time_{i}_{j}"
                         )
 
-                        # 容量推演 (仅针对 Stack -> Stack)
-                        # 如果 j 是 Stack，增加负载
-                        if j in stack_nodes_indices:
+                        #容量推演逻辑修正
+                        type_i = nodes_map[i][3]
+                        type_j = nodes_map[j][3]
+
+                        # Case 1:  (Stack->Stack, robot_start->Stack, Stack->Depot)
+                        if (type_i in ['stack', 'robot_start'] and type_j == 'stack') or \
+                           (type_i == 'stack' and type_j == 'depot'):
                             m.addConstr(
                                 L[j, r] >= L[i, r] + demand[j] - M * (1 - x[i, j, r]),
                                 name=f"LoadInc_{i}_{j}"
                             )
-                        # 如果 j 是 Depot，清空负载 (Reset)
-                        elif nodes_map[j][3] == 'depot':
+
+                        # Case 3: Depot -> 任意节点 (从Depot出发，负载归零)
+                        elif type_i == 'depot' and type_j == 'stack':
                             m.addConstr(
-                                L[j, r] <= M * (1 - x[i, j, r]),  # L[depot] 必须为 0
+                                L[j, r] >= demand[j] - M * (1 - x[i, j, r]),
                                 name=f"LoadReset_{i}_{j}"
                             )
 
