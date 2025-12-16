@@ -406,12 +406,10 @@ class SP3_Bin_Hitter:
                 # accumulated_load = 0
                 current_batch_tasks = []
 
-                for stack_idx in stack_plan.keys():
-                    self.stack_allocation[stack_idx] = task.id
-
                 for stack_idx, needed_totes in stack_plan.items():
                     stack = self.problem.point_to_stack[stack_idx]
                     pending_totes = list(needed_totes)
+
                     while pending_totes:
                         pending_totes.sort(key=lambda t: self._get_virtual_layer(t.id))
                         if len(pending_totes) <= self.robot_capacity:
@@ -445,7 +443,7 @@ class SP3_Bin_Hitter:
                                 # -> 取该连续段的最低层开始，长度为 Capacity 的一段
                                 batch_indices = set(range(max_start_idx, max_start_idx + self.robot_capacity))
                                 current_batch = [pending_totes[i] for i in range(len(pending_totes)) if
-                                                     i in batch_indices]
+                                                 i in batch_indices]
                             elif max_len < 2:
                                 # 策略 B: 离散分布 (最大连续数 < 2)
                                 # -> 均分 (取前一半，但不超过容量)
@@ -460,7 +458,6 @@ class SP3_Bin_Hitter:
                                 batch_indices = set(range(max_start_idx, end_idx))
                                 current_batch = [pending_totes[i] for i in range(len(pending_totes)) if
                                                  i in batch_indices]
-
 
                         mode, layer_range, sc_time, rc_time = self._decide_operation_mode(
                             stack, current_batch, beta_congestion
@@ -518,7 +515,7 @@ class SP3_Bin_Hitter:
                         current_batch_tasks.append(new_task)
 
                         self._global_task_id += 1
-
+                        self.stack_allocation[stack_idx] = task.id
                         # 7. 模拟出库 (更新虚拟层级)
                         self._apply_stack_modification(new_task)
 
@@ -822,7 +819,6 @@ class SP3_Bin_Hitter:
                     cost_sc_b = beta * self.t_move * noise_b
 
                     candidates.append((cost_rc_b + cost_sc_b, 'SORT', range_b, self.t_move * noise_b, time_rc_b))
-
 
             if not candidates:
                 return res_flip

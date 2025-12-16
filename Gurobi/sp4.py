@@ -1,3 +1,4 @@
+import math
 import gurobipy as gp
 from gurobipy import GRB
 from typing import List, Dict, Tuple, Set
@@ -674,7 +675,7 @@ class SP4_Robot_Router:
         print(
             f"  - Active robots: {sum(1 for routes in robot_routes.values() if routes)}/{len(self.problem.robot_list)}")
 
-        return robot_arrival_times, subtask_robot_assignment
+        return robot_arrival_times, subtask_robot_assignment, max_time
 
     def solve(self,
               sub_tasks: List[SubTask],
@@ -705,7 +706,7 @@ class SP4_Robot_Router:
         # --- 构建节点 ---
         nodes_map = {}
         node_id = 0
-        max_trips = 6
+        max_trips = 3
 
         # (A) 机器人起点
         robot_start_nodes = {}
@@ -784,7 +785,8 @@ class SP4_Robot_Router:
         m.Params.OutputFlag = 1
         m.Params.MIPGap = 0.01
         m.Params.LazyConstraints = 1
-        # m.Params.TimeLimit = 120
+        m.Params.Cuts = 3
+        m.Params.GomoryPasses = 5  # 增加 Gomory 割的次数
 
         # 变量
         x = m.addVars([(i, j, r) for i in N for j in N if (i, j) in tau for r in R], vtype=GRB.BINARY, name="x")
@@ -841,6 +843,9 @@ class SP4_Robot_Router:
                             m.addGenConstrIndicator(x[d_node, i, r], True, trip[i, r] == k + 1)
 
         # --- 约束组 2: 终点管理 ---
+        all_depot_nodes = []
+        for station_dict in depot_layer_nodes.values():
+            all_depot_nodes.extend(station_dict.values())
         for r in R:
             all_depots = []
             for layer_dict in depot_layer_nodes.values():
@@ -914,14 +919,25 @@ class SP4_Robot_Router:
 
         # --- 约束组 5: 时间推演 ---
         for r in R:
-            for i in N:
-                for j in N:
-                    if (i, j) in tau:
-                        m.addConstr(
-                            T[j, r] >= T[i, r] + service_time[i] + tau[i, j] - M_time * (1 - x[i, j, r]),
-                            name=f"Time_{i}_{j}"
-                        )
+            time_vars = [(i, T[i, r]) for i in N]
+            time_arcs = [(i, j, tau[i, j] + service_time[i]) for (i, j) in tau]
 
+            m.addConstr(
+                gp.quicksum(tau[i, j] * x[i, j, r] for i, j in tau) +
+                gp.quicksum(service_time[i] * y[i, r] for i in N)
+                <= Z,
+                name=f"TotalTime_{r}"
+            )
+        for st_id, nodes in subtask_nodes.items():
+            if len(nodes) > 1:
+                for r in R:
+                    # 禁止 SubTask 内部形成子回路
+                    m.addConstr(
+                        gp.quicksum(x[i, j, r] for i in nodes for j in nodes
+                                    if (i, j, r) in x and i != j)
+                        <= len(nodes) - 1,
+                        name=f"NoSubtour_ST{st_id}_R{r}"
+                    )
         # --- 约束组 6: 业务逻辑约束 ---
         # Depot 回访匹配 (SubTask -> Correct Station)
         for st_id, nodes in subtask_nodes.items():
@@ -992,12 +1008,25 @@ class SP4_Robot_Router:
                                 name=f"SeqRank_{i}_{j}_{r}"
                             )
 
-        # 7. 对称性破缺约束 (防止机器人互换产生等价解)
-        m.addConstrs(
-            gp.quicksum(y[i, r] for i in stack_nodes_indices) >=
-            gp.quicksum(y[i, r + 1] for i in stack_nodes_indices)
-            for r in range(len(R) - 1)
-        )
+        # 计算总需求
+        total_demand = sum(demand.values())
+        # 计算理论最少需要的总 Trip 数 (向上取整)
+        min_total_trips = math.ceil(total_demand / self.robot_capacity)
+
+        # 约束：所有机器人出发的 Trip 总数必须满足需求
+
+        depot_starts = gp.quicksum(x[d, j, r]
+                                   for d in all_depot_nodes
+                                   for j in stack_nodes_indices
+                                   for r in R
+                                   if (d, j, r) in x)
+        start_starts = gp.quicksum(x[s, j, r]
+                                   for s in robot_start_nodes.values()
+                                   for j in stack_nodes_indices
+                                   for r in R
+                                   if (s, j, r) in x)
+
+        m.addConstr(depot_starts + start_starts >= min_total_trips, name="LB_MinTrips")
         total_service_load = sum(service_time[i] for i in stack_nodes_indices)
         # 2. LB Cut 1: 平均负载约束
 
@@ -1030,10 +1059,6 @@ class SP4_Robot_Router:
 
         # --- 约束组 7: 目标函数 ---
 
-        all_depot_nodes = []
-        for station_dict in depot_layer_nodes.values():
-            all_depot_nodes.extend(station_dict.values())
-
         for r in R:
             for d in all_depot_nodes:
                 m.addGenConstrIndicator(y[d, r], True, Z >= T[d, r])
@@ -1044,7 +1069,7 @@ class SP4_Robot_Router:
 
         # --- 求解 ---
         print("  >>> [SP4] Generating heuristic warm start...")
-        heu_arrival_times, heu_robot_assign = self._solve_heuristic(sub_tasks)
+        heu_arrival_times, heu_robot_assign, heu_time = self._solve_heuristic(sub_tasks)
 
         self._apply_warm_start_layered(
             m, x, y, T, L, trip,
@@ -1055,7 +1080,38 @@ class SP4_Robot_Router:
         m.setParam('LogFile', 'log/gurobi_run.log')
         print("正在导出模型约束到 log/debug_model.lp ...")
         m.write("log/debug_model.lp")
+        m.Params.Cutoff = heu_time * 1.2
+        # 🔧 分阶段求解策略
+        print("\n  >>> [Phase 1] Quick feasibility search (60s)...")
+        m.Params.TimeLimit = 60
+        m.Params.MIPFocus = 1  # 聚焦可行解
+        m.Params.Heuristics = 0.3  # 高频启发式
+        m.Params.Cuts = 0  # 暂不生成割平面
+        m.Params.NoRelHeurTime = 30  # 前30秒不依赖 LP 松弛
+
         m.optimize(self._subtour_callback)
+
+        if m.SolCount > 0:
+            incumbent = m.objVal
+            print(f"  >>> [Phase 1] Found solution: {incumbent:.2f}")
+
+            # Phase 2: 改善解质量
+            print(f"\n  >>> [Phase 2] Improving solution (剩余时间)...")
+            m.Params.TimeLimit = 240  # 总共 300 秒
+            m.Params.MIPFocus = 2  # 证明最优性
+            m.Params.Cuts = 3  # 激进割平面
+            m.Params.CutPasses = 20
+            m.Params.Heuristics = 0.05  # 降低启发式比例
+
+            # 🔧 关键：设置 Cutoff（只接受改善 5% 以上的解）
+            m.Params.Cutoff = incumbent * 0.95
+
+            # 🔧 专门针对 VRP 的 Cuts
+            m.Params.FlowCoverCuts = 2
+            m.Params.MIRCuts = 2
+            m.Params.GomoryPasses = 10
+
+            m.optimize(self._subtour_callback)
 
         # --- 结果提取 ---
         robot_arrival_times = {}
