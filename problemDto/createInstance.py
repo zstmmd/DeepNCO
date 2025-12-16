@@ -12,7 +12,9 @@ from entity.SKUs import SKUs
 from entity.station import Station
 from entity.tote import Tote
 from entity.point import Point
+import os
 
+import numpy as np
 from problemDto.ofs_problem_dto import OFSProblemDTO
 from config.ofs_config import OFSConfig
 
@@ -32,6 +34,9 @@ class CreateOFSProblem:
         #   "data": (order_num, sku_num),
         #   "bom_complexity": (max_types, max_qty) -> 影响订单BOM的复杂度
         # }
+        os.environ['PYTHONHASHSEED'] = str(seed)
+        random.seed(seed)
+        np.random.seed(seed)
         configs = {
             "SMALL": {
                 "map_size": (4, 4),  # 较小的地图
@@ -90,7 +95,7 @@ class CreateOFSProblem:
         """
         构造并返回一个 OFSProblemDTO 实例。
         """
-        random.seed(OFSConfig.RANDOM_SEED)
+       
         ofs_problem_dto = OFSProblemDTO()
 
         # 1. 创建地图 (使用 warehouseMap.py 的构造函数)
@@ -174,7 +179,10 @@ class CreateOFSProblem:
         tote_list: List[Tote] = []
         stack_list: List[Stack] = []
         point_to_stack: Dict[int, Stack] = {}
-        available_points: List[Point] = list(map_.pod_list)
+        available_points: List[Point] = sorted(
+            list(map_.pod_list), 
+            key=lambda p: p.idx
+        )
         if not available_points:
             raise ValueError("地图中没有 'pod' (type 3) 节点，无法放置料箱。")
         hot_sku_count = max(1, int(skus_num * 0.2))
@@ -305,7 +313,7 @@ class CreateOFSProblem:
 
         # 过滤掉空的 Stack (如果没有生成)
         final_stack_list = [s for s in stack_list if s.current_height > 0]
-
+        
         ofs_problem_dto.tote_list = tote_list
         ofs_problem_dto.id_to_tote = {tote.id: tote for tote in tote_list}
         ofs_problem_dto.stack_list = final_stack_list
