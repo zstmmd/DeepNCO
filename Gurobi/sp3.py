@@ -174,7 +174,7 @@ class SP3_Bin_Hitter:
 
                 candidate_stack_indices.add(stack_idx)
 
-        U = list(candidate_stack_indices)
+        U = sorted(list(candidate_stack_indices))  # 原本是 set
         if not U:
             return [], [], 0.0
 
@@ -406,12 +406,12 @@ class SP3_Bin_Hitter:
                 # accumulated_load = 0
                 current_batch_tasks = []
 
-                for stack_idx in stack_plan.keys():
-                    self.stack_allocation[stack_idx] = task.id
+                
 
                 for stack_idx, needed_totes in stack_plan.items():
                     stack = self.problem.point_to_stack[stack_idx]
                     pending_totes = list(needed_totes)
+
                     while pending_totes:
                         pending_totes.sort(key=lambda t: self._get_virtual_layer(t.id))
                         if len(pending_totes) <= self.robot_capacity:
@@ -518,7 +518,7 @@ class SP3_Bin_Hitter:
                         current_batch_tasks.append(new_task)
 
                         self._global_task_id += 1
-
+                        self.stack_allocation[stack_idx] = task.id
                         # 7. 模拟出库 (更新虚拟层级)
                         self._apply_stack_modification(new_task)
 
@@ -576,94 +576,38 @@ class SP3_Bin_Hitter:
 
             self.stack_snapshots[stack_id] = remaining_totes
 
-        def _greedy_tote_selection(self, task: SubTask) -> Dict[int, List[Tote]]:
-            """贪婪选箱策略"""
-            pending_skus = set(sku.id for sku in task.sku_list)
-            sku_availability = defaultdict(list)
-
-            for sku_id in pending_skus:
-                sku_obj = self.problem.id_to_sku[sku_id]
-                for tote_id in sku_obj.storeToteList:
-                    tote = self.problem.id_to_tote.get(tote_id)
-                    if not (tote and tote.store_point):
-                        continue
-
-                    stack_idx = tote.store_point.idx
-                    if stack_idx not in self.stack_snapshots:
-                        continue
-
-                    current_totes_in_stack = self.stack_snapshots[stack_idx]
-                    tote_still_exists = any(t.id == tote_id for t in current_totes_in_stack)
-
-                    if not tote_still_exists:
-                        continue
-
-                    sku_availability[sku_id].append(tote)
-
-            selected_stacks_map = defaultdict(list)
-
-            while pending_skus:
-                stack_score = defaultdict(int)
-                stack_candidate_totes = defaultdict(list)
-
-                for sku_id in pending_skus:
-                    candidates = sku_availability[sku_id]
-                    for tote in candidates:
-                        s_idx = tote.store_point.idx
-                        score_bonus = 100 if s_idx in selected_stacks_map else 1
-
-                        if tote not in stack_candidate_totes[s_idx]:
-                            stack_score[s_idx] += score_bonus
-                            stack_candidate_totes[s_idx].append(tote)
-
-                if not stack_score:
-                    print(f"Error: Cannot find totes for remaining SKUs: {pending_skus}")
-                    break
-
-                best_stack_idx = max(stack_score, key=stack_score.get)
-                chosen_totes = stack_candidate_totes[best_stack_idx]
-
-                for t in chosen_totes:
-                    if t not in selected_stacks_map[best_stack_idx]:
-                        selected_stacks_map[best_stack_idx].append(t)
-
-                    for s_in_tote in t.skus_list:
-                        if s_in_tote.id in pending_skus:
-                            pending_skus.remove(s_in_tote.id)
-
-            return selected_stacks_map
-
         def _greedy_tote_selection_v2(self, task: SubTask) -> Dict[int, List[Tote]]:
             """
-            改进的贪婪选箱策略：
-            1. 优先选择浅层 Tote
-            2. 考虑 Bundle 效应（多 SKU 同堆垛）
-            3. ✅ 实时检查虚拟层级可用性
+            改进的贪婪选箱策略（确定性版本）
             """
-            pending_skus = set(sku.id for sku in task.sku_list)
+            # ✅ 修复 1: 使用排序后的 SKU 集合
+            pending_skus = sorted([sku.id for sku in task.sku_list])  # 转为有序列表
+            pending_skus_set = set(pending_skus)  # 用于快速查找
 
             selected_stacks_map = defaultdict(list)
 
-            while pending_skus:
-                # ✅ 关键修复：每轮重新计算 sku_availability
+            while pending_skus_set:
                 sku_availability = defaultdict(list)
 
-                for sku_id in pending_skus:
+                # ✅ 修复 2: 按固定顺序遍历 SKU
+                for sku_id in sorted(pending_skus_set):  # 排序确保顺序
                     sku_obj = self.problem.id_to_sku[sku_id]
-                    for tote_id in sku_obj.storeToteList:
+                    
+                    # ✅ 修复 3: 排序 tote 列表
+                    for tote_id in sorted(sku_obj.storeToteList):
                         tote = self.problem.id_to_tote.get(tote_id)
                         if not (tote and tote.store_point):
                             continue
 
                         stack_idx = tote.store_point.idx
 
-                        # ✅ 检查 1: Stack 是否已被其他 SubTask 占用
+                        # 检查 1: Stack 是否已被其他 SubTask 占用
                         if stack_idx in self.stack_allocation:
                             allocated_to = self.stack_allocation[stack_idx]
-                            if allocated_to != task.id:  # 被其他任务占用
+                            if allocated_to != task.id:
                                 continue
 
-                        # ✅ 检查 2: Tote 是否还在虚拟堆垛中
+                        # 检查 2: Tote 是否还在虚拟堆垛中
                         if stack_idx not in self.stack_snapshots:
                             continue
 
@@ -673,51 +617,27 @@ class SP3_Bin_Hitter:
 
                         sku_availability[sku_id].append(tote)
 
-                # ✅ 检查是否有可用候选
                 if not sku_availability:
-                    print(f"  ⚠️ [Heuristic] Cannot find totes for remaining SKUs: {pending_skus}")
-                    print(f"      SubTask: {task.id}")
-                    print(f"      Stack Allocation: {dict(self.stack_allocation)}")
-
-                    # 🔍 诊断信息：打印每个 SKU 的存储位置
-                    for sku_id in pending_skus:
-                        sku_obj = self.problem.id_to_sku[sku_id]
-                        print(f"      SKU {sku_id} stored in totes: {sku_obj.storeToteList}")
-
-                        for tote_id in sku_obj.storeToteList:
-                            tote = self.problem.id_to_tote.get(tote_id)
-                            if not tote:
-                                continue
-
-                            stack_idx = tote.store_point.idx if tote.store_point else None
-
-                            if stack_idx is None:
-                                print(f"        - Tote {tote_id}: No store point")
-                            elif stack_idx not in self.stack_snapshots:
-                                print(f"        - Tote {tote_id} @ Stack {stack_idx}: Stack not in snapshots")
-                            else:
-                                current_totes = self.stack_snapshots[stack_idx]
-                                still_exists = any(t.id == tote_id for t in current_totes)
-                                allocation_status = self.stack_allocation.get(stack_idx, "Free")
-
-                                print(f"        - Tote {tote_id} @ Stack {stack_idx}: "
-                                      f"Exists={still_exists}, "
-                                      f"Allocated to={allocation_status}, "
-                                      f"Virtual Layer={self._get_virtual_layer(tote_id)}")
+                    print(f"  ⚠️ [Heuristic] Cannot find totes for remaining SKUs: {pending_skus_set}")
                     break
 
                 stack_score = {}
                 stack_candidate_totes = defaultdict(list)
 
-                for sku_id in pending_skus:
+                # ✅ 修复 4: 按固定顺序遍历 SKU
+                for sku_id in sorted(pending_skus_set):
                     candidates = sku_availability.get(sku_id, [])
+                    
+                    # ✅ 修复 5: 料箱按 ID 排序
+                    candidates.sort(key=lambda t: t.id)
+                    
                     for tote in candidates:
                         s_idx = tote.store_point.idx
 
-                        # ✅ 评分因素 1: Bundle 效应
+                        # Bundle 效应
                         bundle_bonus = 100 if s_idx in selected_stacks_map else 1
 
-                        # ✅ 评分因素 2: 层级惩罚
+                        # 层级惩罚
                         virtual_layer = self._get_virtual_layer(tote.id)
                         current_snapshot = self.stack_snapshots.get(s_idx, [])
                         stack_height = len(current_snapshot)
@@ -725,11 +645,10 @@ class SP3_Bin_Hitter:
                         if stack_height > 1:
                             normalized_layer = virtual_layer / (stack_height - 1)
                         else:
-                            normalized_layer = 0  # 只有一个箱子，没有深度概念
+                            normalized_layer = 0
 
                         layer_bonus = 10 * (1 - normalized_layer)
 
-                        # ✅ 综合评分
                         total_score = bundle_bonus + layer_bonus
                         if s_idx not in stack_score:
                             stack_score[s_idx] = 0
@@ -739,31 +658,37 @@ class SP3_Bin_Hitter:
                             stack_candidate_totes[s_idx].append(tote)
 
                 if not stack_score:
-                    print(f"  ⚠️ [Heuristic] No valid stack candidates for SKUs: {pending_skus}")
+                    print(f"  ⚠️ [Heuristic] No valid stack candidates")
                     break
 
-                # 选择最高分的 Stack
-                best_stack_idx = max(stack_score, key=stack_score.get)
+                # ✅ 修复 6: 分数相同时按 stack_id 排序
+                best_stack_idx = max(
+                    stack_score.items(), 
+                    key=lambda x: (x[1], -x[0])  # 分数降序，ID 升序
+                )[0]
+                
                 chosen_totes = stack_candidate_totes[best_stack_idx]
 
-                # 1. 按包含 pending_skus 的数量降序排列
-                chosen_totes.sort(key=lambda t: len(set(s.id for s in t.skus_list) & pending_skus), reverse=True)
+                # ✅ 修复 7: 完整的排序逻辑
+                chosen_totes.sort(key=lambda t: (
+                    -len(set(s.id for s in t.skus_list) & pending_skus_set),  # 匹配 SKU 数降序
+                    self._get_virtual_layer(t.id),                            # 层级升序
+                    t.id                                                       # Tote ID 升序
+                ))
 
                 for t in chosen_totes:
-                    # 检查该料箱是否贡献了尚未满足的 SKU
                     tote_sku_ids = set(s.id for s in t.skus_list)
-                    contributes = not pending_skus.isdisjoint(tote_sku_ids)
+                    contributes = not pending_skus_set.isdisjoint(tote_sku_ids)
 
                     if contributes:
                         if t not in selected_stacks_map[best_stack_idx]:
                             selected_stacks_map[best_stack_idx].append(t)
 
                         for s_in_tote in t.skus_list:
-                            if s_in_tote.id in pending_skus:
-                                pending_skus.remove(s_in_tote.id)
+                            if s_in_tote.id in pending_skus_set:
+                                pending_skus_set.remove(s_in_tote.id)
 
             return selected_stacks_map
-
         def _decide_operation_mode(self,
                                    stack: Stack,
                                    target_totes: List[Tote],

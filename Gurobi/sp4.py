@@ -1,3 +1,4 @@
+import math
 import gurobipy as gp
 from gurobipy import GRB
 from typing import List, Dict, Tuple, Set
@@ -37,6 +38,7 @@ class SP4_Robot_Router:
         log_dir = os.path.join(ROOT_DIR, 'log')
         # 实例化 logger
         self.logger = SP4Logger(log_dir, filename="sp4_debug.txt")
+
     def _apply_warm_start_layered(self,
                                   model: gp.Model,
                                   x: gp.tupledict,
@@ -123,9 +125,10 @@ class SP4_Robot_Router:
             if (current_node, r_id) in y:
                 y[current_node, r_id].Start = 1
                 T[current_node, r_id].Start = 0.0
+                L[current_node, r_id].Start = 0.0
                 injected['y'][(current_node, r_id)] = 1
                 injected['T'][(current_node, r_id)] = 0.0
-
+                injected['L'][(current_node, r_id)] = 0.0
             last_subtask = None
             last_station_id = None
 
@@ -165,8 +168,10 @@ class SP4_Robot_Router:
                     if (depot_node, r_id) in y:
                         y[depot_node, r_id].Start = 1
                         T[depot_node, r_id].Start = current_time
+                        L[depot_node, r_id].Start = current_load
                         injected['y'][(depot_node, r_id)] = 1
                         injected['T'][(depot_node, r_id)] = current_time
+                        injected['L'][(depot_node, r_id)] = current_load
 
                     current_load = 0.0
                     current_node = depot_node
@@ -227,13 +232,16 @@ class SP4_Robot_Router:
                 if (final_depot, r_id) in y:
                     y[final_depot, r_id].Start = 1
                     T[final_depot, r_id].Start = current_time
+                    L[final_depot, r_id].Start = current_load
                     injected['y'][(final_depot, r_id)] = 1
                     injected['T'][(final_depot, r_id)] = current_time
+                    injected['L'][(final_depot, r_id)] = current_load
 
         self.logger.log_heuristic_solution(injected, nodes_map)
 
         # 验证注入解的可行性 (保留原有逻辑)
         self._verify_warm_start_solution(injected, nodes_map, depot_layer_nodes, tau, demand, service_time)
+
     def _verify_warm_start_solution(self,
                                     vals: Dict,
                                     nodes_map: Dict,
@@ -245,86 +253,209 @@ class SP4_Robot_Router:
         验证注入解的逻辑正确性
         """
         print(f"  >>> [SP4] Verifying Warm Start Solution...")
-        
+
         x_s = vals.get('x', {})
         y_s = vals.get('y', {})
         trip_s = vals.get('trip', {})
         T_s = vals.get('T', {})
         L_s = vals.get('L', {})
-        
+
         violations = []
-        
+
         # 1. 流守恒检查
         node_flow = defaultdict(lambda: {'in': 0, 'out': 0})
         for (i, j, r), val in x_s.items():
             if val > 0.5:
                 node_flow[(i, r)]['out'] += 1
                 node_flow[(j, r)]['in'] += 1
-                
+
                 # 检查端点是否激活
                 if y_s.get((i, r), 0) < 0.5:
                     violations.append(f"Flow error: x[{i},{j},{r}]=1 but y[{i},{r}]=0")
                 if y_s.get((j, r), 0) < 0.5:
                     violations.append(f"Flow error: x[{i},{j},{r}]=1 but y[{j},{r}]=0")
-        
+
         # 检查度数平衡（除起点外）
         for (node, r), flow in node_flow.items():
             node_type = nodes_map[node][3]
-            if node_type != 'robot_start' and flow['in'] != flow['out']:
-                violations.append(f"Flow imbalance at node {node} (r={r}): in={flow['in']}, out={flow['out']}")
-        
+            # 起点:只有出度
+            if node_type == 'robot_start':
+                if flow['in'] != 0:
+                    violations.append(f"Start node {node} (r={r}) has incoming flow: {flow['in']}")
+
+            # 终点(最后的Depot):只有入度
+            # 判断是否为终点:有入度但无出度,且是Depot节点
+            elif node_type == 'depot' and flow['out'] == 0 and flow['in'] > 0:
+                # 这是终点,合法
+                pass
+
+            # 中间节点:入度=出度
+            elif flow['in'] != flow['out']:
+                violations.append(
+                    f"Flow imbalance at node {node} (r={r}, type={node_type}): in={flow['in']}, out={flow['out']}")
+
         # 2. Trip 逻辑检查
         for (i, j, r), val in x_s.items():
             if val < 0.5:
                 continue
-            
+
             type_i = nodes_map[i][3]
             type_j = nodes_map[j][3]
-            
+
             trip_i = trip_s.get((i, r))
             trip_j = trip_s.get((j, r))
-            
+
             # Stack -> Stack: trip 必须相同
             if type_i == 'stack' and type_j == 'stack':
                 if trip_i is not None and trip_j is not None and trip_i != trip_j:
                     violations.append(f"Stack->Stack trip jump: {i}(trip={trip_i}) -> {j}(trip={trip_j})")
-            
+
             # Stack -> Depot: Stack.trip 必须等于 Depot.layer
             if type_i == 'stack' and type_j == 'depot':
                 depot_layer = nodes_map[j][4]
                 if trip_i is not None and trip_i != depot_layer:
-                    violations.append(f"Stack->Depot mismatch: Stack {i}(trip={trip_i}) -> Depot {j}(layer={depot_layer})")
-            
+                    violations.append(
+                        f"Stack->Depot mismatch: Stack {i}(trip={trip_i}) -> Depot {j}(layer={depot_layer})")
+
             # Depot -> Stack: Stack.trip 必须等于 Depot.layer + 1
             if type_i == 'depot' and type_j == 'stack':
                 depot_layer = nodes_map[i][4]
                 if trip_j is not None and trip_j != depot_layer + 1:
-                    violations.append(f"Depot->Stack mismatch: Depot {i}(layer={depot_layer}) -> Stack {j}(trip={trip_j})")
-        
+                    violations.append(
+                        f"Depot->Stack mismatch: Depot {i}(layer={depot_layer}) -> Stack {j}(trip={trip_j})")
+
         # 3. 容量检查
         for (node, r), load in L_s.items():
             if load > self.robot_capacity + 0.01:
                 violations.append(f"Capacity violation at node {node} (r={r}): load={load:.2f}")
-        
+
         # 4. 时间单调性检查（沿路径）
         for (i, j, r), val in x_s.items():
             if val < 0.5:
                 continue
-            
+
             t_i = T_s.get((i, r))
             t_j = T_s.get((j, r))
-            
+
             if t_i is not None and t_j is not None:
                 expected_t_j = t_i + service_time.get(i, 0) + tau.get((i, j), 0)
                 if t_j < expected_t_j - 0.01:
                     violations.append(f"Time violation: {i}->{j}, T[{j}]={t_j:.2f} < expected {expected_t_j:.2f}")
-        
+
         if violations:
             print(f"  ❌ Verification Failed ({len(violations)} errors):")
             for v in violations[:10]:  # 只显示前 10 个
                 print(f"     - {v}")
         else:
             print(f"  ✅ Warm Start Solution Verified.")
+    def _subtour_callback(self, model, where):
+        """
+        Gurobi 回调函数：用于检测并切除子回路
+        """
+        # 只有当 Gurobi 找到一个新的整数解 (MIPSOL) 时才检查
+        if where == GRB.Callback.MIPSOL:
+            # 获取当前的解
+            # model._vars 是我们在 solve_mip 中通过 model._vars = x 绑定的
+            x_vals = model.cbGetSolution(model._vars)
+            
+            # 按机器人分组提取边
+            # edges_by_robot[r_id] = [(i, j), (j, k)...]
+            edges_by_robot = defaultdict(list)
+            
+            for (i, j, r), val in x_vals.items():
+                if val > 0.5: # 选中的边
+                    edges_by_robot[r].append((i, j))
+            
+            # 对每个机器人检查子回路
+            for r, edges in edges_by_robot.items():
+                # 获取该机器人的连通分量列表
+                components = self.get_subtour(edges)
+                
+                for comp in components:
+                    # 关键逻辑：如何判断 component 是非法的？
+                    # 你的图结构：Start -> [Stacks] -> Depot
+                    # 合法路径是不闭合的（Start 到 Depot）。
+                    # 非法子回路是闭合的圈。
+                    
+                    # 检查 component 是否构成了一个闭环 (对于 Stack 节点)
+                    # 简单判据：如果 component 里面全是 Stack 节点（不含 Start 和 Depot），那它一定是孤立环
+                    
+                    is_pure_stack_loop = True
+                    for node in comp:
+                        n_type = self.nodes_map_ref[node][3] # 需要在类里存一份引用
+                        if n_type in ['robot_start', 'depot']:
+                            is_pure_stack_loop = False
+                            break
+                    
+                    if is_pure_stack_loop:
+                        # === 发现子回路！添加 Lazy Constraint 切掉它 ===
+                        # 约束公式：sum(x[i,j] for i in S for j in S) <= |S| - 1
+                        # 意思：在这个集合 S 内部，最多只能有 |S|-1 条边。如果有 |S| 条边，就成环了。
+                        
+                        # 构造 Gurobi 表达式
+                        expr = gp.quicksum(model._vars[i, j, r] 
+                                           for i in comp 
+                                           for j in comp 
+                                           if (i, j, r) in model._vars)
+                        
+                        model.cbLazy(expr <= len(comp) - 1)
+                        # print(f"  🔪 Cut added for Robot {r}, Subtour size {len(comp)}")
+    @staticmethod
+    def get_subtour(edges: List[Tuple[int, int]]) -> List[int]:
+        """
+        给定一组边，寻找其中最小的子回路（Subtour）。
+        如果所有节点都连通且包含起点（假设逻辑上判断），返回空。
+        这里使用简化的寻找连通分量逻辑。
+        """
+        if not edges:
+            return []
+            
+        # 1. 构建邻接表
+        adj = defaultdict(list)
+        nodes = set()
+        for i, j in edges:
+            adj[i].append(j)
+            nodes.add(i)
+            nodes.add(j)
+            
+        # 2. 寻找所有连通分量
+        visited = set()
+        subtours = []
+        
+        for node in list(nodes):
+            if node in visited:
+                continue
+            
+            # 开始一次遍历 (BFS/DFS) 找连通分量
+            component = []
+            queue = [node]
+            visited.add(node)
+            while queue:
+                curr = queue.pop(0)
+                component.append(curr)
+                for neighbor in adj[curr]:
+                    # 注意：这是有向图，但为了切平面，我们通常看强连通或只要成圈就行
+                    # 在 VRP 中，任何不包含起点的闭环都是非法的
+                    if neighbor not in visited:
+                        visited.add(neighbor)
+                        queue.append(neighbor)
+            
+            subtours.append(component)
+            
+        # 3. 筛选非法子回路
+        # 规则：合法的路径必须包含“起点”或者“Depot”。
+        # 但在你的分层图中，路径是 Start -> Stack -> ... -> Stack -> Depot
+        # 所以，任何【纯 Stack 节点】组成的环，绝对是子回路。
+        
+        # 找到长度最短的纯 Stack 环返回（切割力最强）
+        # 我们假设外部逻辑会传入所有的 Stack 节点 ID，或者根据 ID 范围判断
+        # 这里简化：只要 component 数量 > 1，说明图断开了，除了包含起点的那一组，其他的都是子回路
+        
+        # ⚠️ 注意：需要识别哪个 component 包含起点。
+        # 由于我们在 Callback 内部很难拿到由外部定义的 robot_start_node，
+        # 我们通常假定：如果一个分量是封闭的环（出入度平衡），且没有连接到 Depot/Start，它就是 Subtour。
+        
+        return subtours
     def _extract_sequence(self, x, y, T, trip, nodes_map, N, R, depot_layer_nodes, robot_start_nodes,
                           stack_nodes_indices):
         """
@@ -372,8 +503,6 @@ class SP4_Robot_Router:
     def _solve_heuristic(self, sub_tasks: List[SubTask]) -> Tuple[Dict[int, float], Dict[int, int]]:
         """
         修正后的启发式：
-        路径逻辑：上一单Station -> 本单Stack -> ... -> 本单Station
-        包含完整的结果解析输出。
         """
         print(f"  >>> [SP4] Using Heuristic Solver (Direct Routing A->Stack->B)...")
 
@@ -543,7 +672,7 @@ class SP4_Robot_Router:
         print(
             f"  - Active robots: {sum(1 for routes in robot_routes.values() if routes)}/{len(self.problem.robot_list)}")
 
-        return robot_arrival_times, subtask_robot_assignment
+        return robot_arrival_times, subtask_robot_assignment,max_time
 
     def solve(self,
               sub_tasks: List[SubTask],
@@ -563,11 +692,8 @@ class SP4_Robot_Router:
             return self._solve_mip(sub_tasks)
         else:
             return self._solve_heuristic(sub_tasks)
-
     def _solve_mip(self, sub_tasks: List[SubTask]) -> Tuple[Dict[int, float], Dict[int, int]]:
-        """
-        修复版 MIP：引入分层 Depot 节点（Layered Depots）以支持多趟次访问
-        """
+      
         # 1. 数据预处理
         valid_tasks = [t for t in sub_tasks if t.execution_tasks]
         if not valid_tasks:
@@ -576,32 +702,29 @@ class SP4_Robot_Router:
         # --- 构建节点 ---
         nodes_map = {}
         node_id = 0
-        max_trips = 6  # 限制最大趟次以减少变量规模，可根据需要调整
+        max_trips = 3 
 
         # (A) 机器人起点
         robot_start_nodes = {}
         for robot in self.problem.robot_list:
             robot_start_nodes[robot.id] = node_id
-            nodes_map[node_id] = (robot.start_point, None, None, 'robot_start', 0)  # 0表示trip层级
+            nodes_map[node_id] = (robot.start_point, None, None, 'robot_start', 0)
             node_id += 1
 
-        # (B) Stack 节点 (每个任务一个节点)
+        # (B) Stack 节点
         stack_nodes_indices = []
         for st in valid_tasks:
             for task in st.execution_tasks:
                 stack = self.problem.point_to_stack[task.target_stack_id]
                 stack_nodes_indices.append(node_id)
-                nodes_map[node_id] = (stack.store_point, st, task, 'stack', -1)  # -1表示不绑定特定层级
+                nodes_map[node_id] = (stack.store_point, st, task, 'stack', -1)
                 node_id += 1
 
-        # (C) [核心修复] 分层 Depot 节点
-        # depot_nodes[station_id][trip_k] = node_id
+        # (C) 分层 Depot 节点
         depot_layer_nodes = defaultdict(dict)
-
-        for k in range(1, max_trips + 1):  # Trip 1 到 Trip max
+        for k in range(1, max_trips + 1):
             for station in self.problem.station_list:
                 depot_layer_nodes[station.id][k] = node_id
-                # 记录这是一个属于第 k 趟结束的 Depot 节点
                 nodes_map[node_id] = (station.point, None, None, 'depot', k)
                 node_id += 1
 
@@ -617,16 +740,26 @@ class SP4_Robot_Router:
             subtask_nodes[subtask.id].append(i)
 
         # 2. 计算距离矩阵 (Tau)
-        tau = {}  # 使用字典稀疏存储，减少内存
+        tau = {}
         for i in N:
             pt_i = nodes_map[i][0]
             for j in N:
                 if i == j: continue
-                # 剪枝：不同 Station 的 Depot 之间不需要连接
                 type_i = nodes_map[i][3]
                 type_j = nodes_map[j][3]
+                # 剪枝：Depot 之间不直连
                 if type_i == 'depot' and type_j == 'depot': continue
-
+                if type_j == 'robot_start': 
+                    continue
+                if type_i == 'robot_start' and type_j == 'depot':
+                    continue
+                #如果i和j属于不同的subtask，且subtask的目标station不同，则不连边
+                if type_i == 'stack' and type_j == 'stack':
+                    _, subtask_i, _, _, _ = nodes_map[i]
+                    _, subtask_j, _, _, _ = nodes_map[j]
+                    if subtask_i.id != subtask_j.id:
+                        if subtask_i.assigned_station_id != subtask_j.assigned_station_id:
+                            continue
                 pt_j = nodes_map[j][0]
                 dist = abs(pt_i.x - pt_j.x) + abs(pt_i.y - pt_j.y)
                 tau[i, j] = dist / self.robot_speed
@@ -647,92 +780,170 @@ class SP4_Robot_Router:
         m = gp.Model("SP4_Layered_VRP")
         m.Params.OutputFlag = 1
         m.Params.MIPGap = 0.01
+        m.Params.LazyConstraints = 1
+        m.Params.Cuts = 3
+        m.Params.GomoryPasses = 5 # 增加 Gomory 割的次数
 
+        
+        
         # 变量
-        # x[i,j,r]: 弧流量
-        x = m.addVars([(i, j, r) for i in N for j in N if (i, j) in tau for r in R],
-                      vtype=GRB.BINARY, name="x")
-        # y[i,r]: 节点访问
+        x = m.addVars([(i, j, r) for i in N for j in N if (i, j) in tau for r in R], vtype=GRB.BINARY, name="x")
         y = m.addVars(N, R, vtype=GRB.BINARY, name="y")
-        # T[i,r]: 到达时间 (因为 Depot 已经分层，每个节点只会被访问一次，不需要三维 T)
         T = m.addVars(N, R, vtype=GRB.CONTINUOUS, lb=0, name="T")
-        # L[i,r]: 负载
         L = m.addVars(N, R, vtype=GRB.CONTINUOUS, lb=0, ub=self.robot_capacity, name="L")
-        # trip[i,r]: 记录 Stack 属于哪一趟 (Depot 节点不需要此变量，因为自带层级)
         trip = m.addVars(stack_nodes_indices, R, vtype=GRB.INTEGER, lb=1, ub=max_trips, name="trip")
+        Z = m.addVar(vtype=GRB.CONTINUOUS, name="Makespan")
+        M_load = self.robot_capacity
+        m._vars = x  # 将 x 变量绑定到 model 对象，方便 Callback 读取
+        m._trip_vars = trip  # 新增 trip 绑定
+        m._y_vars = y        # 可选：也可以绑定 y
+        self.nodes_map_ref = nodes_map # 将 nodes_map 存为成员变量供 Callback 查询类型
+        # max_path_time = max(tau.values()) * len(N) + sum(service_time.values())
+        # M_time = max_path_time * 1.2  # 预留20%余量
+        M_time = 500
+        print(f"  >>> [SP4] Big-M Load: {M_load}, Big-M Time: {M_time:.2f}s")
 
-        M = 2000
-
-        # --- 约束 ---
-
-        # 1. 覆盖约束 (Stack 必须被访问一次)
+        # --- 约束组 1: 基础流与覆盖 ---
+        
+        # Stack 覆盖
         for i in stack_nodes_indices:
             m.addConstr(gp.quicksum(y[i, r] for r in R) == 1, name=f"Cover_{i}")
 
-        # 2. 流守恒
+        # 机器人流守恒
         for r in R:
-            # 2.1 起点约束
+            # 起点
             start_node = robot_start_nodes[self.problem.robot_list[r].id]
-            m.addConstr(y[start_node, r] == 1)  # 起点必须激活
-            m.addConstr(T[start_node, r] == 0)  # ✅ 显式设置起始时间
-            m.addConstr(L[start_node, r] == 0)  # ✅ 显式设置起始负载
+            m.addConstr(y[start_node, r] == 1)
+            m.addConstr(T[start_node, r] == 0)
+            m.addConstr(L[start_node, r] == 0)
             m.addConstr(gp.quicksum(x[start_node, j, r] for j in N if (start_node, j) in tau) == 1)
             m.addConstr(gp.quicksum(x[j, start_node, r] for j in N if (j, start_node) in tau) == 0)
 
-            # 2.2 普通节点 (Stack) 流守恒
+            # Stack 节点
             for i in stack_nodes_indices:
-                m.addConstr(
-                    gp.quicksum(x[j, i, r] for j in N if (j, i) in tau) == y[i, r],
-                    name=f"FlowIn_{i}_{r}"
-                )
-                m.addConstr(
-                    gp.quicksum(x[i, j, r] for j in N if (i, j) in tau) == y[i, r],
-                    name=f"FlowOut_{i}_{r}"
-                )
+                m.addConstr(gp.quicksum(x[j, i, r] for j in N if (j, i) in tau) == y[i, r])
+                m.addConstr(gp.quicksum(x[i, j, r] for j in N if (i, j) in tau) == y[i, r])
 
-            # 2.3 分层 Depot 流守恒 (允许不访问，访问则进出平衡)
-            # 关键路径逻辑：Stack (Trip k) -> Depot (Layer k) -> Stack (Trip k+1)
+            # Depot 节点 (流量平衡)
             for s_id, layer_dict in depot_layer_nodes.items():
                 for k in range(1, max_trips + 1):
                     d_node = layer_dict[k]
-
-                    # 入度：只能来自 Stack 或 起点 (Trip 1)
                     in_arcs = gp.quicksum(x[i, d_node, r] for i in N if (i, d_node) in tau)
-                    # 出度：只能去往 Stack
                     out_arcs = gp.quicksum(x[d_node, j, r] for j in N if (d_node, j) in tau)
-
                     m.addConstr(in_arcs == y[d_node, r])
-                    m.addConstr(out_arcs == y[d_node, r])
+                    m.addConstr(out_arcs <= y[d_node, r]) # 允许在 Depot 结束
 
-                    # 2.4 强制 Depot 连接逻辑 (防止乱序)
-                    # 如果是从 Depot(k) 出去到 Stack j，则 Stack j 必须属于 Trip k+1
-                    # 如果是从 Stack i 进来 Depot(k)，则 Stack i 必须属于 Trip k
+                    # 强制 Depot 连接逻辑 (防止层级乱序)
                     for i in stack_nodes_indices:
-                        if (i, d_node) in tau:
-                            # Stack i -> Depot k implies trip[i] == k
+                        if (i, d_node) in tau: # Stack -> Depot(k) => trip[i] == k
                             m.addGenConstrIndicator(x[i, d_node, r], True, trip[i, r] == k)
-                        if (d_node, i) in tau:
-                            # Depot k -> Stack i implies trip[i] == k + 1
+                        if (d_node, i) in tau: # Depot(k) -> Stack => trip[i] == k + 1
                             m.addGenConstrIndicator(x[d_node, i, r], True, trip[i, r] == k + 1)
 
-        # 3. Stack 之间的直接连接 (同趟次)
+        # --- 约束组 2: 终点管理 ---
+        all_depot_nodes = []
+        for station_dict in depot_layer_nodes.values():
+            all_depot_nodes.extend(station_dict.values())
         for r in R:
+            all_depots = []
+            for layer_dict in depot_layer_nodes.values():
+                all_depots.extend(layer_dict.values())
+            
+            robot_active = m.addVar(vtype=GRB.BINARY, name=f"RobotActive_{r}")
+            # Robot active if it visits any stack
+            m.addConstr(robot_active * len(stack_nodes_indices) >= gp.quicksum(y[i, r] for i in stack_nodes_indices))
+            m.addConstr(robot_active <= gp.quicksum(y[i, r] for i in stack_nodes_indices))
+
+            end_depot = m.addVars(all_depots, vtype=GRB.BINARY)
+            for d in all_depots:
+                out_d = gp.quicksum(x[d, j, r] for j in N if (d, j) in tau)
+                # End depot if visited AND no outgoing flow
+                m.addConstr(end_depot[d] >= y[d, r] - out_d) 
+                m.addConstr(end_depot[d] <= y[d, r])
+                m.addConstr(end_depot[d] <= 1 - out_d + M_time * (1 - y[d, r])) # Logical constraint logic fix
+
+            # Active robots must have exactly one endpoint
+            m.addConstr(gp.quicksum(end_depot[d] for d in all_depots) == robot_active)
+
+            # Non-end depots must have outgoing flow
+            for d in all_depots:
+                m.addConstr(gp.quicksum(x[d, j, r] for j in N if (d, j) in tau) >= y[d, r] - end_depot[d])
+
+        # --- 约束组 3: Trip 连续性 ---
+        for r in R:
+            # 起点出发的 Trip 必须初始化为 1
+            start_node = robot_start_nodes[self.problem.robot_list[r].id]
+            for j in stack_nodes_indices:
+                if (start_node, j) in tau:
+                    m.addGenConstrIndicator(x[start_node, j, r], True, trip[j, r] == 1)
+            
+            # Stack 之间保持 Trip
             for i in stack_nodes_indices:
                 for j in stack_nodes_indices:
                     if i != j and (i, j) in tau:
-                        # Stack -> Stack 意味着 trip 序号不变
                         m.addGenConstrIndicator(x[i, j, r], True, trip[i, r] == trip[j, r])
 
-        # 4. Depot 必须回访约束 (SubTask 指定的 Station)
+        # --- 约束组 4: 负载与容量 (MTZ)  ---
+        for r in R:
+            # 硬约束：所有访问点的负载不能超限
+            for i in stack_nodes_indices:
+                m.addConstr(L[i, r] <= self.robot_capacity, name=f"Cap_{i}_{r}")
+
+            for i in N:
+                for j in N:
+                    if (i, j) in tau:
+                        type_i = nodes_map[i][3]
+                        type_j = nodes_map[j][3]
+                        d_j = demand.get(j, 0)
+
+                        # Case 1: Stack -> Stack (负载累加)
+                        if type_i == 'stack' and type_j == 'stack':
+                            m.addConstr(
+                                L[j, r] >= L[i, r] + d_j - self.robot_capacity * (1 - x[i, j, r]),
+                                name=f"LoadInc_{i}_{j}_{r}"
+                            )
+                        
+                        # Case 2: Start -> Stack (初始负载)
+                        elif type_i == 'robot_start' and type_j == 'stack':
+                            m.addGenConstrIndicator(x[i, j, r], True, L[j, r] == d_j)
+
+                        # Case 3: Depot -> Stack (重置负载)
+                        elif type_i == 'depot' and type_j == 'stack':
+                            m.addGenConstrIndicator(x[i, j, r], True, L[j, r] == d_j)
+                            
+                        # Case 4: Stack -> Depot (仅仅是为了记录到达时的负载，可选)
+                        elif type_i == 'stack' and type_j == 'depot':
+                            m.addGenConstrIndicator(x[i, j, r], True, L[j, r] == L[i, r])
+
+        # --- 约束组 5: 时间推演 ---
+        for r in R:
+            time_vars = [(i, T[i, r]) for i in N]
+            time_arcs = [(i, j, tau[i,j] + service_time[i]) for (i,j) in tau]
+            
+            m.addConstr(
+                gp.quicksum(tau[i,j] * x[i,j,r] for i,j in tau) + 
+                gp.quicksum(service_time[i] * y[i,r] for i in N) 
+                <= Z,
+                name=f"TotalTime_{r}"
+            )
+        for st_id, nodes in subtask_nodes.items():
+            if len(nodes) > 1:
+                for r in R:
+                    # 禁止 SubTask 内部形成子回路
+                    m.addConstr(
+                        gp.quicksum(x[i, j, r] for i in nodes for j in nodes 
+                                if (i,j,r) in x and i != j) 
+                        <= len(nodes) - 1,
+                        name=f"NoSubtour_ST{st_id}_R{r}"
+                    )
+        # --- 约束组 6: 业务逻辑约束 ---
+        # Depot 回访匹配 (SubTask -> Correct Station)
         for st_id, nodes in subtask_nodes.items():
             st = next(t for t in valid_tasks if t.id == st_id)
             target_station_id = st.assigned_station_id
-
-            # 这一组 Stack 的任何流出到 Depot 的边，必须连向 target_station 对应的 Depot 节点
-            # 或者 Stack -> Stack
             for i in nodes:
                 for r in R:
-                    # 禁止流向错误的 Station Depot
+                    # 禁止连接到错误的 Station Depot
                     for s_id, layer_dict in depot_layer_nodes.items():
                         if s_id != target_station_id:
                             for k in range(1, max_trips + 1):
@@ -740,39 +951,15 @@ class SP4_Robot_Router:
                                 if (i, wrong_depot) in tau:
                                     m.addConstr(x[i, wrong_depot, r] == 0)
 
-        # 5. 时间和容量约束 (标准 VRP)
-        for r in R:
-            for i in N:
-                for j in N:
-                    if (i, j) in tau:
-                        # 时间推演
-                        m.addConstr(
-                            T[j, r] >= T[i, r] + service_time[i] + tau[i, j] - M * (1 - x[i, j, r]),
-                            name=f"Time_{i}_{j}"
-                        )
-
-                        # 容量推演 (仅针对 Stack -> Stack)
-                        # 如果 j 是 Stack，增加负载
-                        if j in stack_nodes_indices:
-                            m.addConstr(
-                                L[j, r] >= L[i, r] + demand[j] - M * (1 - x[i, j, r]),
-                                name=f"LoadInc_{i}_{j}"
-                            )
-                        # 如果 j 是 Depot，清空负载 (Reset)
-                        elif nodes_map[j][3] == 'depot':
-                            m.addConstr(
-                                L[j, r] <= M * (1 - x[i, j, r]),  # L[depot] 必须为 0
-                                name=f"LoadReset_{i}_{j}"
-                            )
-
-        # 6. 同 SubTask 同机器人约束
+        # 同 SubTask 同机器人
         for st_id, nodes in subtask_nodes.items():
             if len(nodes) > 1:
                 base = nodes[0]
                 for other in nodes[1:]:
                     for r in R:
                         m.addConstr(y[base, r] == y[other, r])
-        robot_subtask_groups = defaultdict(list)
+        
+                robot_subtask_groups = defaultdict(list)
         for st_id, nodes in subtask_nodes.items():
             st = next(t for t in valid_tasks if t.id == st_id)
             if st.station_sequence_rank >= 0:  # 只处理有排序信息的任务
@@ -787,13 +974,13 @@ class SP4_Robot_Router:
                 for st, repr_node in st_nodes_list:
                     # 如果该节点可能被机器人 r 访问
                     candidate_subtasks.append((st, repr_node, st.station_sequence_rank))
-            
+
             if len(candidate_subtasks) < 2:
                 continue  # 少于 2 个任务不需要排序约束
-            
+
             # 按 station_sequence_rank 排序
             candidate_subtasks.sort(key=lambda x: x[2])
-            
+
             # 添加时间序约束：如果两个 SubTask 都被机器人 r 执行，
             # 则 rank 小的必须在时间上早于 rank 大的
             for idx in range(len(candidate_subtasks) - 1):
@@ -802,7 +989,7 @@ class SP4_Robot_Router:
                 if st_early.assigned_station_id != st_late.assigned_station_id:
                     early_nodes = subtask_nodes[st_early.id]
                     late_nodes = subtask_nodes[st_late.id]
-                    
+
                     # 对于每一对 early-late 节点
                     for i in early_nodes:
                         for j in late_nodes:
@@ -811,77 +998,127 @@ class SP4_Robot_Router:
                             m.addConstr(both_flag <= y[i, r])
                             m.addConstr(both_flag <= y[j, r])
                             m.addConstr(both_flag >= y[i, r] + y[j, r] - 1)
-                            
+
                             # Indicator 约束
                             m.addGenConstrIndicator(
-                                both_flag, True, 
+                                both_flag, True,
                                 T[i, r] + service_time[i] <= T[j, r],
                                 name=f"SeqRank_{i}_{j}_{r}"
                             )
-               
-        # 7. 对称性破缺约束 (防止机器人互换产生等价解)
-        m.addConstrs(
-            gp.quicksum(y[i, r] for i in stack_nodes_indices) >=  # ✅ 修复
-            gp.quicksum(y[i, r + 1] for i in stack_nodes_indices)  # ✅ 修复
-            for r in range(len(R) - 1)
-        )
-        # 1. 定义 Makespan 变量 Z
-        Z = m.addVar(vtype=GRB.CONTINUOUS, name="Makespan")
 
-        # 2. 收集所有的 Depot 节点索引
-        # depot_layer_nodes 结构是: {station_id: {trip_layer_k: node_id}}
-        all_depot_nodes = []
-        for station_dict in depot_layer_nodes.values():
-            for node_id in station_dict.values():
-                all_depot_nodes.append(node_id)
+        # 计算总需求
+        total_demand = sum(demand.values())
+        # 计算理论最少需要的总 Trip 数 (向上取整)
+        min_total_trips = math.ceil(total_demand / self.robot_capacity)
 
-        # 3. 添加 Makespan 约束
-        # 逻辑：对于每一个机器人 r，如果它访问了某个 Depot 节点 d，那么 Z 必须大于该节点的到达时间
+        # 约束：所有机器人出发的 Trip 总数必须满足需求
+
+        depot_starts = gp.quicksum(x[d, j, r] 
+                                for d in all_depot_nodes 
+                                for j in stack_nodes_indices 
+                                for r in R 
+                                if (d, j, r) in x)
+        start_starts = gp.quicksum(x[s, j, r] 
+                                for s in robot_start_nodes.values() 
+                                for j in stack_nodes_indices 
+                                for r in R 
+                                if (s, j, r) in x)
+
+        m.addConstr(depot_starts + start_starts >= min_total_trips, name="LB_MinTrips")
+        total_service_load = sum(service_time[i] for i in stack_nodes_indices)
+        # 2. LB Cut 1: 平均负载约束
+       
+        m.addConstr(Z * len(self.problem.robot_list) >= total_service_load, name="LB_AverageLoad")
+                
+        # LB2: 容量下界 - 考虑往返时间
+        for r in R:
+            # 计算该机器人可能访问的 SubTask 的最小往返成本
+            subtask_min_costs = {}
+            for st_id, nodes in subtask_nodes.items():
+                st = next(t for t in valid_tasks if t.id == st_id)
+                target_station = self.problem.station_list[st.assigned_station_id].point
+                
+                # 最近 Stack 到 Station 的距离
+                min_dist = float('inf')
+                for node_id in nodes:
+                    stack_pt = nodes_map[node_id][0]
+                    dist = abs(stack_pt.x - target_station.x) + abs(stack_pt.y - target_station.y)
+                    min_dist = min(min_dist, dist)
+                
+                # 单趟最小成本 = 服务时间 + 往返时间
+                st_service = sum(service_time[n] for n in nodes)
+                st_trips = (sum(demand[n] for n in nodes) + self.robot_capacity - 1) // self.robot_capacity
+                subtask_min_costs[st_id] = st_service + st_trips * (2 * min_dist / self.robot_speed)
+            
+            # 如果机器人 r 执行某 SubTask，则 Makespan >= 该 SubTask 的最小完成时间
+            for st_id, min_cost in subtask_min_costs.items():
+                repr_node = subtask_nodes[st_id][0]
+                m.addConstr(Z >= min_cost * y[repr_node, r], name=f"LB_SubTask_{st_id}_{r}")
+        
+        # --- 约束组 7: 目标函数 ---
+
         for r in R:
             for d in all_depot_nodes:
-                # 使用 Indicator Constraint: if y[d, r] == 1, then Z >= T[d, r]
-                # 注意：如果有卸货时间(t_drop), 应该是 Z >= T[d, r] + t_drop
                 m.addGenConstrIndicator(y[d, r], True, Z >= T[d, r])
 
-        # 4. 设置目标函数：最小化 Makespan
-        # 加上一点点总距离惩罚(epsilon)，用于在时间相同时选择路程更短的方案
         epsilon = 0.01
         total_dist = gp.quicksum(tau[i, j] * x[i, j, r] for i, j, r in x)
-
         m.setObjective(Z + epsilon * total_dist, GRB.MINIMIZE)
 
+        # --- 求解 ---
         print("  >>> [SP4] Generating heuristic warm start...")
-        # 1. 运行启发式获取物理路径
-        heu_arrival_times, heu_robot_assign = self._solve_heuristic(sub_tasks)
-
-        # 2. 映射到分层图并注入
+        heu_arrival_times, heu_robot_assign,heu_time = self._solve_heuristic(sub_tasks)
+        
         self._apply_warm_start_layered(
             m, x, y, T, L, trip,
-            heu_robot_assign,
-            heu_arrival_times,
-            nodes_map,
-            depot_layer_nodes,  # 需确保在 solve_mip 作用域内可用
-            robot_start_nodes,
-            stack_nodes_indices,  # 需确保在 solve_mip 作用域内可用
-            tau,
-            demand,
-            service_time,
-            max_trips
+            heu_robot_assign, heu_arrival_times, nodes_map,
+            depot_layer_nodes, robot_start_nodes, stack_nodes_indices,
+            tau, demand, service_time, max_trips
         )
-        m.optimize()
+        m.setParam('LogFile', 'log/gurobi_run.log')
+        print("正在导出模型约束到 log/debug_model.lp ...")
+        m.write("log/debug_model.lp")
+        m.Params.Cutoff = heu_time * 1.2 
+        # 🔧 分阶段求解策略
+        print("\n  >>> [Phase 1] Quick feasibility search (60s)...")
+        m.Params.TimeLimit = 60
+        m.Params.MIPFocus = 1        # 聚焦可行解
+        m.Params.Heuristics = 0.3    # 高频启发式
+        m.Params.Cuts = 0            # 暂不生成割平面
+        m.Params.NoRelHeurTime = 30  # 前30秒不依赖 LP 松弛
+        
+        m.optimize(self._subtour_callback)
+        
+        if m.SolCount > 0:
+            incumbent = m.objVal
+            print(f"  >>> [Phase 1] Found solution: {incumbent:.2f}")
+            
+            # Phase 2: 改善解质量
+            print(f"\n  >>> [Phase 2] Improving solution (剩余时间)...")
+            m.Params.TimeLimit = 240  # 总共 300 秒
+            m.Params.MIPFocus = 2     # 证明最优性
+            m.Params.Cuts = 3         # 激进割平面
+            m.Params.CutPasses = 20
+            m.Params.Heuristics = 0.05  # 降低启发式比例
+            
+            # 🔧 关键：设置 Cutoff（只接受改善 5% 以上的解）
+            m.Params.Cutoff = incumbent * 0.95
+            
+            # 🔧 专门针对 VRP 的 Cuts
+            m.Params.FlowCoverCuts = 2
+            m.Params.MIRCuts = 2
+            m.Params.GomoryPasses = 10
+            
+            m.optimize(self._subtour_callback)
 
-        # --- 结果解析 ---
+        # --- 结果提取 ---
         robot_arrival_times = {}
         subtask_robot_assign = {}
 
         if m.status in [GRB.OPTIMAL, GRB.TIME_LIMIT]:
             print(f"  >>> Solved. Obj: {m.objVal:.2f}")
-
-            # 🔧 修复：传入正确参数
-            self._extract_sequence(x, y, T, trip, nodes_map, N, R,
-                                   depot_layer_nodes, robot_start_nodes, stack_nodes_indices)
-
-            # 提取结果
+            self._extract_sequence(x, y, T, trip, nodes_map, N, R, depot_layer_nodes, robot_start_nodes,
+                                   stack_nodes_indices)
             for i in stack_nodes_indices:
                 pt, subtask, task, _, _ = nodes_map[i]
                 for r in R:
@@ -889,16 +1126,365 @@ class SP4_Robot_Router:
                         arr_time = T[i, r].X
                         robot_arrival_times[pt.idx] = arr_time
                         subtask_robot_assign[subtask.id] = self.problem.robot_list[r].id
-
                         task.robot_id = r
                         task.arrival_time_at_stack = arr_time
+            with open("log/debug_result.txt", "w") as f:
+                f.write(f"Objective Value: {m.objVal}\n")
+                f.write("-" * 30 + "\n")
+                
+                # 3.1 打印所有被选中的路径 (x 变量)
+                f.write("=== Active Routes (x > 0.5) ===\n")
+                # 假设你的变量叫 x，根据实际情况调整名字
+        
+                for v in m.getVars():
+                    if v.varName.startswith("x") and v.x > 0.5:
+                        f.write(f"{v.varName} = {v.x}\n")
+                
+                f.write("\n")
+                
+                # 3.2 打印所有负载情况 (load 变量) 
+                f.write("=== Load Variables ===\n")
+                for v in m.getVars():
+                    
+                    if ("L" in v.varName) and v.x > 0.001:
+                        f.write(f"{v.varName} = {v.x}\n")
+                        
+                f.write("\n")
+                
+                # 3.3 打印 Trip 变量
+                f.write("=== Trip Variables ===\n")
+                for v in m.getVars():
+                    if "trip" in v.varName:
+                        f.write(f"{v.varName} = {v.x}\n")
+                # 3.4 打印时间变量 (只打印 Active 的)
+                f.write("\n=== Time Variables (Active Only) ===\n")
+                for v in m.getVars():
+                    if v.varName.startswith("T"):
+                     
+                        import re
+                        match = re.match(r"T\[(\d+),(\d+)\]", v.varName)
+                        if match:
+                            n_id, r_id = int(match.group(1)), int(match.group(2))
+                            # 关键判断：只有当 y[n,r] > 0.5 时才打印 T
+                            if y[n_id, r_id].X > 0.5: 
+                                f.write(f"{v.varName} = {v.x}\n")
 
+                # 3.3 打印 Trip 变量 (同理)
+                f.write("=== Trip Variables (Active Only) ===\n")
+                for v in m.getVars():
+                    if "trip" in v.varName:
+                        match = re.match(r"trip\[(\d+),(\d+)\]", v.varName)
+                        if match:
+                            n_id, r_id = int(match.group(1)), int(match.group(2))
+                            # 只有访问了该点，Trip 才有意义
+                            if y[n_id, r_id].X > 0.5:
+                                f.write(f"{v.varName} = {v.x}\n")
+        
+          
+            
+            print("调试文件已生成在 log/ 目录下。")
+
+    
         else:
             print("  >>> MIP Infeasible or Failed.")
 
         return robot_arrival_times, subtask_robot_assign
+    # -----------------------------------------------------------
+    # 1. 静态辅助函数：寻找连通分量
+    # -----------------------------------------------------------
+    @staticmethod
+    def _find_connected_components(edges):
+        """返回节点列表的列表，例如 [[1,2,3], [4,5]]"""
+        if not edges: return []
+        adj = defaultdict(list)
+        nodes = set()
+        for i, j in edges:
+            adj[i].append(j)
+            nodes.add(i)
+            nodes.add(j)
+        
+        visited = set()
+        components = []
+        for n in nodes:
+            if n not in visited:
+                comp = []
+                q = [n]
+                visited.add(n)
+                while q:
+                    curr = q.pop(0)
+                    comp.append(curr)
+                    for nxt in adj[curr]:
+                        # 无向化处理以找到连通块，或者仅根据出边
+                        # 为防止 x->y 但 y->x 没被识别为同一组，建议视为无向图做连通性检查
+                        if nxt not in visited:
+                            visited.add(nxt)
+                            q.append(nxt)
+                components.append(comp)
+        return components
+
+    @staticmethod
+    def _find_cycles_dfs(edges):
+        """
+        使用 DFS 检测有向图中的所有环
+        返回: List[List[int]] - 每个环的节点列表
+        """
+        if not edges:
+            return []
+        
+        # 构建邻接表（有向边）
+        adj = defaultdict(list)
+        nodes = set()
+        for i, j in edges:
+            adj[i].append(j)
+            nodes.add(i)
+            nodes.add(j)
+        
+        visited = set()
+        rec_stack = set()  # 递归栈，用于检测环
+        cycles = []
+        
+        def dfs(node, path):
+            """DFS 搜索，path 记录当前路径"""
+            visited.add(node)
+            rec_stack.add(node)
+            path.append(node)
+            
+            for neighbor in adj[node]:
+                if neighbor not in visited:
+                    dfs(neighbor, path)
+                elif neighbor in rec_stack:
+                    # 发现环！提取环路
+                    cycle_start = path.index(neighbor)
+                    cycle = path[cycle_start:]
+                    cycles.append(cycle)
+            
+            rec_stack.remove(node)
+            path.pop()
+        
+        # 从每个未访问的节点开始 DFS
+        for start_node in nodes:
+            if start_node not in visited:
+                dfs(start_node, [])
+        
+        return cycles
+    
+    def _cb_lazy_subtour(self, model, where):
+        """
+        [完全重构] 多层次子回路检测 + 精确切割
+        """
+        if where != GRB.Callback.MIPSOL:
+            return
+        
+        x_vals = model.cbGetSolution(model._vars)
+        
+        # 按机器人分组
+        edges_per_robot = defaultdict(list)
+        for (i, j, r), val in x_vals.items():
+            if val > 0.5:
+                edges_per_robot[r].append((i, j))
+        
+        cuts_added = 0
+        
+        for r, edges in edges_per_robot.items():
+            if not edges:
+                continue
+            
+            # === 第一层检测：简单环路 ===
+            cycles = self._find_cycles_dfs(edges)
+            
+            for cycle in cycles:
+                # 判断是否为非法环
+                has_start = False
+                has_depot = False
+                all_stack_ids = []
+                
+                for node in cycle:
+                    n_type = self.nodes_map_ref[node][3]
+                    if n_type == 'robot_start':
+                        has_start = True
+                    elif n_type == 'depot':
+                        has_depot = True
+                    elif n_type == 'stack':
+                        all_stack_ids.append(node)
+                
+                # 规则1: 纯 Stack 环（最常见的子回路）
+                if not has_start and not has_depot:
+                    expr = gp.quicksum(model._vars[i, j, r] 
+                                      for i in cycle 
+                                      for j in cycle 
+                                      if (i, j, r) in model._vars)
+                    model.cbLazy(expr <= len(cycle) - 1)
+                    cuts_added += 1
+                    continue
+                
+                # 规则2: 包含 Start 但又回到 Start（非法）
+                if has_start and cycle[0] == cycle[-1]:
+                    # Start 不能形成环（必须单向出发）
+                    start_node = next(n for n in cycle if self.nodes_map_ref[n][3] == 'robot_start')
+                    expr = gp.quicksum(model._vars[i, start_node, r] 
+                                      for i in cycle if (i, start_node, r) in model._vars)
+                    model.cbLazy(expr == 0)  # 禁止任何边指向 Start
+                    cuts_added += 1
+                
+                # 规则3: Depot 之间的非法连接
+                if has_depot:
+                    depot_nodes = [n for n in cycle if self.nodes_map_ref[n][3] == 'depot']
+                    if len(depot_nodes) > 1:
+                        # 不同 Depot 之间不能直连
+                        for d1 in depot_nodes:
+                            for d2 in depot_nodes:
+                                if d1 != d2 and (d1, d2, r) in model._vars:
+                                    model.cbLazy(model._vars[d1, d2, r] == 0)
+                                    cuts_added += 1
+            
+            # === 第二层检测：路径连通性 ===
+            # 检查是否存在多个不连通的子路径
+            components = self._find_weak_components(edges)
+            
+            if len(components) > 1:
+                # 找出包含 Start 的主路径
+                start_node = next(n for n in self.nodes_map_ref 
+                                 if self.nodes_map_ref[n][3] == 'robot_start')
+                main_comp = None
+                for comp in components:
+                    if start_node in comp:
+                        main_comp = comp
+                        break
+                
+                # 其他分量都是孤立子回路
+                for comp in components:
+                    if comp == main_comp:
+                        continue
+                    
+                    # 标准 Subtour Elimination Constraint
+                    expr = gp.quicksum(model._vars[i, j, r] 
+                                      for i in comp 
+                                      for j in comp 
+                                      if (i, j, r) in model._vars)
+                    model.cbLazy(expr <= len(comp) - 1)
+                    cuts_added += 1
+            
+            # === 第三层检测：Trip 层级违规 ===
+            # 检查是否存在跨层级的非法连接
+            for i, j in edges:
+                type_i = self.nodes_map_ref[i][3]
+                type_j = self.nodes_map_ref[j][3]
+                
+                # Stack -> Depot: 检查 Trip 匹配
+                if type_i == 'stack' and type_j == 'depot':
+                    depot_layer = self.nodes_map_ref[j][4]
+                    
+                    # 获取该 Stack 的 Trip（从解中读取）
+                    if hasattr(model, '_trip_vars'):
+                        stack_trip_val = model.cbGetSolution(model._trip_vars.get((i, r), None))
+                        if stack_trip_val is not None:
+                            if abs(stack_trip_val - depot_layer) > 0.5:
+                                # Trip 不匹配，添加冲突约束
+                                model.cbLazy(model._vars[i, j, r] == 0)
+                                cuts_added += 1
+        
+        if cuts_added > 0:
+            print(f"  🔪 [Callback] Added {cuts_added} lazy cuts")
+            # === 新增：容量违规检测 ===
+        for r, edges in edges_per_robot.items():
+            # 构建路径
+            path = self._reconstruct_path(edges)
+            
+            cumulative_load = 0
+            last_depot_idx = -1
+            
+            for idx, node in enumerate(path):
+                n_type = self.nodes_map_ref[node][3]
+                
+                if n_type == 'stack':
+                    demand_val = self.demand_ref.get(node, 0)
+                    cumulative_load += demand_val
+                    
+                    # 检查是否超载
+                    if cumulative_load > self.robot_capacity + 0.01:
+                        # 找出导致超载的子路径
+                        violating_segment = path[last_depot_idx + 1 : idx + 1]
+                        
+                        # 添加容量割：该路径段内必须插入至少一个 Depot
+                        depot_nodes = [n for n in self.nodes_map_ref 
+                                      if self.nodes_map_ref[n][3] == 'depot']
+                        
+                        # 如果该子路径被选中，则必须访问至少一个 Depot
+                        segment_active = gp.quicksum(model._vars.get((violating_segment[i], 
+                                                                      violating_segment[i+1], r), 0)
+                                                    for i in range(len(violating_segment) - 1))
+                        depot_visit = gp.quicksum(model._y_vars.get((d, r), 0) 
+                                                 for d in depot_nodes)
+                        
+                        model.cbLazy(segment_active <= depot_visit * len(violating_segment))
+                        cuts_added += 1
+                
+                elif n_type == 'depot':
+                    cumulative_load = 0
+                    last_depot_idx = idx
+    def _reconstruct_path(self, edges):
+        """从边列表重建有序路径"""
+        if not edges:
+            return []
+        
+        # 构建邻接表
+        adj = {i: j for i, j in edges}
+        
+        # 找起点（出度>0 但入度=0 的节点）
+        out_nodes = set(i for i, _ in edges)
+        in_nodes = set(j for _, j in edges)
+        start = list(out_nodes - in_nodes)[0] if out_nodes - in_nodes else edges[0][0]
+        
+        # 重建路径
+        path = [start]
+        curr = start
+        while curr in adj:
+            curr = adj[curr]
+            path.append(curr)
+            if len(path) > 1000:  # 防止死循环
+                break
+        
+        return path
+    @staticmethod
+    def _find_weak_components(edges):
+        """辅助函数：找弱连通分量（将有向图视为无向）"""
+        if not edges:
+            return []
+        
+        # 双向邻接表
+        adj = defaultdict(set)
+        nodes = set()
+        for i, j in edges:
+            adj[i].add(j)
+            adj[j].add(i)  # 无向化
+            nodes.add(i)
+            nodes.add(j)
+        
+        visited = set()
+        components = []
+        
+        for start in nodes:
+            if start not in visited:
+                comp = []
+                queue = [start]
+                visited.add(start)
+                
+                while queue:
+                    curr = queue.pop(0)
+                    comp.append(curr)
+                    for neighbor in adj[curr]:
+                        if neighbor not in visited:
+                            visited.add(neighbor)
+                            queue.append(neighbor)
+                
+                components.append(comp)
+        
+        return components
 
 
+
+
+from collections import defaultdict
 import os
 from typing import Dict, List
 
@@ -926,11 +1512,11 @@ class SP4Logger:
         elif n_type == 'stack':
             stack_id = task_obj.target_stack_id if task_obj else "Unknown"
             st_id = subtask.id if subtask else "?"
-            return f"Stack_{stack_id}，StackPoint:{pt.idx}（x,y):({pt.x},{pt.y}),task_id:{task_obj.task_id} ，task_service_time：{task_obj.robot_service_time},task_mode:{task_obj.operation_mode},(SubTask_{st_id})"
+            return f"Stack_{stack_id}，StackPoint:{pt.idx}（x,y):({pt.x},{pt.y}),task_id:{task_obj.task_id} ，task_service_time：{task_obj.robot_service_time},(SubTask_{st_id})，（subtask assigned_station:{subtask.assigned_station_id if subtask else 'Unknown'})"
 
         elif n_type == 'depot':
             # Depot 节点包含层级信息 (Trip)
-            return f"Station_Point_{pt.idx} (Trip_Layer_{layer})"
+            return f"Station_Point_{pt.idx}（x,y):({pt.x},{pt.y}) (Trip_Layer_{layer})"
 
         return f"Node_{n_id} ({n_type})"
 
@@ -986,6 +1572,19 @@ class SP4Logger:
                 desc = self._get_node_desc(i, nodes_map)
                 f.write(f"T[{i}, {r}] = {val:.2f}s    # Robot_{r} at {desc}\n")
 
+            # 4. 写入 L 变量
+            f.write("\n[Variables: L(i, r)]\n")
+            sorted_L = sorted(injected['L'].items(), key=lambda item: (item[0][1], item[1]))
+            for (i, r), val in sorted_L:
+                desc = self._get_node_desc(i, nodes_map)
+                f.write(f"L[{i}, {r}] = {val}       # Robot_{r} load at {desc}\n")
+                # 5. 写入 trip 变量
+            f.write("\n[Variables: trip(i, r)]\n")
+            sorted_trip = sorted(injected['trip'].items(), key=lambda item: (item[0][1], item[1]))
+            for (i, r), val in sorted_trip:
+                desc = self._get_node_desc(i, nodes_map)
+                f.write(f"trip[{i}, {r}] = {val}     # Robot_{r} trip layer at {desc}\n")
+
     def log_validation(self, message: str):
         """功能 3: 记录验证信息"""
         with open(self.file_path, 'a', encoding='utf-8') as f:
@@ -1009,11 +1608,13 @@ def checksp3hit(
 
         # 2. 统计 execution_tasks 中所有 hit_tote_ids 提供的 SKU
         provided_skus = {}  # {sku_id: provided_quantity}
+        
+        # ✅ 新增：记录每个料箱提供的 SKU 详情
+        tote_sku_details = []  # [(tote_id, stack_id, sku_map)]
 
-        # --- 新增：冗余检查逻辑 ---
-        remaining_req = required_skus.copy()
+        # ✅ 关键修改：使用动态剩余需求追踪
+        remaining_req = required_skus.copy()  # {sku_id: remaining_quantity}
         redundant_totes_info = []
-        # -----------------------
 
         for task in st.execution_tasks:
             for tote_id in task.hit_tote_ids:
@@ -1022,22 +1623,39 @@ def checksp3hit(
                     print(f"  ❌ [SubTask {st.id}] Tote {tote_id} not found in problem.id_to_tote")
                     continue
 
-                # 累加该料箱提供的 SKU 数量 (用于总覆盖检查)
+                # ✅ 关键修改：计算该料箱实际贡献的 SKU
+                actual_contribution = {}  # 该料箱真正满足的 SKU
+                noise_skus = {}           # 该料箱中多余的 SKU
+                
+                for sku_id, qty in tote.sku_quantity_map.items():
+                    if remaining_req.get(sku_id, 0) > 0:
+                        # 计算实际使用量（不超过剩余需求）
+                        used = min(remaining_req[sku_id], qty)
+                        actual_contribution[sku_id] = used
+                        remaining_req[sku_id] -= used
+                        
+                        # 如果该料箱中该SKU数量超出需求，超出部分算噪音
+                        if qty > used:
+                            noise_skus[sku_id] = qty - used
+                    else:
+                        # 该 SKU 已经满足，全部算噪音
+                        noise_skus[sku_id] = qty
+                
+                # ✅ 记录该料箱的实际贡献（而非原始内容）
+                tote_sku_details.append((
+                    tote_id, 
+                    task.target_stack_id, 
+                    actual_contribution,  # ✅ 只记录实际贡献的部分
+                    noise_skus            # ✅ 单独记录噪音
+                ))
+
+                # 累加总供给（用于最终检查）
                 for sku_id, qty in tote.sku_quantity_map.items():
                     provided_skus[sku_id] = provided_skus.get(sku_id, 0) + qty
 
-                # --- 冗余判断 ---
-                is_useful = False
-                for sku_id, qty in tote.sku_quantity_map.items():
-                    if remaining_req.get(sku_id, 0) > 0:
-                        is_useful = True
-                        # 扣减需求（贪婪扣减）
-                        take = min(remaining_req[sku_id], qty)
-                        remaining_req[sku_id] -= take
-
-                if not is_useful:
+                # 判断该料箱是否有贡献
+                if not actual_contribution:
                     redundant_totes_info.append(f"Tote {tote_id} (Stack {task.target_stack_id})")
-                # ----------------
 
         # 3. 检查覆盖性
         missing_skus = []
@@ -1053,89 +1671,110 @@ def checksp3hit(
             elif provided_qty > required_qty:
                 excess_skus.append((sku_id, provided_qty - required_qty))
 
-        # 4. 检查是否有不需要的 SKU
-        unexpected_skus = []
-        for sku_id in provided_skus:
-            if sku_id not in required_skus:
-                unexpected_skus.append((sku_id, provided_skus[sku_id]))
-
-        # 5. 输出验证结果
+        # 4. ✅ 输出验证结果（修正版）
         log_lines = []
+        
+        msg = f"\n  📋 [SubTask {st.id}] SKU Overview:"
+        print(msg)
+        log_lines.append(msg)
+        
+        msg = f"      Required SKUs: {required_skus}"
+        print(msg)
+        log_lines.append(msg)
+        
+        msg = f"      Provided SKUs: {provided_skus}"
+        print(msg)
+        log_lines.append(msg)
+        
+        # ✅ 核心修改：显示每个料箱的实际贡献（扣除已满足的SKU）
+        msg = f"      📦 Tote-Level SKU Breakdown ({len(tote_sku_details)} totes):"
+        print(msg)
+        log_lines.append(msg)
+        
+        for tote_id, stack_id, needed_skus, noise_skus in tote_sku_details:
+            msg = f"         Tote {tote_id} @ Stack {stack_id}:"
+            print(msg)
+            log_lines.append(msg)
+            
+            if needed_skus:
+                msg = f"           ✅ Needed: {needed_skus}"
+                print(msg)
+                log_lines.append(msg)
+            
+            if noise_skus:
+                msg = f"           🔇 Noise: {noise_skus}"
+                print(msg)
+                log_lines.append(msg)
+            
+            # 如果两者都为空，说明是完全冗余的料箱
+            if not needed_skus and not noise_skus:
+                msg = f"           ⚠️ Completely Redundant (all SKUs already satisfied)"
+                print(msg)
+                log_lines.append(msg)
+        
+        # 输出验证结果
         if missing_skus:
             msg = f"\n  ❌ [SubTask {st.id}] Validation FAILED:"
             print(msg)
             log_lines.append(msg)
 
-            msg = f"      Required SKUs: {required_skus}"
+            msg = f"      ⚠️ Missing SKUs:"
             print(msg)
             log_lines.append(msg)
-
-            msg = f"      Provided SKUs: {provided_skus}"
-            print(msg)
-            log_lines.append(msg)
-
-            if missing_skus:
-                msg = f"      ⚠️ Missing SKUs:"
+            for sku_id, shortage in missing_skus:
+                msg = f"         - SKU {sku_id}: Need {shortage} more"
                 print(msg)
                 log_lines.append(msg)
-                for sku_id, shortage in missing_skus:
-                    msg = f"         - SKU {sku_id}: Need {shortage} more"
-                    print(msg)
-                    log_lines.append(msg)
-
-            # 详细列出涉及的料箱
-            msg = f"      📦 Hit Totes ({len(st.assigned_tote_ids)} total):"
-            print(msg)
-            log_lines.append(msg)
-            for task_idx, task in enumerate(st.execution_tasks):
-                msg = f"         Task {task_idx} @ Stack {task.target_stack_id}:"
-                print(msg)
-                log_lines.append(msg)
-                msg = f"           - Hit: {task.hit_tote_ids}"
-                print(msg)
-                log_lines.append(msg)
-                msg = f"           - Noise: {task.noise_tote_ids}"
-                print(msg)
-                log_lines.append(msg)
-                for tote_id in task.hit_tote_ids:
-                    tote = problem.id_to_tote.get(tote_id)
-                    if tote:
-                        msg = f"             Tote {tote_id}: {tote.sku_quantity_map}"
-                        print(msg)
-                        log_lines.append(msg)
-
         else:
             msg = f"  ✅ [SubTask {st.id}] Validation PASSED ({len(required_skus)} SKU types, {sum(required_skus.values())} units)"
             print(msg)
             log_lines.append(msg)
-
-        # --- 输出冗余信息 ---
-        if redundant_totes_info:
-            msg = f"      ⚠️ Redundant Totes Found ({len(redundant_totes_info)}): {redundant_totes_info}"
+        
+        # 输出多余 SKU 信息
+        if excess_skus:
+            msg = f"      ℹ️ Excess SKUs (over-supply):"
             print(msg)
             log_lines.append(msg)
+            for sku_id, excess in excess_skus:
+                msg = f"         - SKU {sku_id}: +{excess} extra"
+                print(msg)
+                log_lines.append(msg)
+
+        # 输出冗余料箱信息
+        if redundant_totes_info:
+            msg = f"      ⚠️ Redundant Totes (not contributing to required SKUs): {len(redundant_totes_info)}"
+            print(msg)
+            log_lines.append(msg)
+            for info in redundant_totes_info:
+                msg = f"         - {info}"
+                print(msg)
+                log_lines.append(msg)
 
         if logger:
             for line in log_lines:
                 logger.log_validation(line)
 
-
     final_msg = f"  >>> ✅ SP3 Validation Complete. All SubTasks have sufficient tote coverage.\n"
     print(final_msg)
     if logger:
         logger.log_validation(final_msg)
-
 if __name__ == "__main__":
     from Gurobi.sp1 import SP1_BOM_Splitter
     from Gurobi.sp2 import SP2_Station_Assigner
     from Gurobi.sp3 import SP3_Bin_Hitter
     from problemDto.createInstance import CreateOFSProblem
-
+    import random
+    import numpy as np
+    # ✅ 在任何导入和计算之前固定种子
+    SEED = 42
+    os.environ['PYTHONHASHSEED'] = str(SEED)
+    random.seed(SEED)
+    np.random.seed(SEED)
     print("\n" + "=" * 60)
     print("=== Integrated SP1-SP2-SP3-SP4 Pipeline Test ===")
     print("=" * 60)
     print("\n[Phase 0] Generating Problem Instance...")
-    problem_dto = CreateOFSProblem.generate_problem_by_scale('SMALL')
+    problem_dto = CreateOFSProblem.generate_problem_by_scale('SMALL',seed=SEED)
     print(f"  - Orders: {len(problem_dto.order_list)}")
     print(f"  - Robots: {len(problem_dto.robot_list)}")
     print(f"  - Stations: {len(problem_dto.station_list)}")
@@ -1180,7 +1819,7 @@ if __name__ == "__main__":
     print(f"  ✓ Station load distribution:")
     for s_id, count in sorted(station_loads.items()):
         print(f"      Station {s_id}: {count} tasks")
-    #输出每个subtask被分配到的工作站
+    # 输出每个subtask被分配到的工作站
     for task in sub_tasks:
         print(f"    SubTask {task.id} assigned to Station {task.assigned_station_id}")
     # 4. SP3: 选箱决策
@@ -1208,7 +1847,7 @@ if __name__ == "__main__":
     print(f"\n=== SP3 Results ===")
     print(f"Generated {len(physical_tasks)} physical tasks")
     print(f"Total sorting cost: {sum(sorting_costs.values()):.2f}")
-    #验证每个task的选箱结果
+    # 验证每个task的选箱结果
     for task in physical_tasks:
         print(f"Physical Task {task.task_id}: SubTask {task.sub_task_id}, "
               f"Stack {task.target_stack_id}, Tote {task.hit_tote_ids}, noise {task.noise_tote_ids}"
@@ -1216,7 +1855,7 @@ if __name__ == "__main__":
 
     # # 5. SP4: 机器人路径规划
     sp4 = SP4_Robot_Router(problem_dto)
-    checksp3hit(sub_tasks,problem_dto,logger=sp4.logger)
+    checksp3hit(sub_tasks, problem_dto, logger=sp4.logger)
     arrival_times, robot_assign = sp4.solve(sub_tasks, use_mip=True)
     # ✅ 回填结果
     # (1) 到达时间已在 _solve_mip() 中回填到 Task.arrival_time_at_stack
