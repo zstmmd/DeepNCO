@@ -668,7 +668,7 @@ class SP4_Robot_Router:
         m = gp.Model("SP4_Layered_VRP")
         m.Params.OutputFlag = 1
         m.Params.MIPGap = 0.01
-
+        m.Params.TimeLimit=360
         # 变量
         # x[i,j,r]: 弧流量
         x = m.addVars([(i, j, r) for i in N for j in N if (i, j) in tau for r in R],
@@ -802,7 +802,35 @@ class SP4_Robot_Router:
                                 wrong_depot = layer_dict[k]
                                 if (i, wrong_depot) in tau:
                                     m.addConstr(x[i, wrong_depot, r] == 0)
+        for r in R:
+            for i in stack_nodes_indices:
+                # 如果节点 i 被机器人 r 访问，其负载必须 <= 容量
+                m.addConstr(
+                    L[i, r] <= self.robot_capacity + M * (1 - y[i, r]),
+                    name=f"GlobalCapacity_{i}_{r}"
+                )
+        for r in R:
+            for i in stack_nodes_indices:
+                for j in stack_nodes_indices:
+                    if i != j and (i, j) in tau:
+                        # 定义辅助变量：would_exceed[i,j,r] = 1 表示直接从 i 到 j 会超容量
+                        would_exceed = m.addVar(vtype=GRB.BINARY, name=f"WouldExceed_{i}_{j}_{r}")
 
+                        # 如果 L[i,r] + demand[j] > capacity，则 would_exceed = 1
+                        m.addConstr(
+                            L[i, r] + demand[j] - self.robot_capacity <= M * would_exceed,
+                            name=f"ExceedDef1_{i}_{j}_{r}"
+                        )
+                        m.addConstr(
+                            L[i, r] + demand[j] - self.robot_capacity >= 0.01 - M * (1 - would_exceed),
+                            name=f"ExceedDef2_{i}_{j}_{r}"
+                        )
+
+                        # 如果会超容量，则禁止直接连接（必须经过 Depot）
+                        m.addConstr(
+                            x[i, j, r] + would_exceed <= 1,
+                            name=f"ForceDepot_{i}_{j}_{r}"
+                        )
         # 5. 时间和容量约束 (标准 VRP)
         for r in R:
             for i in N:
