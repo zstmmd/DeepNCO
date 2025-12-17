@@ -1,7 +1,7 @@
 # solver/sp1_bom_splitter.py
 
 import math
-from typing import List, Dict, Tuple,DefaultDict
+from typing import List, Dict, Tuple, DefaultDict
 from collections import defaultdict
 import gurobipy as gp
 from gurobipy import GRB
@@ -32,7 +32,7 @@ class SP1_BOM_Splitter:
 
     def _init_capacity_limits(self):
         """初始化容量限制为全局默认值"""
-        default_cap = OFSConfig.ROBOT_CAPACITY-2
+        default_cap = OFSConfig.ROBOT_CAPACITY - 2
         for order in self.problem.order_list:
             self.order_capacity_limits[order.order_id] = default_cap
 
@@ -136,81 +136,83 @@ class SP1_BOM_Splitter:
             self._global_task_id += 1
 
         return sub_tasks
+
     def _split_order_by_stack_clustering(self, order) -> List[SubTask]:
         """
         [新增方法] 基于堆垛的强聚类拆分
         目标：让同一 SubTask 的 SKU 尽量来自同一组 Stack
         """
         cap_limit = self.order_capacity_limits.get(order.order_id, OFSConfig.ROBOT_CAPACITY)
-        
+
         # 1. 聚合 SKU 实例
         sku_groups: DefaultDict[int, List[SKUs]] = defaultdict(list)
         for sku_id in order.order_product_id_list:
             sku_obj = self.problem.id_to_sku.get(sku_id)
             if sku_obj:
                 sku_groups[sku_id].append(sku_obj)
-        
+
         unique_sku_ids = list(sku_groups.keys())
-        
+
         # 2. 构建 SKU -> Stack 关系图
         sku_to_stacks: Dict[int, Set[int]] = {}
         stack_to_skus: Dict[int, Set[int]] = defaultdict(set)
-        
+
         for sku_id in unique_sku_ids:
             sku_obj = sku_groups[sku_id][0]
             available_stacks = set()
-            
+
             for tote_id in sku_obj.storeToteList:
                 tote = self.problem.id_to_tote.get(tote_id)
                 if tote and tote.store_point:
                     stack_idx = tote.store_point.idx
                     available_stacks.add(stack_idx)
                     stack_to_skus[stack_idx].add(sku_id)
-            
+
             sku_to_stacks[sku_id] = available_stacks
-        
+
         # 3. 贪婪聚类：优先选择能覆盖最多 SKU 的 Stack 组合
         sub_tasks = []
         remaining_skus = set(unique_sku_ids)
-        
+
         while remaining_skus:
             # 当前 SubTask 的 SKU 集合
             current_task_skus = []
             used_stacks = set()
-            
+
             while len(current_task_skus) < cap_limit and remaining_skus:
                 # 选择能覆盖最多剩余 SKU 的 Stack
                 best_stack = None
                 best_coverage = 0
-                
-                for stack_idx, sku_set in stack_to_skus.items():
+                for stack_idx in sorted(stack_to_skus.keys()):
+                    sku_set = stack_to_skus[stack_idx]
+                    # for stack_idx, sku_set in stack_to_skus.items():
                     if stack_idx in used_stacks:
                         continue
-                    
+
                     # 计算该 Stack 能覆盖多少剩余 SKU
                     coverage = len(sku_set & remaining_skus)
                     if coverage > best_coverage:
                         best_coverage = coverage
                         best_stack = stack_idx
-                
+
                 if best_stack is None:
                     break  # 无法继续聚类，退出
-                
+
                 # 将该 Stack 上的 SKU 加入当前 SubTask
                 covered_skus = stack_to_skus[best_stack] & remaining_skus
                 for sku_id in covered_skus:
                     if len(current_task_skus) < cap_limit:
                         current_task_skus.append(sku_id)
                         remaining_skus.remove(sku_id)
-                
+
                 used_stacks.add(best_stack)
-            
+
             # 4. 生成 SubTask
             if current_task_skus:
                 task_full_sku_list = []
                 for sid in current_task_skus:
                     task_full_sku_list.extend(sku_groups[sid])
-                
+
                 task = SubTask(
                     id=self._global_task_id,
                     parent_order=order,
@@ -218,8 +220,9 @@ class SP1_BOM_Splitter:
                 )
                 sub_tasks.append(task)
                 self._global_task_id += 1
-        
+
         return sub_tasks
+
     def _split_order_by_unique_types(self, order) -> List[SubTask]:
         """
         核心逻辑修正：
@@ -294,6 +297,7 @@ class SP1_BOM_Splitter:
             self._global_task_id += 1
 
         return sub_tasks
+
     # =========================================================================
     #  基于 MIP 的精确覆盖
     # =========================================================================
@@ -371,6 +375,8 @@ class SP1_BOM_Splitter:
             return self._split_order_by_spatial_clustering(order)  # 这里的启发式也需要确保是按种类切分的逻辑
 
         return generated
+
+
 if __name__ == "__main__":
     # 初始化问题和求解器
     scales = ["SMALL", "MEDIUM"]
@@ -379,7 +385,7 @@ if __name__ == "__main__":
 
     # 1. 默认生成（基于空间聚类，使用全局容量限制）
     initial_tasks = sp1_solver.solve(use_mip=True)
-    #验证是否覆盖order的所有sku
+    # 验证是否覆盖order的所有sku
     order_to_skus: Dict[int, List[int]] = defaultdict(list)
     order_unique_count_check: Dict[int, int] = defaultdict(int)
     for task in initial_tasks:

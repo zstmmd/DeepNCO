@@ -52,11 +52,28 @@ class SP3_Bin_Hitter:
         final_tote_selection = defaultdict(list)
         final_sorting_costs = defaultdict(float)
         self._global_task_id = 0
+        # --- 【修改点 1】: 计算 SKU 的稀缺度 (Scarcity) ---
+        # 统计每个 SKU 在当前快照中出现在多少个堆垛里
+        sku_stack_count = defaultdict(int)
+        for stack_id, totes in self.stack_snapshots.items():
+            seen_skus_in_stack = set()
+            for t in totes:
+                for sku in t.skus_list:
+                    seen_skus_in_stack.add(sku.id)
+            for sku_id in seen_skus_in_stack:
+                sku_stack_count[sku_id] += 1
 
-        sorted_tasks = sorted(sub_tasks, key=lambda t: (
-            len(t.unique_sku_list),
-            t.station_sequence_rank if t.station_sequence_rank >= 0 else 999
-        ))
+        def get_task_scarcity_score(t: SubTask):
+            # 分数越小越稀缺。取任务中所有 SKU 最小的堆垛覆盖数。
+            # 如果某个 SKU 只在 1 个堆垛里有，这个任务优先级极高。
+            min_availability = 9999
+            for sku in t.unique_sku_list:
+                count = sku_stack_count.get(sku.id, 0)
+                if count < min_availability:
+                    min_availability = count
+            return (min_availability, -len(t.unique_sku_list))
+
+        sorted_tasks = sorted(sub_tasks, key=get_task_scarcity_score)
 
         for task in sorted_tasks:
             task.reset_execution_details()
@@ -391,29 +408,63 @@ class SP3_Bin_Hitter:
             final_sorting_costs = defaultdict(float)
             self.stack_allocation = {}
 
-            sorted_tasks = sorted(sub_tasks, key=lambda t: (
-                len(t.unique_sku_list),
-                t.station_sequence_rank if t.station_sequence_rank >= 0 else 999
-            ))
+            # 统计每个 SKU 在当前快照中出现在多少个堆垛里
+            sku_stack_count = defaultdict(int)
+            for stack_id, totes in self.stack_snapshots.items():
+                seen_skus_in_stack = set()
+                for t in totes:
+                    for sku in t.skus_list:
+                        seen_skus_in_stack.add(sku.id)
+                for sku_id in seen_skus_in_stack:
+                    sku_stack_count[sku_id] += 1
+
+            def get_task_scarcity_score(t: SubTask):
+                # 分数越小越稀缺。取任务中所有 SKU 最小的堆垛覆盖数。
+                # 如果某个 SKU 只在 1 个堆垛里有，这个任务优先级极高。
+                min_availability = 9999
+                for sku in t.unique_sku_list:
+                    count = sku_stack_count.get(sku.id, 0)
+                    if count < min_availability:
+                        min_availability = count
+                return (min_availability, -len(t.unique_sku_list))
+
+            sorted_tasks = sorted(sub_tasks, key=get_task_scarcity_score)
 
             for task in sorted_tasks:
                 task.reset_execution_details()
                 if task.assigned_station_id == -1:
                     continue
-
+                available_totes_before = {}
+                for sid, totes in self.stack_snapshots.items():
+                    available_totes_before[sid] = set(t.id for t in totes)
                 stack_plan = self._greedy_tote_selection_v2(task)
+                # ✅ 验证：检查选中的 Tote 是否仍然可用
+                for stack_idx, needed_totes in list(stack_plan.items()):
+                    current_available = set(t.id for t in self.stack_snapshots.get(stack_idx, []))
+                    valid_totes = [t for t in needed_totes if t.id in current_available]
 
+                    if len(valid_totes) < len(needed_totes):
+                        removed = [t.id for t in needed_totes if t.id not in current_available]
+                        print(
+                            f"  [Warning] Task {task.id}: Stack {stack_idx} has {len(needed_totes) - len(valid_totes)} invalid totes (already removed): {removed}")
+
+                    if valid_totes:
+                        stack_plan[stack_idx] = valid_totes
+                    else:
+                        del stack_plan[stack_idx]
+                # ✅ 修复：记录当前任务使用的堆垛
+                used_stacks_in_task = set()
                 # accumulated_load = 0
                 current_batch_tasks = []
-
-                
 
                 for stack_idx, needed_totes in stack_plan.items():
                     stack = self.problem.point_to_stack[stack_idx]
                     pending_totes = list(needed_totes)
-
+                    # ✅ 修复：开始使用堆垛时占用
+                    used_stacks_in_task.add(stack_idx)
+                    self.stack_allocation[stack_idx] = task.id
                     while pending_totes:
-                        pending_totes.sort(key=lambda t: self._get_virtual_layer(t.id))
+
                         if len(pending_totes) <= self.robot_capacity:
                             current_batch = pending_totes
                         else:
@@ -445,11 +496,10 @@ class SP3_Bin_Hitter:
                                 # -> 取该连续段的最低层开始，长度为 Capacity 的一段
                                 batch_indices = set(range(max_start_idx, max_start_idx + self.robot_capacity))
                                 current_batch = [pending_totes[i] for i in range(len(pending_totes)) if
-                                                     i in batch_indices]
+                                                 i in batch_indices]
                             elif max_len < 2:
-                                # 策略 B: 离散分布 (最大连续数 < 2)
-                                # -> 均分 (取前一半，但不超过容量)
-                                take_count = min(len(pending_totes) // 2, self.robot_capacity)
+                                # 策略 B: 离散分布
+                                take_count = min(len(pending_totes), self.robot_capacity)
                                 take_count = max(take_count, 1)  # 至少取1个防止死循环
                                 current_batch = pending_totes[:take_count]
 
@@ -460,7 +510,6 @@ class SP3_Bin_Hitter:
                                 batch_indices = set(range(max_start_idx, end_idx))
                                 current_batch = [pending_totes[i] for i in range(len(pending_totes)) if
                                                  i in batch_indices]
-
 
                         mode, layer_range, sc_time, rc_time = self._decide_operation_mode(
                             stack, current_batch, beta_congestion
@@ -534,6 +583,10 @@ class SP3_Bin_Hitter:
                         # 安全检查：如果生成的任务没有带走任何东西（异常情况），强制退出防止死循环
                         if not physical_totes_ids:
                             break
+                # --- 任务结束后，释放堆垛占用 ---
+                for used_stack_idx in used_stacks_in_task:
+                    if used_stack_idx in self.stack_allocation:
+                        del self.stack_allocation[used_stack_idx]
             return physical_tasks, final_tote_selection, final_sorting_costs
 
         def _initialize_stack_snapshots(self):
@@ -580,7 +633,7 @@ class SP3_Bin_Hitter:
             """
             改进的贪婪选箱策略（确定性版本）
             """
-            # ✅ 修复 1: 使用排序后的 SKU 集合
+            # 使用排序后的 SKU 集合
             pending_skus = sorted([sku.id for sku in task.sku_list])  # 转为有序列表
             pending_skus_set = set(pending_skus)  # 用于快速查找
 
@@ -589,11 +642,11 @@ class SP3_Bin_Hitter:
             while pending_skus_set:
                 sku_availability = defaultdict(list)
 
-                # ✅ 修复 2: 按固定顺序遍历 SKU
+                # 按固定顺序遍历 SKU
                 for sku_id in sorted(pending_skus_set):  # 排序确保顺序
                     sku_obj = self.problem.id_to_sku[sku_id]
-                    
-                    # ✅ 修复 3: 排序 tote 列表
+
+                    # 使用排序后的 tote 列表
                     for tote_id in sorted(sku_obj.storeToteList):
                         tote = self.problem.id_to_tote.get(tote_id)
                         if not (tote and tote.store_point):
@@ -601,13 +654,13 @@ class SP3_Bin_Hitter:
 
                         stack_idx = tote.store_point.idx
 
-                        # 检查 1: Stack 是否已被其他 SubTask 占用
-                        if stack_idx in self.stack_allocation:
-                            allocated_to = self.stack_allocation[stack_idx]
-                            if allocated_to != task.id:
-                                continue
+                        # Stack 是否已被其他 SubTask 占用
+                        # if stack_idx in self.stack_allocation:
+                        #     allocated_to = self.stack_allocation[stack_idx]
+                        #     if allocated_to != task.id:
+                        #         continue
 
-                        # 检查 2: Tote 是否还在虚拟堆垛中
+                        #  Tote 是否还在虚拟堆垛中
                         if stack_idx not in self.stack_snapshots:
                             continue
 
@@ -624,13 +677,13 @@ class SP3_Bin_Hitter:
                 stack_score = {}
                 stack_candidate_totes = defaultdict(list)
 
-                # ✅ 修复 4: 按固定顺序遍历 SKU
+                # ✅ 按固定顺序遍历 SKU
                 for sku_id in sorted(pending_skus_set):
                     candidates = sku_availability.get(sku_id, [])
-                    
+
                     # ✅ 修复 5: 料箱按 ID 排序
                     candidates.sort(key=lambda t: t.id)
-                    
+
                     for tote in candidates:
                         s_idx = tote.store_point.idx
 
@@ -663,17 +716,17 @@ class SP3_Bin_Hitter:
 
                 # ✅ 修复 6: 分数相同时按 stack_id 排序
                 best_stack_idx = max(
-                    stack_score.items(), 
+                    stack_score.items(),
                     key=lambda x: (x[1], -x[0])  # 分数降序，ID 升序
                 )[0]
-                
+
                 chosen_totes = stack_candidate_totes[best_stack_idx]
 
                 # ✅ 修复 7: 完整的排序逻辑
                 chosen_totes.sort(key=lambda t: (
                     -len(set(s.id for s in t.skus_list) & pending_skus_set),  # 匹配 SKU 数降序
-                    self._get_virtual_layer(t.id),                            # 层级升序
-                    t.id                                                       # Tote ID 升序
+                    self._get_virtual_layer(t.id),  # 层级升序
+                    t.id  # Tote ID 升序
                 ))
 
                 for t in chosen_totes:
@@ -689,6 +742,7 @@ class SP3_Bin_Hitter:
                                 pending_skus_set.remove(s_in_tote.id)
 
             return selected_stacks_map
+
         def _decide_operation_mode(self,
                                    stack: Stack,
                                    target_totes: List[Tote],
@@ -747,7 +801,6 @@ class SP3_Bin_Hitter:
                     cost_sc_b = beta * self.t_move * noise_b
 
                     candidates.append((cost_rc_b + cost_sc_b, 'SORT', range_b, self.t_move * noise_b, time_rc_b))
-
 
             if not candidates:
                 return res_flip
