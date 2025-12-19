@@ -516,10 +516,13 @@ class SP4_Robot_Router:
         robot_arrival_times = {}
         subtask_robot_assignment = {}
 
+        # ✅ 关键修改：统一起点（与 MIP 一致）
+        unified_start_point = self.problem.robot_list[0].start_point
+
         # 初始化状态
         robot_times = {r.id: 0.0 for r in self.problem.robot_list}
-        # 初始位置都在 StartPoint
-        robot_positions = {r.id: r.start_point for r in self.problem.robot_list}
+        # ✅ 所有机器人从统一起点出发
+        robot_positions = {r.id: unified_start_point for r in self.problem.robot_list}
         robot_routes = {r.id: [] for r in self.problem.robot_list}
         robot_trip_counter = {r.id: 0 for r in self.problem.robot_list}
 
@@ -707,6 +710,8 @@ class SP4_Robot_Router:
         # --- 构建节点 ---
         nodes_map = {}
         node_id = 0
+        # 所有机器人从第一个机器人的起点出发
+        unified_start_point = self.problem.robot_list[0].start_point
         # ✅ 动态计算最大趟数
         total_demand = sum(
             sum(task.total_load_count for task in st.execution_tasks)
@@ -721,11 +726,11 @@ class SP4_Robot_Router:
         max_trips = max(3, min_trips_needed + 2)
         print(f"  >>> [SP4] Max trips per robot set to: {max_trips}")
         # (A) 机器人起点
-        robot_start_nodes = {}
-        for robot in self.problem.robot_list:
-            robot_start_nodes[robot.id] = node_id
-            nodes_map[node_id] = (robot.start_point, None, None, 'robot_start', 0)
-            node_id += 1
+        unified_start_node = node_id
+        nodes_map[node_id] = (unified_start_point, None, None, 'robot_start', 0)
+        node_id += 1
+        # 为所有机器人映射到同一个起点
+        robot_start_nodes = {r.id: unified_start_node for r in self.problem.robot_list}
 
         # (B) Stack 节点
         stack_nodes_indices = []
@@ -826,7 +831,7 @@ class SP4_Robot_Router:
         # 机器人流守恒
         for r in R:
             # 起点
-            start_node = robot_start_nodes[self.problem.robot_list[r].id]
+            start_node = unified_start_node
             m.addConstr(y[start_node, r] == 1)
             m.addConstr(T[start_node, r] == 0)
             m.addConstr(L[start_node, r] == 0)
@@ -882,6 +887,10 @@ class SP4_Robot_Router:
             # Non-end depots must have outgoing flow
             for d in all_depots:
                 m.addConstr(gp.quicksum(x[d, j, r] for j in N if (d, j) in tau) >= y[d, r] - end_depot[d])
+        for r in range(1, len(R)):
+            # Robot r 只有在 Robot r-1 激活时才能激活
+            robot_active_prev = gp.quicksum(y[i, r - 1] for i in stack_nodes_indices)
+            robot_active_curr = gp.quicksum(y[i, r] for i in stack_nodes_indices)
 
         # --- 约束组 3: Trip 连续性 ---
         for r in R:
@@ -1279,160 +1288,92 @@ class SP4_Robot_Router:
 
         return cycles
 
-    def _cb_lazy_subtour(self, model, where):
-        """
-        [完全重构] 多层次子回路检测 + 精确切割
-        """
+    def _cb_lazy_subtour_optimized(self, model, where):
+        """优化版子回路检测"""
         if where != GRB.Callback.MIPSOL:
             return
 
         x_vals = model.cbGetSolution(model._vars)
 
-        # 按机器人分组
+        # 只检查活跃的边（阈值提高到 0.9 以减少误判）
         edges_per_robot = defaultdict(list)
         for (i, j, r), val in x_vals.items():
-            if val > 0.5:
+            if val > 0.9:  # 提高阈值
                 edges_per_robot[r].append((i, j))
 
         cuts_added = 0
-
         for r, edges in edges_per_robot.items():
-            if not edges:
+            if len(edges) < 2:  # 少于 2 条边不可能成环
                 continue
 
-            # === 第一层检测：简单环路 ===
-            cycles = self._find_cycles_dfs(edges)
+            # 使用并查集快速检测连通性
+            components = self._find_components_union_find(edges)
 
-            for cycle in cycles:
-                # 判断是否为非法环
-                has_start = False
-                has_depot = False
-                all_stack_ids = []
+            # 只切割最小的子回路（切割力最强）
+            min_subtour = min(
+                (comp for comp in components if self._is_illegal_subtour(comp, r)),
+                key=len,
+                default=None
+            )
 
-                for node in cycle:
-                    n_type = self.nodes_map_ref[node][3]
-                    if n_type == 'robot_start':
-                        has_start = True
-                    elif n_type == 'depot':
-                        has_depot = True
-                    elif n_type == 'stack':
-                        all_stack_ids.append(node)
-
-                # 规则1: 纯 Stack 环（最常见的子回路）
-                if not has_start and not has_depot:
-                    expr = gp.quicksum(model._vars[i, j, r]
-                                       for i in cycle
-                                       for j in cycle
-                                       if (i, j, r) in model._vars)
-                    model.cbLazy(expr <= len(cycle) - 1)
-                    cuts_added += 1
-                    continue
-
-                # 规则2: 包含 Start 但又回到 Start（非法）
-                if has_start and cycle[0] == cycle[-1]:
-                    # Start 不能形成环（必须单向出发）
-                    start_node = next(n for n in cycle if self.nodes_map_ref[n][3] == 'robot_start')
-                    expr = gp.quicksum(model._vars[i, start_node, r]
-                                       for i in cycle if (i, start_node, r) in model._vars)
-                    model.cbLazy(expr == 0)  # 禁止任何边指向 Start
-                    cuts_added += 1
-
-                # 规则3: Depot 之间的非法连接
-                if has_depot:
-                    depot_nodes = [n for n in cycle if self.nodes_map_ref[n][3] == 'depot']
-                    if len(depot_nodes) > 1:
-                        # 不同 Depot 之间不能直连
-                        for d1 in depot_nodes:
-                            for d2 in depot_nodes:
-                                if d1 != d2 and (d1, d2, r) in model._vars:
-                                    model.cbLazy(model._vars[d1, d2, r] == 0)
-                                    cuts_added += 1
-
-            # === 第二层检测：路径连通性 ===
-            # 检查是否存在多个不连通的子路径
-            components = self._find_weak_components(edges)
-
-            if len(components) > 1:
-                # 找出包含 Start 的主路径
-                start_node = next(n for n in self.nodes_map_ref
-                                  if self.nodes_map_ref[n][3] == 'robot_start')
-                main_comp = None
-                for comp in components:
-                    if start_node in comp:
-                        main_comp = comp
-                        break
-
-                # 其他分量都是孤立子回路
-                for comp in components:
-                    if comp == main_comp:
-                        continue
-
-                    # 标准 Subtour Elimination Constraint
-                    expr = gp.quicksum(model._vars[i, j, r]
-                                       for i in comp
-                                       for j in comp
-                                       if (i, j, r) in model._vars)
-                    model.cbLazy(expr <= len(comp) - 1)
-                    cuts_added += 1
-
-            # === 第三层检测：Trip 层级违规 ===
-            # 检查是否存在跨层级的非法连接
-            for i, j in edges:
-                type_i = self.nodes_map_ref[i][3]
-                type_j = self.nodes_map_ref[j][3]
-
-                # Stack -> Depot: 检查 Trip 匹配
-                if type_i == 'stack' and type_j == 'depot':
-                    depot_layer = self.nodes_map_ref[j][4]
-
-                    # 获取该 Stack 的 Trip（从解中读取）
-                    if hasattr(model, '_trip_vars'):
-                        stack_trip_val = model.cbGetSolution(model._trip_vars.get((i, r), None))
-                        if stack_trip_val is not None:
-                            if abs(stack_trip_val - depot_layer) > 0.5:
-                                # Trip 不匹配，添加冲突约束
-                                model.cbLazy(model._vars[i, j, r] == 0)
-                                cuts_added += 1
+            if min_subtour:
+                model.cbLazy(
+                    gp.quicksum(model._vars[i, j, r]
+                                for i in min_subtour
+                                for j in min_subtour
+                                if (i, j, r) in model._vars)
+                    <= len(min_subtour) - 1
+                )
+                cuts_added += 1
+                break  # 每次只加一个最强的割
 
         if cuts_added > 0:
-            print(f"  🔪 [Callback] Added {cuts_added} lazy cuts")
-            # === 新增：容量违规检测 ===
-        for r, edges in edges_per_robot.items():
-            # 构建路径
-            path = self._reconstruct_path(edges)
+            print(f"  🔪 Added {cuts_added} lazy cut(s)")
 
-            cumulative_load = 0
-            last_depot_idx = -1
+    def _find_components_union_find(self, edges):
+        """使用并查集快速查找连通分量（比 DFS 快）"""
+        parent = {}
 
-            for idx, node in enumerate(path):
-                n_type = self.nodes_map_ref[node][3]
+        def find(x):
+            if parent[x] != x:
+                parent[x] = find(parent[x])  # 路径压缩
+            return parent[x]
 
-                if n_type == 'stack':
-                    demand_val = self.demand_ref.get(node, 0)
-                    cumulative_load += demand_val
+        def union(x, y):
+            px, py = find(x), find(y)
+            if px != py:
+                parent[px] = py
 
-                    # 检查是否超载
-                    if cumulative_load > self.robot_capacity + 0.01:
-                        # 找出导致超载的子路径
-                        violating_segment = path[last_depot_idx + 1: idx + 1]
+        # 初始化
+        nodes = set()
+        for i, j in edges:
+            nodes.add(i)
+            nodes.add(j)
+            parent.setdefault(i, i)
+            parent.setdefault(j, j)
 
-                        # 添加容量割：该路径段内必须插入至少一个 Depot
-                        depot_nodes = [n for n in self.nodes_map_ref
-                                       if self.nodes_map_ref[n][3] == 'depot']
+        # 合并
+        for i, j in edges:
+            union(i, j)
 
-                        # 如果该子路径被选中，则必须访问至少一个 Depot
-                        segment_active = gp.quicksum(model._vars.get((violating_segment[i],
-                                                                      violating_segment[i + 1], r), 0)
-                                                     for i in range(len(violating_segment) - 1))
-                        depot_visit = gp.quicksum(model._y_vars.get((d, r), 0)
-                                                  for d in depot_nodes)
+        # 分组
+        components = defaultdict(list)
+        for node in nodes:
+            components[find(node)].append(node)
 
-                        model.cbLazy(segment_active <= depot_visit * len(violating_segment))
-                        cuts_added += 1
+        return list(components.values())
 
-                elif n_type == 'depot':
-                    cumulative_load = 0
-                    last_depot_idx = idx
+    def _is_illegal_subtour(self, component, robot_id):
+        """判断是否为非法子回路"""
+        # 包含起点或终点的是合法路径
+        has_start = any(self.nodes_map_ref[n][3] == 'robot_start' for n in component)
+        has_depot = any(self.nodes_map_ref[n][3] == 'depot' for n in component)
+
+        # 纯 Stack 环是非法的
+        if not has_start and not has_depot:
+            return True
+
+        return False
 
     def _reconstruct_path(self, edges):
         """从边列表重建有序路径"""
