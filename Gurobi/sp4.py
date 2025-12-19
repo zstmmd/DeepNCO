@@ -891,7 +891,7 @@ class SP4_Robot_Router:
             # Robot r 只有在 Robot r-1 激活时才能激活
             robot_active_prev = gp.quicksum(y[i, r - 1] for i in stack_nodes_indices)
             robot_active_curr = gp.quicksum(y[i, r] for i in stack_nodes_indices)
-
+            m.addConstr(robot_active_curr <= robot_active_prev, name=f"Symmetry_Break_{r}")
         # --- 约束组 3: Trip 连续性 ---
         for r in R:
             # 起点出发的 Trip 必须初始化为 1
@@ -1108,7 +1108,7 @@ class SP4_Robot_Router:
         m.Params.Cuts = 0  # 暂不生成割平面
         m.Params.NoRelHeurTime = 30  # 前30秒不依赖 LP 松弛
 
-        m.optimize(self._subtour_callback)
+        m.optimize(self._cb_lazy_subtour_optimized)
 
         if m.SolCount > 0:
             incumbent = m.objVal
