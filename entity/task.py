@@ -18,7 +18,7 @@ class Task:
     target_station_id: int
     operation_mode: str  # 'FLIP' or 'SORT'
     robot_id: int = -1  # 分配的机器人ID
-
+    station_sequence_rank: int =0
     # 物理上机器人带走的所有料箱ID (用于计算物理负重、仿真搬运)
     target_tote_ids: List[int] = field(default_factory=list)
 

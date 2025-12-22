@@ -52,7 +52,7 @@ class SP3_Bin_Hitter:
         final_tote_selection = defaultdict(list)
         final_sorting_costs = defaultdict(float)
         self._global_task_id = 0
-        # --- 【修改点 1】: 计算 SKU 的稀缺度 (Scarcity) ---
+        # --- 计算 SKU 的稀缺度 (Scarcity) ---
         # 统计每个 SKU 在当前快照中出现在多少个堆垛里
         sku_stack_count = defaultdict(int)
         for stack_id, totes in self.stack_snapshots.items():
@@ -87,7 +87,7 @@ class SP3_Bin_Hitter:
             # 先占用堆垛
             for pt in p_tasks:
                 self.stack_allocation[pt.target_stack_id] = task.id
-
+                pt.station_sequence_rank = task.station_sequence_rank
             # 再模拟出库（更新虚拟层级）
             for pt in p_tasks:
                 self._apply_stack_modification(pt)
@@ -95,7 +95,22 @@ class SP3_Bin_Hitter:
             physical_tasks.extend(p_tasks)
             final_tote_selection[task.id] = totes
             final_sorting_costs[task.id] = cost
+            for pt in physical_tasks:
+                pt.efficiency_score = self._calculate_efficiency_score(pt)
 
+            # 2. 执行双层排序
+            # 第一关键字：SubTask Rank (升序，硬约束)
+            # 第二关键字：Efficiency Score (降序，软优化)
+            # 注意：rank 为 -1 的可能是一些未分配任务，通常应排在最后或过滤掉，这里假设 SP2 已分配好
+            physical_tasks.sort(key=lambda t: (t.station_sequence_rank, -t.efficiency_score))
+
+            # 3. 赋值 Priority (1 是最高)
+            # 直接使用当前的列表索引 + 1 作为 priority
+            # 这样 SP4 拿到 task.priority = 1, 2, 3... 就是它应该执行的绝对顺序建议
+            for idx, pt in enumerate(physical_tasks):
+                pt.priority = idx + 1
+                # 重新编号 Task ID 以保持一致性 (可选)
+                pt.task_id = idx
         return physical_tasks, final_tote_selection, final_sorting_costs
 
     def _initialize_stack_snapshots(self):
@@ -114,6 +129,61 @@ class SP3_Bin_Hitter:
     def _get_virtual_layer(self, tote_id: int) -> int:
         """获取 Tote 的虚拟层级"""
         return self.layer_mapping.get(tote_id, -1)
+
+    def _calculate_efficiency_score(self, task: Task) -> float:
+        """
+        [新增] 计算任务的检索效率分数
+        Score = 有效料箱数 / (机器人动作耗时 + 往返路程耗时)
+
+        改进：路程耗时基于物理距离计算
+        """
+        # 1. 分子：有效料箱数量
+        valid_tote_count = len(task.hit_tote_ids)
+        if valid_tote_count == 0:
+            valid_tote_count = 0.1
+
+            # 2. 分母：预估耗时 = 动作时间 + 路程时间
+        action_time = task.robot_service_time
+
+        # 计算路程耗时
+        travel_time = 30.0  # 默认兜底值
+
+        # 获取 Stack 对象
+        # 注意：target_stack_id 在 SP3 中存储的是 point.idx
+        stack_obj = self.problem.point_to_stack.get(task.target_stack_id)
+
+        # 获取 Station 对象
+        station_obj = None
+        # 假设 station_list 是列表，遍历查找
+        for s in self.problem.station_list:
+            if s.id == task.target_station_id:
+                station_obj = s
+                break
+
+        if stack_obj and station_obj:
+            p_stack = stack_obj.store_point
+            p_station = station_obj.point
+
+            # 计算曼哈顿距离
+            dist = abs(p_stack.x - p_station.x) + abs(p_stack.y - p_station.y)
+
+            # 获取机器人速度
+            speed = getattr(OFSConfig, 'ROBOT_SPEED', 1.5)  # 防止未定义
+            if speed <= 0: speed = 1.5
+
+            # 计算往返时间 (Station -> Stack -> Station)
+            # 乘以 2.0 是为了模拟往返闭环，更真实反映该任务对机器人资源的占用时长
+            travel_time = (dist / speed) * 2.0
+
+        estimated_total_time = action_time + travel_time
+
+        # 防止分母为 0 (虽然不太可能)
+        if estimated_total_time < 1.0:
+            estimated_total_time = 1.0
+
+        score = valid_tote_count / estimated_total_time
+
+        return score
 
     def _apply_stack_modification(self, task: Task):
         """
@@ -561,6 +631,7 @@ class SP3_Bin_Hitter:
                             noise_tote_ids=noise_totes_ids,
                             sort_layer_range=layer_range
                         )
+                        new_task.station_sequence_rank = task.station_sequence_rank
 
                         task.add_execution_detail(new_task, stack)
                         physical_tasks.append(new_task)
@@ -587,7 +658,86 @@ class SP3_Bin_Hitter:
                 for used_stack_idx in used_stacks_in_task:
                     if used_stack_idx in self.stack_allocation:
                         del self.stack_allocation[used_stack_idx]
+            print(f"  >>> [SP3 Heuristic] Applying Priority Sorting...")
+
+            # 1. 计算每个任务的效率分数
+            for pt in physical_tasks:
+                pt.efficiency_score = self._calculate_efficiency_score(pt)
+
+            # 2. 执行双层排序
+            # 第一关键字：SubTask Rank (升序，硬约束)
+            # 第二关键字：Efficiency Score (降序，软优化)
+            physical_tasks.sort(key=lambda t: (t.station_sequence_rank, -t.efficiency_score))
+
+            # 3. 赋值 Priority (1 是最高)
+            for idx, pt in enumerate(physical_tasks):
+                pt.priority = idx + 1
+                pt.task_id = idx  # 重新编号保持一致性
+
+            # 输出排序后的前 5 个任务（用于调试）
+            print(f"  >>> [SP3 Heuristic] Top 5 Priority Tasks:")
+            for pt in physical_tasks[:5]:
+                print(f"      Priority {pt.priority}: Task {pt.task_id}, "
+                      f"Rank={pt.station_sequence_rank}, "
+                      f"Efficiency={pt.efficiency_score:.4f}, "
+                      f"SubTask={pt.sub_task_id}, "
+                      f"Stack={pt.target_stack_id}")
             return physical_tasks, final_tote_selection, final_sorting_costs
+
+        def _calculate_efficiency_score(self, task: Task) -> float:
+            """
+            [新增] 计算任务的检索效率分数
+            Score = 有效料箱数 / (机器人动作耗时 + 往返路程耗时)
+
+            改进：路程耗时基于物理距离计算
+            """
+            # 1. 分子：有效料箱数量
+            valid_tote_count = len(task.hit_tote_ids)
+            if valid_tote_count == 0:
+                valid_tote_count = 0.1
+
+                # 2. 分母：预估耗时 = 动作时间 + 路程时间
+            action_time = task.robot_service_time
+
+            # 计算路程耗时
+            travel_time = 30.0  # 默认兜底值
+
+            # 获取 Stack 对象
+            # 注意：target_stack_id 在 SP3 中存储的是 point.idx
+            stack_obj = self.problem.point_to_stack.get(task.target_stack_id)
+
+            # 获取 Station 对象
+            station_obj = None
+            # 假设 station_list 是列表，遍历查找
+            for s in self.problem.station_list:
+                if s.id == task.target_station_id:
+                    station_obj = s
+                    break
+
+            if stack_obj and station_obj:
+                p_stack = stack_obj.store_point
+                p_station = station_obj.point
+
+                # 计算曼哈顿距离
+                dist = abs(p_stack.x - p_station.x) + abs(p_stack.y - p_station.y)
+
+                # 获取机器人速度
+                speed = getattr(OFSConfig, 'ROBOT_SPEED', 1.5)  # 防止未定义
+                if speed <= 0: speed = 1.5
+
+                # 计算往返时间 (Station -> Stack -> Station)
+                # 乘以 2.0 是为了模拟往返闭环，更真实反映该任务对机器人资源的占用时长
+                travel_time = (dist / speed) * 2.0
+
+            estimated_total_time = action_time + travel_time
+
+            # 防止分母为 0 (虽然不太可能)
+            if estimated_total_time < 1.0:
+                estimated_total_time = 1.0
+
+            score = valid_tote_count / estimated_total_time
+
+            return score
 
         def _initialize_stack_snapshots(self):
             """初始化堆垛快照和虚拟层级"""
