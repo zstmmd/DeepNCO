@@ -348,7 +348,6 @@ class SP4_Robot_Router:
         else:
             print(f"  ✅ Warm Start Solution Verified.")
 
-
     def _extract_sequence(self, x, y, T, trip, nodes_map, N, R, depot_layer_nodes, robot_start_nodes,
                           stack_nodes_indices):
         """
@@ -486,7 +485,7 @@ class SP4_Robot_Router:
                 while remaining_tasks:
                     best_task = None
                     best_dist = float('inf')
-                    # 1. 找出每个站点当前优先级最高的任务
+                    # 找出每个站点当前优先级最高的任务
                     station_best_candidates = {}
                     for task in remaining_tasks:
                         sid = task.target_station_id
@@ -507,16 +506,22 @@ class SP4_Robot_Router:
                     for task in candidate_pool:
                         if trip_load + task.total_load_count > self.robot_capacity:
                             continue
-                        last_task = current_trip_tasks[-1]
-                        last_subtask_id = last_task.sub_task_id
-                        last_station_id = last_task.assigned_station_id  # 假设 SubTask 有此属性
 
                         curr_subtask_id = task.sub_task_id
-                        curr_station_id = task.assigned_station_id
+                        curr_station_id = task.target_station_id
 
-                        # 不同 SubTask 且 不同 Station -> 禁止直连
-                        if last_subtask_id != curr_subtask_id and last_station_id != curr_station_id:
-                            continue
+                        # Check if there are existing tasks in the current trip
+                        if current_trip_tasks:
+                            last_task = current_trip_tasks[-1]
+                            last_subtask_id = last_task.sub_task_id
+                            # Assume SubTask has this attribute or get from task
+                            last_station_id = getattr(last_task, 'target_station_id', None)
+
+                            # Different SubTask AND Different Station -> Forbidden direct connection in same trip
+                            if last_subtask_id != curr_subtask_id and last_station_id != curr_station_id:
+                                continue
+
+                        # Calculate distance
                         stack = self.problem.point_to_stack[task.target_stack_id]
                         dist = abs(current_pos.x - stack.store_point.x) + \
                                abs(current_pos.y - stack.store_point.y)
@@ -640,7 +645,7 @@ class SP4_Robot_Router:
         min_trips_needed = math.ceil(total_demand / (self.robot_capacity * num_robots))
 
         # 增加安全余量（考虑路径不均衡）
-        max_trips = max(3, min_trips_needed + 2)
+        max_trips = max(3, min_trips_needed + 3)
         print(f"  >>> [SP4] Max trips per robot set to: {max_trips}")
         # (A) 机器人起点
         unified_start_node = node_id
@@ -872,6 +877,23 @@ class SP4_Robot_Router:
                 <= Z,
                 name=f"TotalTime_{r}"
             )
+            # 2. ✅ 新增：时间连续性约束 (Big-M)
+            # 如果 x[i, j, r] = 1 (即从 i 走到 j)，则 T[j] >= T[i] + service[i] + travel[i,j]
+            for i in N:
+                for j in N:
+                    if (i, j) in tau:
+                        # 只有当 (i, j, r) 是有效变量时才添加
+                        if (i, j, r) not in x:
+                            continue
+
+                        travel_t = tau[i, j]
+                        service_t = service_time.get(i, 0.0)
+
+                        # Big-M 约束: T[j] >= T[i] + cost - M * (1 - x)
+                        m.addConstr(
+                            T[j, r] >= T[i, r] + service_t + travel_t - M_time * (1 - x[i, j, r]),
+                            name=f"TimeCont_{i}_{j}_{r}"
+                        )
         for st_id, nodes in subtask_nodes.items():
             if len(nodes) > 1:
                 for r in R:
@@ -904,53 +926,6 @@ class SP4_Robot_Router:
                 for other in nodes[1:]:
                     for r in R:
                         m.addConstr(y[base, r] == y[other, r])
-                #
-                # robot_subtask_groups = defaultdict(list)
-        # for st_id, nodes in subtask_nodes.items():
-        #     st = next(t for t in valid_tasks if t.id == st_id)
-        #     if st.station_sequence_rank >= 0:  # 只处理有排序信息的任务
-        #         # 获取该 SubTask 的代表节点（取第一个）
-        #         repr_node = nodes[0]
-        #         robot_subtask_groups[st.assigned_station_id].append((st, repr_node))
-        # # 为每个机器人添加约束
-        # for r in R:
-        #     # 收集该机器人可能执行的 SubTask（按 station_sequence_rank 排序）
-        #     candidate_subtasks = []
-        #     for station_id, st_nodes_list in robot_subtask_groups.items():
-        #         for st, repr_node in st_nodes_list:
-        #             # 如果该节点可能被机器人 r 访问
-        #             candidate_subtasks.append((st, repr_node, st.station_sequence_rank))
-        #
-        #     if len(candidate_subtasks) < 2:
-        #         continue  # 少于 2 个任务不需要排序约束
-        #
-        #     # 按 station_sequence_rank 排序
-        #     candidate_subtasks.sort(key=lambda x: x[2])
-        #
-        #     # 添加时间序约束：如果两个 SubTask 都被机器人 r 执行，
-        #     # 则 rank 小的必须在时间上早于 rank 大的
-        #     for idx in range(len(candidate_subtasks) - 1):
-        #         st_early, node_early, rank_early = candidate_subtasks[idx]
-        #         st_late, node_late, rank_late = candidate_subtasks[idx + 1]
-        #         if st_early.assigned_station_id != st_late.assigned_station_id:
-        #             early_nodes = subtask_nodes[st_early.id]
-        #             late_nodes = subtask_nodes[st_late.id]
-        #
-        #             # 对于每一对 early-late 节点
-        #             for i in early_nodes:
-        #                 for j in late_nodes:
-        #                     # 如果两者都被 r 访问，则 T[i] + service[i] <= T[j]
-        #                     both_flag = m.addVar(vtype=GRB.BINARY)
-        #                     m.addConstr(both_flag <= y[i, r])
-        #                     m.addConstr(both_flag <= y[j, r])
-        #                     m.addConstr(both_flag >= y[i, r] + y[j, r] - 1)
-        #
-        #                     # Indicator 约束
-        #                     m.addGenConstrIndicator(
-        #                         both_flag, True,
-        #                         T[i, r] + service_time[i] <= T[j, r],
-        #                         name=f"SeqRank_{i}_{j}_{r}"
-        #                     )
 
         # 计算总需求
         total_demand = sum(demand.values())
@@ -1025,7 +1000,7 @@ class SP4_Robot_Router:
         m.Params.Cutoff = heu_time * 1.2
         # 🔧 分阶段求解策略
         print("\n  >>> [Phase 1] Quick feasibility search (60s)...")
-        m.Params.TimeLimit = 600
+        m.Params.TimeLimit = 60
         m.Params.MIPFocus = 1  # 聚焦可行解
         m.Params.Heuristics = 0.3  # 高频启发式
         m.Params.Cuts = 0  # 暂不生成割平面
@@ -1039,7 +1014,7 @@ class SP4_Robot_Router:
 
             # Phase 2: 改善解质量
             print(f"\n  >>> [Phase 2] Improving solution (剩余时间)...")
-            m.Params.TimeLimit = 3600
+            m.Params.TimeLimit = 180
             m.Params.MIPFocus = 2  # 证明最优性
             m.Params.Cuts = 3  # 激进割平面
             m.Params.CutPasses = 20
