@@ -695,8 +695,6 @@ class SP3_Bin_Hitter:
             valid_tote_count = len(task.hit_tote_ids)
             if valid_tote_count == 0:
                 valid_tote_count = 0.1
-
-                # 2. 分母：预估耗时 = 动作时间 + 路程时间
             action_time = task.robot_service_time
 
             # 计算路程耗时
@@ -708,7 +706,6 @@ class SP3_Bin_Hitter:
 
             # 获取 Station 对象
             station_obj = None
-            # 假设 station_list 是列表，遍历查找
             for s in self.problem.station_list:
                 if s.id == task.target_station_id:
                     station_obj = s
@@ -726,7 +723,7 @@ class SP3_Bin_Hitter:
                 if speed <= 0: speed = 1.5
 
                 # 计算往返时间 (Station -> Stack -> Station)
-                # 乘以 2.0 是为了模拟往返闭环，更真实反映该任务对机器人资源的占用时长
+
                 travel_time = (dist / speed) * 2.0
 
             estimated_total_time = action_time + travel_time

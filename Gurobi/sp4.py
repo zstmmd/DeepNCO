@@ -6,7 +6,6 @@ from collections import defaultdict
 import os
 import sys
 
-# 假设 sp4.py 存在于 DeepNCO/Gurobi/sp4.py
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
@@ -349,115 +348,6 @@ class SP4_Robot_Router:
         else:
             print(f"  ✅ Warm Start Solution Verified.")
 
-    def _subtour_callback(self, model, where):
-        """
-        Gurobi 回调函数：用于检测并切除子回路
-        """
-        # 只有当 Gurobi 找到一个新的整数解 (MIPSOL) 时才检查
-        if where == GRB.Callback.MIPSOL:
-            # 获取当前的解
-            # model._vars 是我们在 solve_mip 中通过 model._vars = x 绑定的
-            x_vals = model.cbGetSolution(model._vars)
-
-            # 按机器人分组提取边
-            # edges_by_robot[r_id] = [(i, j), (j, k)...]
-            edges_by_robot = defaultdict(list)
-
-            for (i, j, r), val in x_vals.items():
-                if val > 0.5:  # 选中的边
-                    edges_by_robot[r].append((i, j))
-
-            # 对每个机器人检查子回路
-            for r, edges in edges_by_robot.items():
-                # 获取该机器人的连通分量列表
-                components = self.get_subtour(edges)
-
-                for comp in components:
-                    # 关键逻辑：如何判断 component 是非法的？
-                    # 你的图结构：Start -> [Stacks] -> Depot
-                    # 合法路径是不闭合的（Start 到 Depot）。
-                    # 非法子回路是闭合的圈。
-
-                    # 检查 component 是否构成了一个闭环 (对于 Stack 节点)
-                    # 简单判据：如果 component 里面全是 Stack 节点（不含 Start 和 Depot），那它一定是孤立环
-
-                    is_pure_stack_loop = True
-                    for node in comp:
-                        n_type = self.nodes_map_ref[node][3]  # 需要在类里存一份引用
-                        if n_type in ['robot_start', 'depot']:
-                            is_pure_stack_loop = False
-                            break
-
-                    if is_pure_stack_loop:
-                        # === 发现子回路！添加 Lazy Constraint 切掉它 ===
-                        # 约束公式：sum(x[i,j] for i in S for j in S) <= |S| - 1
-                        # 意思：在这个集合 S 内部，最多只能有 |S|-1 条边。如果有 |S| 条边，就成环了。
-
-                        # 构造 Gurobi 表达式
-                        expr = gp.quicksum(model._vars[i, j, r]
-                                           for i in comp
-                                           for j in comp
-                                           if (i, j, r) in model._vars)
-
-                        model.cbLazy(expr <= len(comp) - 1)
-                        # print(f"  🔪 Cut added for Robot {r}, Subtour size {len(comp)}")
-
-    @staticmethod
-    def get_subtour(edges: List[Tuple[int, int]]) -> List[int]:
-        """
-        给定一组边，寻找其中最小的子回路（Subtour）。
-        如果所有节点都连通且包含起点（假设逻辑上判断），返回空。
-        这里使用简化的寻找连通分量逻辑。
-        """
-        if not edges:
-            return []
-
-        # 1. 构建邻接表
-        adj = defaultdict(list)
-        nodes = set()
-        for i, j in edges:
-            adj[i].append(j)
-            nodes.add(i)
-            nodes.add(j)
-
-        # 2. 寻找所有连通分量
-        visited = set()
-        subtours = []
-
-        for node in list(nodes):
-            if node in visited:
-                continue
-
-            # 开始一次遍历 (BFS/DFS) 找连通分量
-            component = []
-            queue = [node]
-            visited.add(node)
-            while queue:
-                curr = queue.pop(0)
-                component.append(curr)
-                for neighbor in adj[curr]:
-                    # 注意：这是有向图，但为了切平面，我们通常看强连通或只要成圈就行
-                    # 在 VRP 中，任何不包含起点的闭环都是非法的
-                    if neighbor not in visited:
-                        visited.add(neighbor)
-                        queue.append(neighbor)
-
-            subtours.append(component)
-
-        # 3. 筛选非法子回路
-        # 规则：合法的路径必须包含“起点”或者“Depot”。
-        # 但在你的分层图中，路径是 Start -> Stack -> ... -> Stack -> Depot
-        # 所以，任何【纯 Stack 节点】组成的环，绝对是子回路。
-
-        # 找到长度最短的纯 Stack 环返回（切割力最强）
-        # 我们假设外部逻辑会传入所有的 Stack 节点 ID，或者根据 ID 范围判断
-        # 这里简化：只要 component 数量 > 1，说明图断开了，除了包含起点的那一组，其他的都是子回路
-
-        # ⚠️ 注意：需要识别哪个 component 包含起点。
-        # 由于我们在 Callback 内部很难拿到由外部定义的 robot_start_node，
-        # 我们通常假定：如果一个分量是封闭的环（出入度平衡），且没有连接到 Depot/Start，它就是 Subtour。
-
-        return subtours
 
     def _extract_sequence(self, x, y, T, trip, nodes_map, N, R, depot_layer_nodes, robot_start_nodes,
                           stack_nodes_indices):
@@ -596,9 +486,36 @@ class SP4_Robot_Router:
                 while remaining_tasks:
                     best_task = None
                     best_dist = float('inf')
-
+                    # 1. 找出每个站点当前优先级最高的任务
+                    station_best_candidates = {}
                     for task in remaining_tasks:
+                        sid = task.target_station_id
+                        # 兼容处理：如果没有 priority 属性，使用 rank 或默认值
+                        prio = getattr(task, 'priority', getattr(task, 'station_sequence_rank', 9999))
+
+                        if sid not in station_best_candidates:
+                            station_best_candidates[sid] = task
+                        else:
+                            # 选优先级数值更小（更高优）的
+                            curr_best = station_best_candidates[sid]
+                            curr_prio = getattr(curr_best, 'priority',
+                                                getattr(curr_best, 'station_sequence_rank', 9999))
+                            if prio < curr_prio:
+                                station_best_candidates[sid] = task
+                    candidate_pool = list(station_best_candidates.values())
+
+                    for task in candidate_pool:
                         if trip_load + task.total_load_count > self.robot_capacity:
+                            continue
+                        last_task = current_trip_tasks[-1]
+                        last_subtask_id = last_task.sub_task_id
+                        last_station_id = last_task.assigned_station_id  # 假设 SubTask 有此属性
+
+                        curr_subtask_id = task.sub_task_id
+                        curr_station_id = task.assigned_station_id
+
+                        # 不同 SubTask 且 不同 Station -> 禁止直连
+                        if last_subtask_id != curr_subtask_id and last_station_id != curr_station_id:
                             continue
                         stack = self.problem.point_to_stack[task.target_stack_id]
                         dist = abs(current_pos.x - stack.store_point.x) + \
@@ -776,11 +693,17 @@ class SP4_Robot_Router:
                     continue
                 # 如果i和j属于不同的subtask，且subtask的目标station不同，则不连边
                 if type_i == 'stack' and type_j == 'stack':
-                    _, subtask_i, _, _, _ = nodes_map[i]
-                    _, subtask_j, _, _, _ = nodes_map[j]
+                    _, subtask_i, task_i, _, _ = nodes_map[i]
+                    _, subtask_j, task_j, _, _ = nodes_map[j]
                     if subtask_i.id != subtask_j.id:
                         if subtask_i.assigned_station_id != subtask_j.assigned_station_id:
                             continue
+                        prio_i = getattr(task_i, 'priority', 0)
+                        prio_j = getattr(task_j, 'priority', 0)
+                        # 只有当两者属于同一个 Station 队列时，优先级才有可比性
+                        if subtask_i.assigned_station_id == subtask_j.assigned_station_id:
+                            if prio_i > prio_j:
+                                continue
                 pt_j = nodes_map[j][0]
                 dist = abs(pt_i.x - pt_j.x) + abs(pt_i.y - pt_j.y)
                 tau[i, j] = dist / self.robot_speed
@@ -981,53 +904,53 @@ class SP4_Robot_Router:
                 for other in nodes[1:]:
                     for r in R:
                         m.addConstr(y[base, r] == y[other, r])
-
-                robot_subtask_groups = defaultdict(list)
-        for st_id, nodes in subtask_nodes.items():
-            st = next(t for t in valid_tasks if t.id == st_id)
-            if st.station_sequence_rank >= 0:  # 只处理有排序信息的任务
-                # 获取该 SubTask 的代表节点（取第一个）
-                repr_node = nodes[0]
-                robot_subtask_groups[st.assigned_station_id].append((st, repr_node))
-        # 为每个机器人添加约束
-        for r in R:
-            # 收集该机器人可能执行的 SubTask（按 station_sequence_rank 排序）
-            candidate_subtasks = []
-            for station_id, st_nodes_list in robot_subtask_groups.items():
-                for st, repr_node in st_nodes_list:
-                    # 如果该节点可能被机器人 r 访问
-                    candidate_subtasks.append((st, repr_node, st.station_sequence_rank))
-
-            if len(candidate_subtasks) < 2:
-                continue  # 少于 2 个任务不需要排序约束
-
-            # 按 station_sequence_rank 排序
-            candidate_subtasks.sort(key=lambda x: x[2])
-
-            # 添加时间序约束：如果两个 SubTask 都被机器人 r 执行，
-            # 则 rank 小的必须在时间上早于 rank 大的
-            for idx in range(len(candidate_subtasks) - 1):
-                st_early, node_early, rank_early = candidate_subtasks[idx]
-                st_late, node_late, rank_late = candidate_subtasks[idx + 1]
-                if st_early.assigned_station_id != st_late.assigned_station_id:
-                    early_nodes = subtask_nodes[st_early.id]
-                    late_nodes = subtask_nodes[st_late.id]
-
-                    # 对于每一对 early-late 节点
-                    for i in early_nodes:
-                        for j in late_nodes:
-                            # 如果两者都被 r 访问，则 T[i] + service[i] <= T[j]
-                            both_flag = m.addVar(vtype=GRB.BINARY)
-                            m.addConstr(both_flag <= y[i, r])
-                            m.addConstr(both_flag <= y[j, r])
-                            m.addConstr(both_flag >= y[i, r] + y[j, r] - 1)
-
-                            # Indicator 约束
-                            m.addGenConstrIndicator(
-                                both_flag, True,
-                                T[i, r] + service_time[i] <= T[j, r],
-                                name=f"SeqRank_{i}_{j}_{r}"
-                            )
+                #
+                # robot_subtask_groups = defaultdict(list)
+        # for st_id, nodes in subtask_nodes.items():
+        #     st = next(t for t in valid_tasks if t.id == st_id)
+        #     if st.station_sequence_rank >= 0:  # 只处理有排序信息的任务
+        #         # 获取该 SubTask 的代表节点（取第一个）
+        #         repr_node = nodes[0]
+        #         robot_subtask_groups[st.assigned_station_id].append((st, repr_node))
+        # # 为每个机器人添加约束
+        # for r in R:
+        #     # 收集该机器人可能执行的 SubTask（按 station_sequence_rank 排序）
+        #     candidate_subtasks = []
+        #     for station_id, st_nodes_list in robot_subtask_groups.items():
+        #         for st, repr_node in st_nodes_list:
+        #             # 如果该节点可能被机器人 r 访问
+        #             candidate_subtasks.append((st, repr_node, st.station_sequence_rank))
+        #
+        #     if len(candidate_subtasks) < 2:
+        #         continue  # 少于 2 个任务不需要排序约束
+        #
+        #     # 按 station_sequence_rank 排序
+        #     candidate_subtasks.sort(key=lambda x: x[2])
+        #
+        #     # 添加时间序约束：如果两个 SubTask 都被机器人 r 执行，
+        #     # 则 rank 小的必须在时间上早于 rank 大的
+        #     for idx in range(len(candidate_subtasks) - 1):
+        #         st_early, node_early, rank_early = candidate_subtasks[idx]
+        #         st_late, node_late, rank_late = candidate_subtasks[idx + 1]
+        #         if st_early.assigned_station_id != st_late.assigned_station_id:
+        #             early_nodes = subtask_nodes[st_early.id]
+        #             late_nodes = subtask_nodes[st_late.id]
+        #
+        #             # 对于每一对 early-late 节点
+        #             for i in early_nodes:
+        #                 for j in late_nodes:
+        #                     # 如果两者都被 r 访问，则 T[i] + service[i] <= T[j]
+        #                     both_flag = m.addVar(vtype=GRB.BINARY)
+        #                     m.addConstr(both_flag <= y[i, r])
+        #                     m.addConstr(both_flag <= y[j, r])
+        #                     m.addConstr(both_flag >= y[i, r] + y[j, r] - 1)
+        #
+        #                     # Indicator 约束
+        #                     m.addGenConstrIndicator(
+        #                         both_flag, True,
+        #                         T[i, r] + service_time[i] <= T[j, r],
+        #                         name=f"SeqRank_{i}_{j}_{r}"
+        #                     )
 
         # 计算总需求
         total_demand = sum(demand.values())
@@ -1130,7 +1053,7 @@ class SP4_Robot_Router:
             m.Params.MIRCuts = 2
             m.Params.GomoryPasses = 10
 
-            m.optimize(self._subtour_callback)
+            m.optimize(self._cb_lazy_subtour_optimized)
 
         # --- 结果提取 ---
         robot_arrival_times = {}
@@ -1436,7 +1359,6 @@ class SP4_Robot_Router:
         return components
 
 
-from collections import defaultdict
 import os
 from typing import Dict, List
 
