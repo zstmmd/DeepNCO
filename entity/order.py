@@ -19,7 +19,8 @@ class Order:
         self.sku_storage_points: List[Point] = []  # 存储点Point对象的列表
         self.point_sku_quantity: Dict[int, Dict[int, int]] = {} # {point_idx: {sku_id: quantity}}
         self.status: str = ""  # 订单状态 (例如: "pending", "shipped", "delivered", "canceled")
-
+        # BOM 完成时间 (该 Order 下所有 SubTask 的 completion_time 的最大值)
+        self.bom_completion_time: float = 0.0
     def __str__(self):
         return (f"Order(order_id='{self.order_id}', "
                 f"order_skus_number={self.order_skus_number}, "

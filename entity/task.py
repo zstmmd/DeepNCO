@@ -46,6 +46,24 @@ class Task:
     #预计到达工作站的时间 (用于软耦合时间窗检查)
     arrival_time_at_station: float = 0.0
 
+    sku_pick_count: int = 0
+    # 开始捡货/处理时间 (取决于 Station 的空闲时间，FCFS 逻辑)
+    start_process_time: float = 0.0
+
+    # 结束处理时间 (start + picking_time + noise_handling_time)
+    end_process_time: float = 0.0
+
+    # --- 统计时长信息 ---
+    # 料箱在工作站的等待时长 (start_process_time - arrival_time_at_station)
+    tote_wait_time: float = 0.0
+
+    # 该任务造成的捡货时长 (sku_count * t_pick)
+    picking_duration: float = 0.0
+    trip_id = 0
+    # --- 路径信息 ---
+    # 记录该任务对应的机器人具体路径 [(x, y, time), ...]
+    # 用于输出到 txt
+    detailed_path: List[Tuple[float, float, float]] = field(default_factory=list)
     @property
     def total_load_count(self) -> int:
         return len(self.target_tote_ids)

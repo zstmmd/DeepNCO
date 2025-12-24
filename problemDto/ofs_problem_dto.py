@@ -13,7 +13,7 @@ from entity.SKUs import SKUs
 @dataclass
 class OFSProblemDTO:
     """问题类"""
-    
+
     def __init__(self):
         self.map: WarehouseMap = None  # 地图信息
         self.order_num: int = 0  # 订单数量
@@ -38,4 +38,9 @@ class OFSProblemDTO:
         self.need_points: List[Point] = []  # 搬运层需要经过的点的列表
         self.node_num: int = 0  # 搬运层需要经过的点总数
         self.stack_list: List[Stack] = []  # 所有堆垛的列表
+        self.task_list=[]   #机器人待执行待所有task列表
+        # --- [新增] 全局统计 ---
+        self.global_makespan: float = 0.0  # 全局完工时间
+        self.total_robot_travel_dist: float = 0.0  # 机器人总运行距离
+        self.total_station_idle_time: float = 0.0  # 所有工作站累计空闲
         self.point_to_stack: Dict[int, Stack] = {}  # Point.idx -> Stack 映射

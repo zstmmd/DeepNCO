@@ -6,327 +6,388 @@ PART 3: SP3 Hit Validation
   >>>🔍 SP3 结果验证：检查料箱命中是否满足 SubTask 的 SKU 需求 (含冗余检查) ...
 
   📋 [SubTask 0] SKU Overview:
-      Required SKUs: {0: 5, 1: 4, 2: 3, 3: 5, 4: 5, 6: 1}
-      Provided SKUs: {7: 122, 3: 133, 4: 123, 6: 22, 1: 53, 0: 59, 2: 58, 9: 30}
-      📦 Tote-Level SKU Breakdown (3 totes):
-         Tote 164 @ Stack 1916:
-           ✅ Needed: {3: 5, 4: 5, 6: 1}
-           🔇 Noise: {7: 35, 3: 26, 4: 54, 6: 21}
-         Tote 165 @ Stack 1916:
-           ✅ Needed: {1: 4, 0: 5}
-           🔇 Noise: {7: 27, 1: 49, 4: 26, 0: 54, 3: 43}
-         Tote 170 @ Stack 1916:
-           ✅ Needed: {2: 3}
-           🔇 Noise: {4: 38, 2: 55, 9: 30, 7: 60, 3: 59}
-  ✅ [SubTask 0] Validation PASSED (6 SKU types, 23 units)
+      Required SKUs: {1: 2, 2: 2, 4: 4, 5: 2, 69: 1, 7: 4}
+      Provided SKUs: {5: 113, 9: 97, 2: 100, 7: 51, 11: 45, 3: 30, 4: 36, 8: 73, 0: 21, 12: 50, 53: 26, 10: 50, 1: 43, 6: 23, 50: 23, 69: 19, 13: 39}
+      📦 Tote-Level SKU Breakdown (4 totes):
+         Tote 46 @ Stack 678:
+           ✅ Needed: {5: 2, 2: 2, 7: 4}
+           🔇 Noise: {5: 51, 9: 39, 2: 39, 7: 47, 11: 45, 3: 30}
+         Tote 47 @ Stack 678:
+           ✅ Needed: {4: 4}
+           🔇 Noise: {5: 60, 4: 32, 8: 44, 0: 21}
+         Tote 51 @ Stack 678:
+           ✅ Needed: {1: 2}
+           🔇 Noise: {12: 50, 2: 28, 53: 26, 9: 58, 10: 50, 1: 41}
+         Tote 58 @ Stack 786:
+           ✅ Needed: {69: 1}
+           🔇 Noise: {8: 29, 2: 31, 6: 23, 50: 23, 69: 18, 13: 39}
+  ✅ [SubTask 0] Validation PASSED (6 SKU types, 15 units)
       ℹ️ Excess SKUs (over-supply):
-         - SKU 0: +54 extra
-         - SKU 1: +49 extra
-         - SKU 2: +55 extra
-         - SKU 3: +128 extra
-         - SKU 4: +118 extra
-         - SKU 6: +21 extra
+         - SKU 1: +41 extra
+         - SKU 2: +98 extra
+         - SKU 4: +32 extra
+         - SKU 5: +111 extra
+         - SKU 69: +18 extra
+         - SKU 7: +47 extra
 
   📋 [SubTask 1] SKU Overview:
-      Required SKUs: {32: 3, 7: 2, 8: 3, 10: 5, 11: 1, 28: 1}
-      Provided SKUs: {8: 59, 2: 57, 1: 91, 11: 49, 7: 63, 6: 81, 9: 28, 10: 111, 5: 95, 28: 28, 13: 39, 32: 27, 41: 24, 46: 14}
+      Required SKUs: {33: 1, 66: 1, 8: 5, 9: 3, 10: 3, 11: 5}
+      Provided SKUs: {60: 36, 9: 64, 50: 38, 8: 84, 11: 82, 7: 54, 35: 32, 2: 86, 10: 28, 69: 23, 6: 20, 0: 39, 52: 17, 33: 37, 13: 26, 66: 11, 23: 14}
       📦 Tote-Level SKU Breakdown (4 totes):
-         Tote 125 @ Stack 1348:
-           ✅ Needed: {8: 3, 11: 1, 7: 2}
-           🔇 Noise: {8: 24, 2: 57, 1: 58, 11: 48, 7: 38}
-         Tote 126 @ Stack 1348:
-           ✅ Needed: {10: 5}
-           🔇 Noise: {7: 23, 6: 25, 1: 33, 9: 28, 10: 52}
-         Tote 37 @ Stack 523:
-           ✅ Needed: {28: 1}
-           🔇 Noise: {5: 58, 8: 32, 28: 27, 6: 56, 10: 54}
-         Tote 44 @ Stack 523:
-           ✅ Needed: {32: 3}
-           🔇 Noise: {13: 39, 5: 37, 32: 24, 41: 24, 46: 14}
-  ✅ [SubTask 1] Validation PASSED (6 SKU types, 15 units)
+         Tote 54 @ Stack 678:
+           ✅ Needed: {9: 3, 8: 5, 11: 5}
+           🔇 Noise: {60: 36, 9: 19, 50: 38, 8: 30, 11: 48, 7: 54}
+         Tote 49 @ Stack 678:
+           ✅ Needed: {10: 3}
+           🔇 Noise: {35: 32, 2: 53, 10: 25, 69: 23, 11: 29}
+         Tote 34 @ Stack 965:
+           ✅ Needed: {33: 1}
+           🔇 Noise: {6: 20, 0: 39, 52: 17, 2: 33, 33: 36}
+         Tote 35 @ Stack 965:
+           ✅ Needed: {66: 1}
+           🔇 Noise: {13: 26, 66: 10, 8: 49, 9: 42, 23: 14}
+  ✅ [SubTask 1] Validation PASSED (6 SKU types, 18 units)
       ℹ️ Excess SKUs (over-supply):
-         - SKU 32: +24 extra
-         - SKU 7: +61 extra
-         - SKU 8: +56 extra
-         - SKU 10: +106 extra
-         - SKU 11: +48 extra
-         - SKU 28: +27 extra
+         - SKU 33: +36 extra
+         - SKU 66: +10 extra
+         - SKU 8: +79 extra
+         - SKU 9: +61 extra
+         - SKU 10: +25 extra
+         - SKU 11: +77 extra
 
   📋 [SubTask 2] SKU Overview:
-      Required SKUs: {12: 3, 31: 5, 37: 2, 39: 5, 53: 2, 48: 2}
-      Provided SKUs: {39: 19, 31: 16, 4: 23, 48: 21, 41: 37, 53: 28, 27: 22, 37: 17, 51: 32, 12: 29}
-      📦 Tote-Level SKU Breakdown (5 totes):
-         Tote 16 @ Stack 678:
-           ✅ Needed: {39: 5, 31: 5}
-           🔇 Noise: {39: 14, 31: 11}
-         Tote 2 @ Stack 295:
-           ✅ Needed: {48: 2}
-           🔇 Noise: {4: 23, 48: 19}
-         Tote 21 @ Stack 784:
-           ✅ Needed: {53: 2}
-           🔇 Noise: {41: 37, 53: 26}
-         Tote 18 @ Stack 934:
-           ✅ Needed: {37: 2}
-           🔇 Noise: {27: 22, 37: 15}
-         Tote 1 @ Stack 2005:
-           ✅ Needed: {12: 3}
-           🔇 Noise: {51: 32, 12: 26}
-  ✅ [SubTask 2] Validation PASSED (6 SKU types, 19 units)
+      Required SKUs: {34: 3, 3: 3, 41: 4, 12: 1, 13: 2, 14: 5}
+      Provided SKUs: {13: 98, 5: 24, 11: 29, 8: 37, 3: 21, 12: 41, 34: 15, 7: 49, 2: 100, 10: 58, 4: 51, 9: 46, 14: 39, 32: 35, 35: 31, 41: 21, 55: 19}
+      📦 Tote-Level SKU Breakdown (4 totes):
+         Tote 68 @ Stack 2308:
+           ✅ Needed: {13: 2, 3: 3, 12: 1}
+           🔇 Noise: {13: 40, 5: 24, 11: 29, 8: 37, 3: 18, 12: 40}
+         Tote 185 @ Stack 912:
+           ✅ Needed: {34: 3}
+           🔇 Noise: {34: 12, 7: 49, 2: 47, 10: 27, 4: 51}
+         Tote 187 @ Stack 912:
+           ✅ Needed: {14: 5}
+           🔇 Noise: {2: 53, 13: 56, 10: 31, 9: 46, 14: 34}
+         Tote 4 @ Stack 1518:
+           ✅ Needed: {41: 4}
+           🔇 Noise: {32: 35, 35: 31, 41: 17, 55: 19}
+  ✅ [SubTask 2] Validation PASSED (6 SKU types, 18 units)
       ℹ️ Excess SKUs (over-supply):
-         - SKU 12: +26 extra
-         - SKU 31: +11 extra
-         - SKU 37: +15 extra
-         - SKU 39: +14 extra
-         - SKU 53: +26 extra
-         - SKU 48: +19 extra
+         - SKU 34: +12 extra
+         - SKU 3: +18 extra
+         - SKU 41: +17 extra
+         - SKU 12: +40 extra
+         - SKU 13: +96 extra
+         - SKU 14: +34 extra
 
   📋 [SubTask 3] SKU Overview:
-      Required SKUs: {19: 1, 23: 2}
-      Provided SKUs: {19: 50, 17: 45, 23: 21, 34: 44}
-      📦 Tote-Level SKU Breakdown (2 totes):
-         Tote 24 @ Stack 1181:
-           ✅ Needed: {19: 1}
-           🔇 Noise: {19: 49, 17: 45}
-         Tote 12 @ Stack 1611:
-           ✅ Needed: {23: 2}
-           🔇 Noise: {23: 19, 34: 44}
-  ✅ [SubTask 3] Validation PASSED (2 SKU types, 3 units)
+      Required SKUs: {63: 2, 62: 2, 39: 1, 24: 5, 30: 5, 67: 1}
+      Provided SKUs: {30: 30, 22: 21, 2: 69, 24: 40, 54: 61, 4: 44, 11: 41, 63: 11, 1: 59, 0: 36, 7: 43, 39: 22, 5: 29, 8: 104, 9: 39, 13: 55, 67: 33, 66: 20, 25: 49, 62: 26}
+      📦 Tote-Level SKU Breakdown (5 totes):
+         Tote 8 @ Stack 438:
+           ✅ Needed: {30: 5, 24: 5}
+           🔇 Noise: {30: 25, 22: 21, 2: 18, 24: 35}
+         Tote 98 @ Stack 1820:
+           ✅ Needed: {63: 2}
+           🔇 Noise: {54: 22, 4: 44, 11: 41, 63: 9, 1: 36, 0: 36}
+         Tote 134 @ Stack 1787:
+           ✅ Needed: {39: 1}
+           🔇 Noise: {1: 23, 7: 43, 39: 21, 5: 29, 8: 47}
+         Tote 137 @ Stack 1787:
+           ✅ Needed: {67: 1}
+           🔇 Noise: {8: 57, 9: 39, 2: 51, 13: 55, 67: 32}
+         Tote 12 @ Stack 448:
+           ✅ Needed: {62: 2}
+           🔇 Noise: {66: 20, 25: 49, 54: 39, 62: 24}
+  ✅ [SubTask 3] Validation PASSED (6 SKU types, 16 units)
       ℹ️ Excess SKUs (over-supply):
-         - SKU 19: +49 extra
-         - SKU 23: +19 extra
+         - SKU 63: +9 extra
+         - SKU 62: +24 extra
+         - SKU 39: +21 extra
+         - SKU 24: +35 extra
+         - SKU 30: +25 extra
+         - SKU 67: +32 extra
 
   📋 [SubTask 4] SKU Overview:
-      Required SKUs: {0: 4, 1: 4, 33: 4, 3: 3, 4: 2, 2: 1}
-      Provided SKUs: {6: 45, 10: 100, 33: 34, 1: 87, 9: 84, 2: 24, 0: 43, 5: 59, 4: 25, 3: 56, 52: 35}
-      📦 Tote-Level SKU Breakdown (4 totes):
-         Tote 143 @ Stack 1603:
-           ✅ Needed: {33: 4, 1: 4}
-           🔇 Noise: {6: 45, 10: 49, 33: 30, 1: 31, 9: 57}
-         Tote 144 @ Stack 1603:
-           ✅ Needed: {2: 1, 0: 4}
-           🔇 Noise: {10: 20, 2: 23, 0: 16}
-         Tote 145 @ Stack 1603:
-           ✅ Needed: {4: 2}
-           🔇 Noise: {1: 21, 5: 59, 4: 23, 0: 23}
-         Tote 146 @ Stack 1603:
-           ✅ Needed: {3: 3}
-           🔇 Noise: {3: 53, 52: 35, 1: 31, 9: 27, 10: 31}
-  ✅ [SubTask 4] Validation PASSED (6 SKU types, 18 units)
+      Required SKUs: {19: 3, 29: 1, 46: 1, 26: 4, 47: 1}
+      Provided SKUs: {3: 94, 46: 17, 53: 31, 56: 43, 38: 34, 4: 58, 12: 27, 19: 19, 10: 70, 6: 59, 26: 32, 63: 26, 43: 38, 8: 35, 47: 29, 9: 27, 1: 40, 29: 30, 34: 19, 44: 37, 21: 31}
+      📦 Tote-Level SKU Breakdown (5 totes):
+         Tote 13 @ Stack 344:
+           ✅ Needed: {46: 1}
+           🔇 Noise: {3: 43, 46: 16, 53: 31, 56: 43}
+         Tote 191 @ Stack 706:
+           ✅ Needed: {19: 3}
+           🔇 Noise: {38: 34, 4: 29, 12: 27, 19: 16, 3: 51, 10: 47}
+         Tote 55 @ Stack 786:
+           ✅ Needed: {26: 4}
+           🔇 Noise: {6: 59, 10: 23, 26: 28, 63: 26, 43: 38, 4: 29}
+         Tote 169 @ Stack 801:
+           ✅ Needed: {47: 1}
+           🔇 Noise: {8: 35, 47: 28, 9: 27, 1: 40}
+         Tote 0 @ Stack 1909:
+           ✅ Needed: {29: 1}
+           🔇 Noise: {29: 29, 34: 19, 44: 37, 21: 31}
+  ✅ [SubTask 4] Validation PASSED (5 SKU types, 10 units)
       ℹ️ Excess SKUs (over-supply):
-         - SKU 0: +39 extra
-         - SKU 1: +83 extra
-         - SKU 33: +30 extra
-         - SKU 3: +53 extra
-         - SKU 4: +23 extra
-         - SKU 2: +23 extra
+         - SKU 19: +16 extra
+         - SKU 29: +29 extra
+         - SKU 46: +16 extra
+         - SKU 26: +28 extra
+         - SKU 47: +28 extra
 
   📋 [SubTask 5] SKU Overview:
-      Required SKUs: {7: 1, 8: 2, 40: 4, 10: 1, 39: 4, 16: 5}
-      Provided SKUs: {7: 104, 10: 60, 39: 30, 5: 20, 3: 20, 40: 26, 6: 28, 4: 101, 8: 48, 38: 66, 1: 59, 16: 27}
+      Required SKUs: {0: 1, 65: 1, 2: 3, 3: 3, 1: 1, 64: 1}
+      Provided SKUs: {12: 75, 1: 58, 3: 52, 0: 67, 11: 63, 13: 46, 4: 22, 2: 37, 54: 37, 50: 28, 5: 31, 64: 20, 55: 37, 7: 23, 65: 20}
       📦 Tote-Level SKU Breakdown (4 totes):
-         Tote 45 @ Stack 2129:
-           ✅ Needed: {7: 1, 10: 1, 39: 4}
-           🔇 Noise: {7: 52, 10: 59, 39: 26}
-         Tote 46 @ Stack 2129:
-           ✅ Needed: {40: 4}
-           🔇 Noise: {5: 20, 3: 20, 40: 22, 6: 28, 4: 42}
-         Tote 49 @ Stack 2129:
-           ✅ Needed: {8: 2}
-           🔇 Noise: {4: 59, 8: 46, 38: 18, 1: 59, 7: 51}
-         Tote 26 @ Stack 1531:
-           ✅ Needed: {16: 5}
-           🔇 Noise: {16: 22, 38: 48}
-  ✅ [SubTask 5] Validation PASSED (6 SKU types, 17 units)
+         Tote 23 @ Stack 1791:
+           ✅ Needed: {1: 1, 3: 3, 0: 1}
+           🔇 Noise: {12: 50, 1: 57, 3: 26, 0: 42, 11: 25}
+         Tote 173 @ Stack 1860:
+           ✅ Needed: {2: 3}
+           🔇 Noise: {13: 46, 4: 22, 2: 34, 54: 37, 12: 25}
+         Tote 108 @ Stack 2090:
+           ✅ Needed: {64: 1}
+           🔇 Noise: {50: 28, 5: 31, 64: 19, 0: 24}
+         Tote 190 @ Stack 912:
+           ✅ Needed: {65: 1}
+           🔇 Noise: {55: 37, 7: 23, 11: 38, 65: 19, 3: 23}
+  ✅ [SubTask 5] Validation PASSED (6 SKU types, 10 units)
       ℹ️ Excess SKUs (over-supply):
-         - SKU 7: +103 extra
-         - SKU 8: +46 extra
-         - SKU 40: +22 extra
-         - SKU 10: +59 extra
-         - SKU 39: +26 extra
-         - SKU 16: +22 extra
+         - SKU 0: +66 extra
+         - SKU 65: +19 extra
+         - SKU 2: +34 extra
+         - SKU 3: +49 extra
+         - SKU 1: +57 extra
+         - SKU 64: +19 extra
 
   📋 [SubTask 6] SKU Overview:
-      Required SKUs: {56: 4, 46: 5, 20: 4}
-      Provided SKUs: {56: 41, 11: 22, 18: 16, 20: 39, 46: 43, 8: 23}
+      Required SKUs: {68: 4, 4: 5, 6: 4, 7: 2, 8: 4, 5: 1}
+      Provided SKUs: {7: 54, 10: 20, 18: 25, 8: 49, 4: 108, 5: 92, 6: 23, 12: 60, 2: 94, 9: 57, 11: 30, 68: 15, 1: 47}
       📦 Tote-Level SKU Breakdown (3 totes):
-         Tote 4 @ Stack 1364:
-           ✅ Needed: {56: 4}
-           🔇 Noise: {56: 37, 11: 22}
-         Tote 20 @ Stack 1750:
-           ✅ Needed: {20: 4}
-           🔇 Noise: {18: 16, 20: 35}
-         Tote 17 @ Stack 2416:
-           ✅ Needed: {46: 5}
-           🔇 Noise: {46: 38, 8: 23}
-  ✅ [SubTask 6] Validation PASSED (3 SKU types, 13 units)
+         Tote 88 @ Stack 1438:
+           ✅ Needed: {7: 2, 8: 4, 4: 5, 5: 1}
+           🔇 Noise: {7: 52, 10: 20, 18: 25, 8: 45, 4: 47, 5: 49}
+         Tote 89 @ Stack 1438:
+           ✅ Needed: {6: 4}
+           🔇 Noise: {6: 19, 12: 60, 2: 50, 9: 57, 11: 30, 4: 56}
+         Tote 148 @ Stack 381:
+           ✅ Needed: {68: 4}
+           🔇 Noise: {68: 11, 5: 42, 2: 44, 1: 47}
+  ✅ [SubTask 6] Validation PASSED (6 SKU types, 20 units)
       ℹ️ Excess SKUs (over-supply):
-         - SKU 56: +37 extra
-         - SKU 46: +38 extra
-         - SKU 20: +35 extra
+         - SKU 68: +11 extra
+         - SKU 4: +103 extra
+         - SKU 6: +19 extra
+         - SKU 7: +52 extra
+         - SKU 8: +45 extra
+         - SKU 5: +91 extra
+
+  📋 [SubTask 7] SKU Overview:
+      Required SKUs: {9: 4, 10: 1, 11: 3, 12: 4, 13: 3, 49: 2}
+      Provided SKUs: {59: 24, 12: 26, 9: 100, 13: 39, 58: 31, 7: 85, 3: 49, 5: 21, 11: 55, 35: 25, 10: 48, 50: 19, 21: 40, 1: 24, 43: 29, 49: 50, 64: 18, 48: 39}
+      📦 Tote-Level SKU Breakdown (4 totes):
+         Tote 76 @ Stack 682:
+           ✅ Needed: {12: 4, 9: 4, 13: 3}
+           🔇 Noise: {59: 24, 12: 22, 9: 45, 13: 36, 58: 31}
+         Tote 77 @ Stack 682:
+           ✅ Needed: {11: 3}
+           🔇 Noise: {7: 40, 3: 49, 9: 51, 5: 21, 11: 21, 35: 25}
+         Tote 80 @ Stack 682:
+           ✅ Needed: {10: 1}
+           🔇 Noise: {10: 47, 11: 31, 50: 19, 21: 40, 7: 45, 1: 24}
+         Tote 15 @ Stack 988:
+           ✅ Needed: {49: 2}
+           🔇 Noise: {43: 29, 49: 48, 64: 18, 48: 39}
+  ✅ [SubTask 7] Validation PASSED (6 SKU types, 17 units)
+      ℹ️ Excess SKUs (over-supply):
+         - SKU 9: +96 extra
+         - SKU 10: +47 extra
+         - SKU 11: +52 extra
+         - SKU 12: +22 extra
+         - SKU 13: +36 extra
+         - SKU 49: +48 extra
+
+  📋 [SubTask 8] SKU Overview:
+      Required SKUs: {27: 5, 20: 1, 30: 1, 18: 2, 23: 2, 17: 5}
+      Provided SKUs: {27: 48, 54: 32, 1: 68, 9: 119, 10: 38, 2: 81, 7: 44, 4: 29, 0: 143, 23: 38, 56: 22, 11: 64, 45: 40, 6: 109, 63: 13, 18: 51, 20: 25, 3: 45, 17: 36, 12: 47, 13: 54, 30: 22}
+      📦 Tote-Level SKU Breakdown (6 totes):
+         Tote 97 @ Stack 1820:
+           ✅ Needed: {27: 5}
+           🔇 Noise: {27: 33, 54: 13, 1: 31, 9: 36, 10: 38, 2: 49}
+         Tote 100 @ Stack 1820:
+           ✅ Needed: {23: 2}
+           🔇 Noise: {7: 44, 1: 37, 4: 29, 0: 41, 23: 36, 56: 22}
+         Tote 101 @ Stack 1820:
+           ✅ Needed: {18: 2}
+           🔇 Noise: {11: 44, 45: 40, 6: 50, 63: 13, 18: 26, 0: 54}
+         Tote 107 @ Stack 1272:
+           ✅ Needed: {20: 1}
+           🔇 Noise: {20: 11, 2: 32, 18: 23, 9: 41, 3: 45}
+         Tote 75 @ Stack 682:
+           ✅ Needed: {17: 5}
+           🔇 Noise: {17: 31, 0: 48, 6: 59, 9: 42, 54: 19}
+         Tote 197 @ Stack 822:
+           ✅ Needed: {30: 1}
+           🔇 Noise: {12: 47, 13: 54, 27: 10, 11: 20, 30: 21, 20: 13}
+  ✅ [SubTask 8] Validation PASSED (6 SKU types, 16 units)
+      ℹ️ Excess SKUs (over-supply):
+         - SKU 27: +43 extra
+         - SKU 20: +24 extra
+         - SKU 30: +21 extra
+         - SKU 18: +49 extra
+         - SKU 23: +36 extra
+         - SKU 17: +31 extra
+
+  📋 [SubTask 9] SKU Overview:
+      Required SKUs: {19: 5, 37: 5, 46: 1, 59: 2, 39: 3}
+      Provided SKUs: {20: 30, 19: 45, 51: 34, 37: 20, 59: 20, 38: 45, 69: 22, 61: 58, 15: 15, 4: 43, 7: 60, 2: 60, 39: 10, 8: 34, 53: 24, 12: 60, 46: 31}
+      📦 Tote-Level SKU Breakdown (4 totes):
+         Tote 16 @ Stack 1564:
+           ✅ Needed: {19: 5, 37: 5}
+           🔇 Noise: {20: 30, 19: 40, 51: 34, 37: 15}
+         Tote 11 @ Stack 1031:
+           ✅ Needed: {59: 2}
+           🔇 Noise: {59: 18, 38: 45, 69: 22, 61: 34}
+         Tote 121 @ Stack 1061:
+           ✅ Needed: {39: 3}
+           🔇 Noise: {15: 15, 4: 43, 7: 60, 61: 24, 2: 60, 39: 7}
+         Tote 112 @ Stack 2090:
+           ✅ Needed: {46: 1}
+           🔇 Noise: {8: 34, 53: 24, 12: 60, 46: 30}
+  ✅ [SubTask 9] Validation PASSED (5 SKU types, 16 units)
+      ℹ️ Excess SKUs (over-supply):
+         - SKU 19: +40 extra
+         - SKU 37: +15 extra
+         - SKU 46: +30 extra
+         - SKU 59: +18 extra
+         - SKU 39: +7 extra
+
+  📋 [SubTask 10] SKU Overview:
+      Required SKUs: {64: 3, 0: 3, 3: 2, 4: 4, 5: 5, 7: 1}
+      Provided SKUs: {7: 75, 4: 24, 3: 141, 2: 21, 11: 31, 5: 93, 9: 51, 12: 51, 13: 49, 0: 22, 16: 11, 21: 15, 42: 31, 64: 32, 53: 27, 8: 27}
+      📦 Tote-Level SKU Breakdown (4 totes):
+         Tote 153 @ Stack 742:
+           ✅ Needed: {7: 1, 4: 4, 3: 2}
+           🔇 Noise: {7: 22, 4: 20, 3: 49, 2: 21, 11: 31}
+         Tote 154 @ Stack 742:
+           ✅ Needed: {5: 5}
+           🔇 Noise: {5: 33, 9: 51, 12: 51, 7: 52, 3: 36}
+         Tote 155 @ Stack 742:
+           ✅ Needed: {0: 3}
+           🔇 Noise: {13: 49, 0: 19, 16: 11, 21: 15, 5: 55, 42: 31}
+         Tote 143 @ Stack 382:
+           ✅ Needed: {64: 3}
+           🔇 Noise: {3: 54, 64: 29, 53: 27, 8: 27}
+  ✅ [SubTask 10] Validation PASSED (6 SKU types, 18 units)
+      ℹ️ Excess SKUs (over-supply):
+         - SKU 64: +29 extra
+         - SKU 0: +19 extra
+         - SKU 3: +139 extra
+         - SKU 4: +20 extra
+         - SKU 5: +88 extra
+         - SKU 7: +74 extra
+
+  📋 [SubTask 11] SKU Overview:
+      Required SKUs: {8: 4, 9: 2, 10: 2, 11: 4, 12: 4, 13: 4}
+      Provided SKUs: {10: 196, 3: 95, 9: 90, 11: 21, 4: 109, 7: 98, 12: 24, 2: 54, 5: 33, 26: 19, 8: 31, 6: 21, 13: 59}
+      📦 Tote-Level SKU Breakdown (4 totes):
+         Tote 159 @ Stack 1048:
+           ✅ Needed: {10: 2, 9: 2, 11: 4}
+           🔇 Noise: {10: 25, 3: 41, 9: 28, 11: 17, 4: 54}
+         Tote 161 @ Stack 1048:
+           ✅ Needed: {12: 4}
+           🔇 Noise: {7: 51, 10: 60, 12: 20, 2: 54, 5: 33, 26: 19}
+         Tote 163 @ Stack 1048:
+           ✅ Needed: {8: 4}
+           🔇 Noise: {4: 55, 8: 27, 6: 21, 9: 60, 10: 53}
+         Tote 164 @ Stack 1048:
+           ✅ Needed: {13: 4}
+           🔇 Noise: {3: 54, 13: 55, 7: 47, 10: 56}
+  ✅ [SubTask 11] Validation PASSED (6 SKU types, 20 units)
+      ℹ️ Excess SKUs (over-supply):
+         - SKU 8: +27 extra
+         - SKU 9: +88 extra
+         - SKU 10: +194 extra
+         - SKU 11: +17 extra
+         - SKU 12: +20 extra
+         - SKU 13: +55 extra
+
+  📋 [SubTask 12] SKU Overview:
+      Required SKUs: {6: 2, 16: 5, 53: 4, 27: 2, 63: 5, 28: 3}
+      Provided SKUs: {10: 24, 65: 13, 18: 43, 7: 91, 6: 126, 32: 32, 2: 40, 1: 64, 39: 10, 63: 33, 28: 17, 8: 56, 53: 14, 57: 23, 0: 43, 27: 35, 13: 23, 12: 59, 5: 37, 15: 27, 16: 41, 23: 50}
+      📦 Tote-Level SKU Breakdown (5 totes):
+         Tote 125 @ Stack 691:
+           ✅ Needed: {6: 2}
+           🔇 Noise: {10: 24, 65: 13, 18: 15, 7: 37, 6: 25, 32: 32}
+         Tote 131 @ Stack 691:
+           ✅ Needed: {63: 5}
+           🔇 Noise: {2: 40, 1: 29, 39: 10, 63: 28, 7: 54}
+         Tote 48 @ Stack 678:
+           ✅ Needed: {28: 3, 53: 4}
+           🔇 Noise: {28: 14, 6: 46, 1: 35, 8: 56, 53: 10, 57: 23}
+         Tote 30 @ Stack 353:
+           ✅ Needed: {27: 2}
+           🔇 Noise: {0: 43, 27: 33, 13: 23, 12: 59, 5: 37, 6: 53}
+         Tote 7 @ Stack 390:
+           ✅ Needed: {16: 5}
+           🔇 Noise: {18: 28, 15: 27, 16: 36, 23: 50}
+  ✅ [SubTask 12] Validation PASSED (6 SKU types, 21 units)
+      ℹ️ Excess SKUs (over-supply):
+         - SKU 6: +124 extra
+         - SKU 16: +36 extra
+         - SKU 53: +10 extra
+         - SKU 27: +33 extra
+         - SKU 63: +28 extra
+         - SKU 28: +14 extra
+
+  📋 [SubTask 13] SKU Overview:
+      Required SKUs: {48: 5, 65: 5, 61: 2, 29: 5, 41: 4, 14: 4}
+      Provided SKUs: {8: 38, 14: 37, 13: 49, 21: 17, 7: 78, 3: 54, 9: 56, 29: 21, 4: 45, 10: 85, 6: 78, 48: 23, 61: 24, 11: 46, 1: 57, 41: 34, 35: 33, 12: 57, 26: 11, 5: 28, 44: 25, 65: 14}
+      📦 Tote-Level SKU Breakdown (6 totes):
+         Tote 83 @ Stack 1587:
+           ✅ Needed: {14: 4}
+           🔇 Noise: {8: 38, 14: 33, 13: 21, 21: 17}
+         Tote 86 @ Stack 1587:
+           ✅ Needed: {29: 5}
+           🔇 Noise: {7: 46, 3: 54, 9: 56, 29: 16, 4: 22}
+         Tote 126 @ Stack 691:
+           ✅ Needed: {48: 5}
+           🔇 Noise: {13: 28, 10: 50, 6: 42, 48: 18}
+         Tote 170 @ Stack 801:
+           ✅ Needed: {61: 2}
+           🔇 Noise: {61: 22, 11: 46, 6: 36, 1: 57, 4: 23}
+         Tote 95 @ Stack 1438:
+           ✅ Needed: {41: 4}
+           🔇 Noise: {41: 30, 10: 35, 35: 33, 12: 57, 7: 32}
+         Tote 67 @ Stack 2308:
+           ✅ Needed: {65: 5}
+           🔇 Noise: {26: 11, 5: 28, 44: 25, 65: 9}
+  ✅ [SubTask 13] Validation PASSED (6 SKU types, 25 units)
+      ℹ️ Excess SKUs (over-supply):
+         - SKU 48: +18 extra
+         - SKU 65: +9 extra
+         - SKU 61: +22 extra
+         - SKU 29: +16 extra
+         - SKU 41: +30 extra
+         - SKU 14: +33 extra
+
+  📋 [SubTask 14] SKU Overview:
+      Required SKUs: {40: 3, 31: 5, 36: 3}
+      Provided SKUs: {1: 19, 39: 50, 65: 20, 31: 36, 17: 43, 12: 41, 36: 25, 6: 41, 52: 15, 40: 42, 57: 20, 68: 33}
+      📦 Tote-Level SKU Breakdown (3 totes):
+         Tote 5 @ Stack 843:
+           ✅ Needed: {31: 5}
+           🔇 Noise: {1: 19, 39: 50, 65: 20, 31: 31}
+         Tote 1 @ Stack 1511:
+           ✅ Needed: {36: 3}
+           🔇 Noise: {17: 43, 12: 41, 36: 22, 6: 41}
+         Tote 9 @ Stack 2152:
+           ✅ Needed: {40: 3}
+           🔇 Noise: {52: 15, 40: 39, 57: 20, 68: 33}
+  ✅ [SubTask 14] Validation PASSED (3 SKU types, 11 units)
+      ℹ️ Excess SKUs (over-supply):
+         - SKU 40: +39 extra
+         - SKU 31: +31 extra
+         - SKU 36: +22 extra
   >>> ✅ SP3 Validation Complete. All SubTasks have sufficient tote coverage.
 
-
-============================================================
-PART 1: Node Definitions (MIP Graph Mapping)
-============================================================
-Node ID    | Type         | Description
-------------------------------------------------------------
-0          | robot_start  | StackPoint:1（x,y):(1,0) (Robot_Start)
-1          | robot_start  | StackPoint:3（x,y):(3,0) (Robot_Start)
-2          | robot_start  | StackPoint:5（x,y):(5,0) (Robot_Start)
-3          | stack        | Stack_1916，StackPoint:1916（x,y):(68,24),task_id:5 ，task_service_time：2.0,(SubTask_0)，（subtask assigned_station:0)
-4          | stack        | Stack_1348，StackPoint:1348（x,y):(39,17),task_id:6 ，task_service_time：3.0,(SubTask_1)，（subtask assigned_station:1)
-5          | stack        | Stack_523，StackPoint:523（x,y):(61,6),task_id:7 ，task_service_time：5.0,(SubTask_1)，（subtask assigned_station:1)
-6          | stack        | Stack_678，StackPoint:678（x,y):(62,8),task_id:8 ，task_service_time：2.0,(SubTask_2)，（subtask assigned_station:1)
-7          | stack        | Stack_295，StackPoint:295（x,y):(64,3),task_id:9 ，task_service_time：2.0,(SubTask_2)，（subtask assigned_station:1)
-8          | stack        | Stack_784，StackPoint:784（x,y):(14,10),task_id:10 ，task_service_time：2.0,(SubTask_2)，（subtask assigned_station:1)
-9          | stack        | Stack_934，StackPoint:934（x,y):(10,12),task_id:11 ，task_service_time：2.0,(SubTask_2)，（subtask assigned_station:1)
-10         | stack        | Stack_2005，StackPoint:2005（x,y):(3,26),task_id:12 ，task_service_time：2.0,(SubTask_2)，（subtask assigned_station:1)
-11         | stack        | Stack_1181，StackPoint:1181（x,y):(26,15),task_id:0 ，task_service_time：2.0,(SubTask_3)，（subtask assigned_station:0)
-12         | stack        | Stack_1611，StackPoint:1611（x,y):(71,20),task_id:1 ，task_service_time：2.0,(SubTask_3)，（subtask assigned_station:0)
-13         | stack        | Stack_1603，StackPoint:1603（x,y):(63,20),task_id:13 ，task_service_time：3.0,(SubTask_4)，（subtask assigned_station:0)
-14         | stack        | Stack_2129，StackPoint:2129（x,y):(50,27),task_id:14 ，task_service_time：3.0,(SubTask_5)，（subtask assigned_station:1)
-15         | stack        | Stack_1531，StackPoint:1531（x,y):(68,19),task_id:15 ，task_service_time：2.0,(SubTask_5)，（subtask assigned_station:1)
-16         | stack        | Stack_1364，StackPoint:1364（x,y):(55,17),task_id:2 ，task_service_time：2.0,(SubTask_6)，（subtask assigned_station:0)
-17         | stack        | Stack_1750，StackPoint:1750（x,y):(56,22),task_id:3 ，task_service_time：2.0,(SubTask_6)，（subtask assigned_station:0)
-18         | stack        | Stack_2416，StackPoint:2416（x,y):(29,31),task_id:4 ，task_service_time：2.0,(SubTask_6)，（subtask assigned_station:0)
-19         | depot        | Station_Point_0（x,y):(0,0) (Trip_Layer_1)
-20         | depot        | Station_Point_76（x,y):(76,0) (Trip_Layer_1)
-21         | depot        | Station_Point_0（x,y):(0,0) (Trip_Layer_2)
-22         | depot        | Station_Point_76（x,y):(76,0) (Trip_Layer_2)
-23         | depot        | Station_Point_0（x,y):(0,0) (Trip_Layer_3)
-24         | depot        | Station_Point_76（x,y):(76,0) (Trip_Layer_3)
-
-
-============================================================
-PART 2: Heuristic Warm Start Variables
-============================================================
-
-[Variables: x(i, j, r)]
-Variable                  | Val | Description (From -> To)
---------------------------------------------------------------------------------
-x[0, 9, 0] = 1     # Robot_0: StackPoint:1（x,y):(1,0) (Robot_Start) --> Stack_934，StackPoint:934（x,y):(10,12),task_id:11 ，task_service_time：2.0,(SubTask_2)，（subtask assigned_station:1)
-x[6, 7, 0] = 1     # Robot_0: Stack_678，StackPoint:678（x,y):(62,8),task_id:8 ，task_service_time：2.0,(SubTask_2)，（subtask assigned_station:1) --> Stack_295，StackPoint:295（x,y):(64,3),task_id:9 ，task_service_time：2.0,(SubTask_2)，（subtask assigned_station:1)
-x[7, 20, 0] = 1     # Robot_0: Stack_295，StackPoint:295（x,y):(64,3),task_id:9 ，task_service_time：2.0,(SubTask_2)，（subtask assigned_station:1) --> Station_Point_76（x,y):(76,0) (Trip_Layer_1)
-x[8, 10, 0] = 1     # Robot_0: Stack_784，StackPoint:784（x,y):(14,10),task_id:10 ，task_service_time：2.0,(SubTask_2)，（subtask assigned_station:1) --> Stack_2005，StackPoint:2005（x,y):(3,26),task_id:12 ，task_service_time：2.0,(SubTask_2)，（subtask assigned_station:1)
-x[9, 8, 0] = 1     # Robot_0: Stack_934，StackPoint:934（x,y):(10,12),task_id:11 ，task_service_time：2.0,(SubTask_2)，（subtask assigned_station:1) --> Stack_784，StackPoint:784（x,y):(14,10),task_id:10 ，task_service_time：2.0,(SubTask_2)，（subtask assigned_station:1)
-x[10, 6, 0] = 1     # Robot_0: Stack_2005，StackPoint:2005（x,y):(3,26),task_id:12 ，task_service_time：2.0,(SubTask_2)，（subtask assigned_station:1) --> Stack_678，StackPoint:678（x,y):(62,8),task_id:8 ，task_service_time：2.0,(SubTask_2)，（subtask assigned_station:1)
-x[13, 21, 0] = 1     # Robot_0: Stack_1603，StackPoint:1603（x,y):(63,20),task_id:13 ，task_service_time：3.0,(SubTask_4)，（subtask assigned_station:0) --> Station_Point_0（x,y):(0,0) (Trip_Layer_2)
-x[20, 13, 0] = 1     # Robot_0: Station_Point_76（x,y):(76,0) (Trip_Layer_1) --> Stack_1603，StackPoint:1603（x,y):(63,20),task_id:13 ，task_service_time：3.0,(SubTask_4)，（subtask assigned_station:0)
-x[1, 4, 1] = 1     # Robot_1: StackPoint:3（x,y):(3,0) (Robot_Start) --> Stack_1348，StackPoint:1348（x,y):(39,17),task_id:6 ，task_service_time：3.0,(SubTask_1)，（subtask assigned_station:1)
-x[4, 5, 1] = 1     # Robot_1: Stack_1348，StackPoint:1348（x,y):(39,17),task_id:6 ，task_service_time：3.0,(SubTask_1)，（subtask assigned_station:1) --> Stack_523，StackPoint:523（x,y):(61,6),task_id:7 ，task_service_time：5.0,(SubTask_1)，（subtask assigned_station:1)
-x[5, 20, 1] = 1     # Robot_1: Stack_523，StackPoint:523（x,y):(61,6),task_id:7 ，task_service_time：5.0,(SubTask_1)，（subtask assigned_station:1) --> Station_Point_76（x,y):(76,0) (Trip_Layer_1)
-x[11, 21, 1] = 1     # Robot_1: Stack_1181，StackPoint:1181（x,y):(26,15),task_id:0 ，task_service_time：2.0,(SubTask_3)，（subtask assigned_station:0) --> Station_Point_0（x,y):(0,0) (Trip_Layer_2)
-x[12, 11, 1] = 1     # Robot_1: Stack_1611，StackPoint:1611（x,y):(71,20),task_id:1 ，task_service_time：2.0,(SubTask_3)，（subtask assigned_station:0) --> Stack_1181，StackPoint:1181（x,y):(26,15),task_id:0 ，task_service_time：2.0,(SubTask_3)，（subtask assigned_station:0)
-x[16, 23, 1] = 1     # Robot_1: Stack_1364，StackPoint:1364（x,y):(55,17),task_id:2 ，task_service_time：2.0,(SubTask_6)，（subtask assigned_station:0) --> Station_Point_0（x,y):(0,0) (Trip_Layer_3)
-x[17, 16, 1] = 1     # Robot_1: Stack_1750，StackPoint:1750（x,y):(56,22),task_id:3 ，task_service_time：2.0,(SubTask_6)，（subtask assigned_station:0) --> Stack_1364，StackPoint:1364（x,y):(55,17),task_id:2 ，task_service_time：2.0,(SubTask_6)，（subtask assigned_station:0)
-x[18, 17, 1] = 1     # Robot_1: Stack_2416，StackPoint:2416（x,y):(29,31),task_id:4 ，task_service_time：2.0,(SubTask_6)，（subtask assigned_station:0) --> Stack_1750，StackPoint:1750（x,y):(56,22),task_id:3 ，task_service_time：2.0,(SubTask_6)，（subtask assigned_station:0)
-x[20, 12, 1] = 1     # Robot_1: Station_Point_76（x,y):(76,0) (Trip_Layer_1) --> Stack_1611，StackPoint:1611（x,y):(71,20),task_id:1 ，task_service_time：2.0,(SubTask_3)，（subtask assigned_station:0)
-x[21, 18, 1] = 1     # Robot_1: Station_Point_0（x,y):(0,0) (Trip_Layer_2) --> Stack_2416，StackPoint:2416（x,y):(29,31),task_id:4 ，task_service_time：2.0,(SubTask_6)，（subtask assigned_station:0)
-x[2, 3, 2] = 1     # Robot_2: StackPoint:5（x,y):(5,0) (Robot_Start) --> Stack_1916，StackPoint:1916（x,y):(68,24),task_id:5 ，task_service_time：2.0,(SubTask_0)，（subtask assigned_station:0)
-x[3, 19, 2] = 1     # Robot_2: Stack_1916，StackPoint:1916（x,y):(68,24),task_id:5 ，task_service_time：2.0,(SubTask_0)，（subtask assigned_station:0) --> Station_Point_0（x,y):(0,0) (Trip_Layer_1)
-x[14, 15, 2] = 1     # Robot_2: Stack_2129，StackPoint:2129（x,y):(50,27),task_id:14 ，task_service_time：3.0,(SubTask_5)，（subtask assigned_station:1) --> Stack_1531，StackPoint:1531（x,y):(68,19),task_id:15 ，task_service_time：2.0,(SubTask_5)，（subtask assigned_station:1)
-x[15, 22, 2] = 1     # Robot_2: Stack_1531，StackPoint:1531（x,y):(68,19),task_id:15 ，task_service_time：2.0,(SubTask_5)，（subtask assigned_station:1) --> Station_Point_76（x,y):(76,0) (Trip_Layer_2)
-x[19, 14, 2] = 1     # Robot_2: Station_Point_0（x,y):(0,0) (Trip_Layer_1) --> Stack_2129，StackPoint:2129（x,y):(50,27),task_id:14 ，task_service_time：3.0,(SubTask_5)，（subtask assigned_station:1)
-
-[Variables: y(i, r)]
-y[0, 0] = 1        # Robot_0 visits StackPoint:1（x,y):(1,0) (Robot_Start)
-y[6, 0] = 1        # Robot_0 visits Stack_678，StackPoint:678（x,y):(62,8),task_id:8 ，task_service_time：2.0,(SubTask_2)，（subtask assigned_station:1)
-y[7, 0] = 1        # Robot_0 visits Stack_295，StackPoint:295（x,y):(64,3),task_id:9 ，task_service_time：2.0,(SubTask_2)，（subtask assigned_station:1)
-y[8, 0] = 1        # Robot_0 visits Stack_784，StackPoint:784（x,y):(14,10),task_id:10 ，task_service_time：2.0,(SubTask_2)，（subtask assigned_station:1)
-y[9, 0] = 1        # Robot_0 visits Stack_934，StackPoint:934（x,y):(10,12),task_id:11 ，task_service_time：2.0,(SubTask_2)，（subtask assigned_station:1)
-y[10, 0] = 1        # Robot_0 visits Stack_2005，StackPoint:2005（x,y):(3,26),task_id:12 ，task_service_time：2.0,(SubTask_2)，（subtask assigned_station:1)
-y[13, 0] = 1        # Robot_0 visits Stack_1603，StackPoint:1603（x,y):(63,20),task_id:13 ，task_service_time：3.0,(SubTask_4)，（subtask assigned_station:0)
-y[20, 0] = 1        # Robot_0 visits Station_Point_76（x,y):(76,0) (Trip_Layer_1)
-y[21, 0] = 1        # Robot_0 visits Station_Point_0（x,y):(0,0) (Trip_Layer_2)
-y[1, 1] = 1        # Robot_1 visits StackPoint:3（x,y):(3,0) (Robot_Start)
-y[4, 1] = 1        # Robot_1 visits Stack_1348，StackPoint:1348（x,y):(39,17),task_id:6 ，task_service_time：3.0,(SubTask_1)，（subtask assigned_station:1)
-y[5, 1] = 1        # Robot_1 visits Stack_523，StackPoint:523（x,y):(61,6),task_id:7 ，task_service_time：5.0,(SubTask_1)，（subtask assigned_station:1)
-y[11, 1] = 1        # Robot_1 visits Stack_1181，StackPoint:1181（x,y):(26,15),task_id:0 ，task_service_time：2.0,(SubTask_3)，（subtask assigned_station:0)
-y[12, 1] = 1        # Robot_1 visits Stack_1611，StackPoint:1611（x,y):(71,20),task_id:1 ，task_service_time：2.0,(SubTask_3)，（subtask assigned_station:0)
-y[16, 1] = 1        # Robot_1 visits Stack_1364，StackPoint:1364（x,y):(55,17),task_id:2 ，task_service_time：2.0,(SubTask_6)，（subtask assigned_station:0)
-y[17, 1] = 1        # Robot_1 visits Stack_1750，StackPoint:1750（x,y):(56,22),task_id:3 ，task_service_time：2.0,(SubTask_6)，（subtask assigned_station:0)
-y[18, 1] = 1        # Robot_1 visits Stack_2416，StackPoint:2416（x,y):(29,31),task_id:4 ，task_service_time：2.0,(SubTask_6)，（subtask assigned_station:0)
-y[20, 1] = 1        # Robot_1 visits Station_Point_76（x,y):(76,0) (Trip_Layer_1)
-y[21, 1] = 1        # Robot_1 visits Station_Point_0（x,y):(0,0) (Trip_Layer_2)
-y[23, 1] = 1        # Robot_1 visits Station_Point_0（x,y):(0,0) (Trip_Layer_3)
-y[2, 2] = 1        # Robot_2 visits StackPoint:5（x,y):(5,0) (Robot_Start)
-y[3, 2] = 1        # Robot_2 visits Stack_1916，StackPoint:1916（x,y):(68,24),task_id:5 ，task_service_time：2.0,(SubTask_0)，（subtask assigned_station:0)
-y[14, 2] = 1        # Robot_2 visits Stack_2129，StackPoint:2129（x,y):(50,27),task_id:14 ，task_service_time：3.0,(SubTask_5)，（subtask assigned_station:1)
-y[15, 2] = 1        # Robot_2 visits Stack_1531，StackPoint:1531（x,y):(68,19),task_id:15 ，task_service_time：2.0,(SubTask_5)，（subtask assigned_station:1)
-y[19, 2] = 1        # Robot_2 visits Station_Point_0（x,y):(0,0) (Trip_Layer_1)
-y[22, 2] = 1        # Robot_2 visits Station_Point_76（x,y):(76,0) (Trip_Layer_2)
-
-[Variables: T(i, r)]
-T[0, 0] = 0.00s    # Robot_0 at StackPoint:1（x,y):(1,0) (Robot_Start)
-T[9, 0] = 21.00s    # Robot_0 at Stack_934，StackPoint:934（x,y):(10,12),task_id:11 ，task_service_time：2.0,(SubTask_2)，（subtask assigned_station:1)
-T[8, 0] = 29.00s    # Robot_0 at Stack_784，StackPoint:784（x,y):(14,10),task_id:10 ，task_service_time：2.0,(SubTask_2)，（subtask assigned_station:1)
-T[10, 0] = 58.00s    # Robot_0 at Stack_2005，StackPoint:2005（x,y):(3,26),task_id:12 ，task_service_time：2.0,(SubTask_2)，（subtask assigned_station:1)
-T[6, 0] = 137.00s    # Robot_0 at Stack_678，StackPoint:678（x,y):(62,8),task_id:8 ，task_service_time：2.0,(SubTask_2)，（subtask assigned_station:1)
-T[7, 0] = 146.00s    # Robot_0 at Stack_295，StackPoint:295（x,y):(64,3),task_id:9 ，task_service_time：2.0,(SubTask_2)，（subtask assigned_station:1)
-T[20, 0] = 163.00s    # Robot_0 at Station_Point_76（x,y):(76,0) (Trip_Layer_1)
-T[13, 0] = 196.00s    # Robot_0 at Stack_1603，StackPoint:1603（x,y):(63,20),task_id:13 ，task_service_time：3.0,(SubTask_4)，（subtask assigned_station:0)
-T[21, 0] = 282.00s    # Robot_0 at Station_Point_0（x,y):(0,0) (Trip_Layer_2)
-T[1, 1] = 0.00s    # Robot_1 at StackPoint:3（x,y):(3,0) (Robot_Start)
-T[4, 1] = 53.00s    # Robot_1 at Stack_1348，StackPoint:1348（x,y):(39,17),task_id:6 ，task_service_time：3.0,(SubTask_1)，（subtask assigned_station:1)
-T[5, 1] = 89.00s    # Robot_1 at Stack_523，StackPoint:523（x,y):(61,6),task_id:7 ，task_service_time：5.0,(SubTask_1)，（subtask assigned_station:1)
-T[20, 1] = 115.00s    # Robot_1 at Station_Point_76（x,y):(76,0) (Trip_Layer_1)
-T[12, 1] = 140.00s    # Robot_1 at Stack_1611，StackPoint:1611（x,y):(71,20),task_id:1 ，task_service_time：2.0,(SubTask_3)，（subtask assigned_station:0)
-T[11, 1] = 192.00s    # Robot_1 at Stack_1181，StackPoint:1181（x,y):(26,15),task_id:0 ，task_service_time：2.0,(SubTask_3)，（subtask assigned_station:0)
-T[21, 1] = 235.00s    # Robot_1 at Station_Point_0（x,y):(0,0) (Trip_Layer_2)
-T[18, 1] = 295.00s    # Robot_1 at Stack_2416，StackPoint:2416（x,y):(29,31),task_id:4 ，task_service_time：2.0,(SubTask_6)，（subtask assigned_station:0)
-T[17, 1] = 333.00s    # Robot_1 at Stack_1750，StackPoint:1750（x,y):(56,22),task_id:3 ，task_service_time：2.0,(SubTask_6)，（subtask assigned_station:0)
-T[16, 1] = 341.00s    # Robot_1 at Stack_1364，StackPoint:1364（x,y):(55,17),task_id:2 ，task_service_time：2.0,(SubTask_6)，（subtask assigned_station:0)
-T[23, 1] = 415.00s    # Robot_1 at Station_Point_0（x,y):(0,0) (Trip_Layer_3)
-T[2, 2] = 0.00s    # Robot_2 at StackPoint:5（x,y):(5,0) (Robot_Start)
-T[3, 2] = 87.00s    # Robot_2 at Stack_1916，StackPoint:1916（x,y):(68,24),task_id:5 ，task_service_time：2.0,(SubTask_0)，（subtask assigned_station:0)
-T[19, 2] = 181.00s    # Robot_2 at Station_Point_0（x,y):(0,0) (Trip_Layer_1)
-T[14, 2] = 258.00s    # Robot_2 at Stack_2129，StackPoint:2129（x,y):(50,27),task_id:14 ，task_service_time：3.0,(SubTask_5)，（subtask assigned_station:1)
-T[15, 2] = 287.00s    # Robot_2 at Stack_1531，StackPoint:1531（x,y):(68,19),task_id:15 ，task_service_time：2.0,(SubTask_5)，（subtask assigned_station:1)
-T[22, 2] = 316.00s    # Robot_2 at Station_Point_76（x,y):(76,0) (Trip_Layer_2)
-
-[Variables: L(i, r)]
-L[0, 0] = 0.0       # Robot_0 load at StackPoint:1（x,y):(1,0) (Robot_Start)
-L[9, 0] = 1.0       # Robot_0 load at Stack_934，StackPoint:934（x,y):(10,12),task_id:11 ，task_service_time：2.0,(SubTask_2)，（subtask assigned_station:1)
-L[8, 0] = 2.0       # Robot_0 load at Stack_784，StackPoint:784（x,y):(14,10),task_id:10 ，task_service_time：2.0,(SubTask_2)，（subtask assigned_station:1)
-L[10, 0] = 3.0       # Robot_0 load at Stack_2005，StackPoint:2005（x,y):(3,26),task_id:12 ，task_service_time：2.0,(SubTask_2)，（subtask assigned_station:1)
-L[6, 0] = 4.0       # Robot_0 load at Stack_678，StackPoint:678（x,y):(62,8),task_id:8 ，task_service_time：2.0,(SubTask_2)，（subtask assigned_station:1)
-L[13, 0] = 4.0       # Robot_0 load at Stack_1603，StackPoint:1603（x,y):(63,20),task_id:13 ，task_service_time：3.0,(SubTask_4)，（subtask assigned_station:0)
-L[21, 0] = 4.0       # Robot_0 load at Station_Point_0（x,y):(0,0) (Trip_Layer_2)
-L[7, 0] = 5.0       # Robot_0 load at Stack_295，StackPoint:295（x,y):(64,3),task_id:9 ，task_service_time：2.0,(SubTask_2)，（subtask assigned_station:1)
-L[20, 0] = 5.0       # Robot_0 load at Station_Point_76（x,y):(76,0) (Trip_Layer_1)
-L[1, 1] = 0.0       # Robot_1 load at StackPoint:3（x,y):(3,0) (Robot_Start)
-L[12, 1] = 1.0       # Robot_1 load at Stack_1611，StackPoint:1611（x,y):(71,20),task_id:1 ，task_service_time：2.0,(SubTask_3)，（subtask assigned_station:0)
-L[18, 1] = 1.0       # Robot_1 load at Stack_2416，StackPoint:2416（x,y):(29,31),task_id:4 ，task_service_time：2.0,(SubTask_6)，（subtask assigned_station:0)
-L[4, 1] = 2.0       # Robot_1 load at Stack_1348，StackPoint:1348（x,y):(39,17),task_id:6 ，task_service_time：3.0,(SubTask_1)，（subtask assigned_station:1)
-L[11, 1] = 2.0       # Robot_1 load at Stack_1181，StackPoint:1181（x,y):(26,15),task_id:0 ，task_service_time：2.0,(SubTask_3)，（subtask assigned_station:0)
-L[21, 1] = 2.0       # Robot_1 load at Station_Point_0（x,y):(0,0) (Trip_Layer_2)
-L[17, 1] = 2.0       # Robot_1 load at Stack_1750，StackPoint:1750（x,y):(56,22),task_id:3 ，task_service_time：2.0,(SubTask_6)，（subtask assigned_station:0)
-L[16, 1] = 3.0       # Robot_1 load at Stack_1364，StackPoint:1364（x,y):(55,17),task_id:2 ，task_service_time：2.0,(SubTask_6)，（subtask assigned_station:0)
-L[23, 1] = 3.0       # Robot_1 load at Station_Point_0（x,y):(0,0) (Trip_Layer_3)
-L[5, 1] = 4.0       # Robot_1 load at Stack_523，StackPoint:523（x,y):(61,6),task_id:7 ，task_service_time：5.0,(SubTask_1)，（subtask assigned_station:1)
-L[20, 1] = 4.0       # Robot_1 load at Station_Point_76（x,y):(76,0) (Trip_Layer_1)
-L[2, 2] = 0.0       # Robot_2 load at StackPoint:5（x,y):(5,0) (Robot_Start)
-L[14, 2] = 5.0       # Robot_2 load at Stack_2129，StackPoint:2129（x,y):(50,27),task_id:14 ，task_service_time：3.0,(SubTask_5)，（subtask assigned_station:1)
-L[15, 2] = 6.0       # Robot_2 load at Stack_1531，StackPoint:1531（x,y):(68,19),task_id:15 ，task_service_time：2.0,(SubTask_5)，（subtask assigned_station:1)
-L[22, 2] = 6.0       # Robot_2 load at Station_Point_76（x,y):(76,0) (Trip_Layer_2)
-L[3, 2] = 7.0       # Robot_2 load at Stack_1916，StackPoint:1916（x,y):(68,24),task_id:5 ，task_service_time：2.0,(SubTask_0)，（subtask assigned_station:0)
-L[19, 2] = 7.0       # Robot_2 load at Station_Point_0（x,y):(0,0) (Trip_Layer_1)
-
-[Variables: trip(i, r)]
-trip[9, 0] = 1     # Robot_0 trip layer at Stack_934，StackPoint:934（x,y):(10,12),task_id:11 ，task_service_time：2.0,(SubTask_2)，（subtask assigned_station:1)
-trip[8, 0] = 1     # Robot_0 trip layer at Stack_784，StackPoint:784（x,y):(14,10),task_id:10 ，task_service_time：2.0,(SubTask_2)，（subtask assigned_station:1)
-trip[10, 0] = 1     # Robot_0 trip layer at Stack_2005，StackPoint:2005（x,y):(3,26),task_id:12 ，task_service_time：2.0,(SubTask_2)，（subtask assigned_station:1)
-trip[6, 0] = 1     # Robot_0 trip layer at Stack_678，StackPoint:678（x,y):(62,8),task_id:8 ，task_service_time：2.0,(SubTask_2)，（subtask assigned_station:1)
-trip[7, 0] = 1     # Robot_0 trip layer at Stack_295，StackPoint:295（x,y):(64,3),task_id:9 ，task_service_time：2.0,(SubTask_2)，（subtask assigned_station:1)
-trip[13, 0] = 2     # Robot_0 trip layer at Stack_1603，StackPoint:1603（x,y):(63,20),task_id:13 ，task_service_time：3.0,(SubTask_4)，（subtask assigned_station:0)
-trip[4, 1] = 1     # Robot_1 trip layer at Stack_1348，StackPoint:1348（x,y):(39,17),task_id:6 ，task_service_time：3.0,(SubTask_1)，（subtask assigned_station:1)
-trip[5, 1] = 1     # Robot_1 trip layer at Stack_523，StackPoint:523（x,y):(61,6),task_id:7 ，task_service_time：5.0,(SubTask_1)，（subtask assigned_station:1)
-trip[12, 1] = 2     # Robot_1 trip layer at Stack_1611，StackPoint:1611（x,y):(71,20),task_id:1 ，task_service_time：2.0,(SubTask_3)，（subtask assigned_station:0)
-trip[11, 1] = 2     # Robot_1 trip layer at Stack_1181，StackPoint:1181（x,y):(26,15),task_id:0 ，task_service_time：2.0,(SubTask_3)，（subtask assigned_station:0)
-trip[18, 1] = 3     # Robot_1 trip layer at Stack_2416，StackPoint:2416（x,y):(29,31),task_id:4 ，task_service_time：2.0,(SubTask_6)，（subtask assigned_station:0)
-trip[17, 1] = 3     # Robot_1 trip layer at Stack_1750，StackPoint:1750（x,y):(56,22),task_id:3 ，task_service_time：2.0,(SubTask_6)，（subtask assigned_station:0)
-trip[16, 1] = 3     # Robot_1 trip layer at Stack_1364，StackPoint:1364（x,y):(55,17),task_id:2 ，task_service_time：2.0,(SubTask_6)，（subtask assigned_station:0)
-trip[3, 2] = 1     # Robot_2 trip layer at Stack_1916，StackPoint:1916（x,y):(68,24),task_id:5 ，task_service_time：2.0,(SubTask_0)，（subtask assigned_station:0)
-trip[14, 2] = 2     # Robot_2 trip layer at Stack_2129，StackPoint:2129（x,y):(50,27),task_id:14 ，task_service_time：3.0,(SubTask_5)，（subtask assigned_station:1)
-trip[15, 2] = 2     # Robot_2 trip layer at Stack_1531，StackPoint:1531（x,y):(68,19),task_id:15 ，task_service_time：2.0,(SubTask_5)，（subtask assigned_station:1)

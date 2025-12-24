@@ -57,11 +57,11 @@ class SP4_Robot_Router:
                                   service_time: Dict,
                                   max_trips: int):
         """
-        [完全重构版] 启发式路径 -> MIP 分层图映射，并记录日志
+        启发式路径 -> MIP 分层图映射，并记录日志
         """
         print(f"  >>> [SP4] Applying Layered Warm Start (Fixed Version)...")
 
-        # ===== 第一步：建立物理位置 -> MIP 节点的映射 =====
+        # ===== 建立物理位置 -> MIP 节点的映射 =====
         point_to_stack_nodes = defaultdict(list)
         for node_id in stack_nodes_indices:
             pt_obj, subtask, task_obj, _, _ = nodes_map[node_id]
@@ -72,7 +72,7 @@ class SP4_Robot_Router:
                 'task_obj': task_obj
             })
 
-        # ===== 第二步：从启发式结果中提取机器人路径 =====
+        # ===== 从启发式结果中提取机器人路径 =====
         robot_physical_routes = defaultdict(list)
 
         for subtask in self.problem.subtask_list:
@@ -351,7 +351,7 @@ class SP4_Robot_Router:
     def _extract_sequence(self, x, y, T, trip, nodes_map, N, R, depot_layer_nodes, robot_start_nodes,
                           stack_nodes_indices):
         """
-        [修复版] 提取机器人路径（使用二维时间变量）
+        提取机器人路径（使用二维时间变量）
         """
         for r in R:
             print(f"\n  === Robot {r} Routes ===")
@@ -541,6 +541,7 @@ class SP4_Robot_Router:
                     best_task.robot_id = r_id
                     best_task.arrival_time_at_stack = current_time
                     best_task.robot_visit_sequence = trip_sequence
+                    best_task.trip_id = trip_sequence + 1
                     robot_arrival_times[stack.store_point.idx] = current_time
 
                     current_time += best_task.robot_service_time
@@ -1046,6 +1047,8 @@ class SP4_Robot_Router:
                         robot_arrival_times[pt.idx] = arr_time
                         subtask_robot_assign[subtask.id] = self.problem.robot_list[r].id
                         task.robot_id = r
+                        trip_idx = int(trip[i, r].X) if (i, r) in trip else 0
+                        task.trip_id= trip_idx
                         task.arrival_time_at_stack = arr_time
             with open("log/debug_result.txt", "w") as f:
                 f.write(f"Objective Value: {m.objVal}\n")
@@ -1686,7 +1689,7 @@ if __name__ == "__main__":
     # (1) 物理任务列表 -> ProblemDTO
     # 注意：这里可以选择存储到 problem_dto 的新字段，或者通过 SubTask.execution_tasks 访问
     problem_dto.task_num = len(physical_tasks)
-
+    problem_dto.task_list= physical_tasks
     # (2) 记录每个 SubTask 的选箱信息（已在 SP3 内部通过 task.add_execution_detail() 完成）
     # 验证：
     print(f"  ✓ Generated {len(physical_tasks)} physical tasks")

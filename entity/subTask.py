@@ -28,7 +28,11 @@ class SubTask:
 
     # 预计开始处理时间 (用于计算 Makespan)
     estimated_process_start_time: float = 0.0
+    # 子任务完成时间 (该 SubTask 下所有 Task 的 end_process_time 的最大值)
+    completion_time: float = 0.0
 
+    # 分配到的机器人 ID (SP4 结果)
+    assigned_robot_id: int = -1
     '''#sp3 决策：命中的料箱id列表'''
     # 1. 物理分配的料箱ID列表
     assigned_tote_ids: List[int] = field(default_factory=list)
