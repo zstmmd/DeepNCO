@@ -130,7 +130,7 @@ class SP3_Bin_Hitter:
 
     def _calculate_efficiency_score(self, task: Task) -> float:
         """
-        [新增] 计算任务的检索效率分数
+        计算任务的检索效率分数
         Score = 有效料箱数 / (机器人动作耗时 + 往返路程耗时)
         """
         # 1. 分子：有效料箱数量
