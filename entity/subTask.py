@@ -46,7 +46,7 @@ class SubTask:
     # 4. 需要访问的点位对象列表 (对应涉及的堆垛坐标)
     visit_points: List['Point'] = field(default_factory=list)
 
-    assigned_robot_id: int = -1  # SP4 决策：分配给哪个机器人
+
     # === SP4 运行时缓存字段 (不参与 init) ===
     # 用于存储预处理后的 SubTask 物理入口点 (第一个访问的堆垛坐标)
     _cached_start_pt: Optional[Point] = field(default=None, init=False)

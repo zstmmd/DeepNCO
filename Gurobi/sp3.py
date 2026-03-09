@@ -88,6 +88,7 @@ class SP3_Bin_Hitter:
             for pt in p_tasks:
                 self.stack_allocation[pt.target_stack_id] = task.id
                 pt.station_sequence_rank = task.station_sequence_rank
+
             # 再模拟出库（更新虚拟层级）
             for pt in p_tasks:
                 self._apply_stack_modification(pt)
@@ -107,8 +108,7 @@ class SP3_Bin_Hitter:
             # 直接使用当前的列表索引 + 1 作为 priority
             for idx, pt in enumerate(physical_tasks):
                 pt.priority = idx + 1
-                # 重新编号 Task ID 以保持一致性 (可选)
-                pt.task_id = idx
+
         return physical_tasks, final_tote_selection, final_sorting_costs
 
     def _initialize_stack_snapshots(self):
@@ -658,12 +658,12 @@ class SP3_Bin_Hitter:
 
             for idx, pt in enumerate(physical_tasks):
                 pt.priority = idx + 1
-                pt.task_id = idx
+
 
             return physical_tasks, final_tote_selection, final_sorting_costs
 
         def _calculate_efficiency_score(self, task: Task) -> float:
-            # ... (保持原样) ...
+
             valid_tote_count = len(task.hit_tote_ids)
             if valid_tote_count == 0:
                 valid_tote_count = 0.1
@@ -796,7 +796,7 @@ class SP3_Bin_Hitter:
                                    stack: Stack,
                                    target_totes: List[Tote],
                                    beta: float) -> Tuple[str, Optional[Tuple[int, int]], float, float]:
-            # ... (保持原样) ...
+
             stack_id = stack.stack_id
             current_snapshot = self.stack_snapshots.get(stack_id, [])
             current_height = len(current_snapshot)

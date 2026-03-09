@@ -64,10 +64,7 @@ class Task:
     # 记录该任务对应的机器人具体路径 [(x, y, time), ...]
     # 用于输出到 txt
     detailed_path: List[Tuple[float, float, float]] = field(default_factory=list)
-    @property
-    def total_load_count(self) -> int:
-        return len(self.target_tote_ids)
-
+    
     @property
     def total_service_time(self) -> float:
         """总耗时 = 机器人耗时 + 工作台耗时"""

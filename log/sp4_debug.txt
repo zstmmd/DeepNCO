@@ -7,32 +7,29 @@ PART 3: SP3 Hit Validation
 
   📋 [SubTask 0] SKU Overview:
       Required SKUs: {1: 2, 2: 2, 4: 4, 5: 2, 69: 1, 7: 4}
-      Provided SKUs: {5: 113, 9: 97, 2: 100, 7: 51, 11: 45, 3: 30, 4: 36, 8: 73, 0: 21, 12: 50, 53: 26, 10: 50, 1: 43, 6: 23, 50: 23, 69: 19, 13: 39}
-      📦 Tote-Level SKU Breakdown (4 totes):
-         Tote 46 @ Stack 678:
-           ✅ Needed: {5: 2, 2: 2, 7: 4}
-           🔇 Noise: {5: 51, 9: 39, 2: 39, 7: 47, 11: 45, 3: 30}
-         Tote 47 @ Stack 678:
-           ✅ Needed: {4: 4}
-           🔇 Noise: {5: 60, 4: 32, 8: 44, 0: 21}
-         Tote 51 @ Stack 678:
+      Provided SKUs: {13: 77, 7: 77, 2: 100, 33: 21, 4: 38, 5: 49, 1: 29, 39: 10, 63: 33, 8: 29, 6: 23, 50: 23, 69: 19}
+      📦 Tote-Level SKU Breakdown (3 totes):
+         Tote 128 @ Stack 691:
+           ✅ Needed: {7: 4, 2: 2, 4: 4, 5: 2}
+           🔇 Noise: {13: 38, 7: 19, 2: 27, 33: 21, 4: 34, 5: 47}
+         Tote 131 @ Stack 691:
            ✅ Needed: {1: 2}
-           🔇 Noise: {12: 50, 2: 28, 53: 26, 9: 58, 10: 50, 1: 41}
+           🔇 Noise: {2: 40, 1: 27, 39: 10, 63: 33, 7: 54}
          Tote 58 @ Stack 786:
            ✅ Needed: {69: 1}
            🔇 Noise: {8: 29, 2: 31, 6: 23, 50: 23, 69: 18, 13: 39}
   ✅ [SubTask 0] Validation PASSED (6 SKU types, 15 units)
       ℹ️ Excess SKUs (over-supply):
-         - SKU 1: +41 extra
+         - SKU 1: +27 extra
          - SKU 2: +98 extra
-         - SKU 4: +32 extra
-         - SKU 5: +111 extra
+         - SKU 4: +34 extra
+         - SKU 5: +47 extra
          - SKU 69: +18 extra
-         - SKU 7: +47 extra
+         - SKU 7: +73 extra
 
   📋 [SubTask 1] SKU Overview:
       Required SKUs: {33: 1, 66: 1, 8: 5, 9: 3, 10: 3, 11: 5}
-      Provided SKUs: {60: 36, 9: 64, 50: 38, 8: 84, 11: 82, 7: 54, 35: 32, 2: 86, 10: 28, 69: 23, 6: 20, 0: 39, 52: 17, 33: 37, 13: 26, 66: 11, 23: 14}
+      Provided SKUs: {60: 36, 9: 44, 50: 38, 8: 88, 11: 82, 7: 54, 35: 32, 2: 86, 10: 28, 69: 23, 6: 48, 0: 39, 52: 17, 33: 37, 66: 13, 12: 24, 1: 31}
       📦 Tote-Level SKU Breakdown (4 totes):
          Tote 54 @ Stack 678:
            ✅ Needed: {9: 3, 8: 5, 11: 5}
@@ -43,21 +40,21 @@ PART 3: SP3 Hit Validation
          Tote 34 @ Stack 965:
            ✅ Needed: {33: 1}
            🔇 Noise: {6: 20, 0: 39, 52: 17, 2: 33, 33: 36}
-         Tote 35 @ Stack 965:
+         Tote 28 @ Stack 1368:
            ✅ Needed: {66: 1}
-           🔇 Noise: {13: 26, 66: 10, 8: 49, 9: 42, 23: 14}
+           🔇 Noise: {66: 12, 8: 53, 12: 24, 9: 22, 6: 28, 1: 31}
   ✅ [SubTask 1] Validation PASSED (6 SKU types, 18 units)
       ℹ️ Excess SKUs (over-supply):
          - SKU 33: +36 extra
-         - SKU 66: +10 extra
-         - SKU 8: +79 extra
-         - SKU 9: +61 extra
+         - SKU 66: +12 extra
+         - SKU 8: +83 extra
+         - SKU 9: +41 extra
          - SKU 10: +25 extra
          - SKU 11: +77 extra
 
   📋 [SubTask 2] SKU Overview:
       Required SKUs: {34: 3, 3: 3, 41: 4, 12: 1, 13: 2, 14: 5}
-      Provided SKUs: {13: 98, 5: 24, 11: 29, 8: 37, 3: 21, 12: 41, 34: 15, 7: 49, 2: 100, 10: 58, 4: 51, 9: 46, 14: 39, 32: 35, 35: 31, 41: 21, 55: 19}
+      Provided SKUs: {13: 98, 5: 24, 11: 29, 8: 37, 3: 21, 12: 41, 34: 15, 7: 49, 2: 100, 10: 58, 4: 51, 9: 46, 14: 39, 27: 30, 41: 19, 15: 37, 54: 31}
       📦 Tote-Level SKU Breakdown (4 totes):
          Tote 68 @ Stack 2308:
            ✅ Needed: {13: 2, 3: 3, 12: 1}
@@ -68,76 +65,79 @@ PART 3: SP3 Hit Validation
          Tote 187 @ Stack 912:
            ✅ Needed: {14: 5}
            🔇 Noise: {2: 53, 13: 56, 10: 31, 9: 46, 14: 34}
-         Tote 4 @ Stack 1518:
+         Tote 0 @ Stack 1909:
            ✅ Needed: {41: 4}
-           🔇 Noise: {32: 35, 35: 31, 41: 17, 55: 19}
+           🔇 Noise: {27: 30, 41: 15, 15: 37, 54: 31}
   ✅ [SubTask 2] Validation PASSED (6 SKU types, 18 units)
       ℹ️ Excess SKUs (over-supply):
          - SKU 34: +12 extra
          - SKU 3: +18 extra
-         - SKU 41: +17 extra
+         - SKU 41: +15 extra
          - SKU 12: +40 extra
          - SKU 13: +96 extra
          - SKU 14: +34 extra
 
   📋 [SubTask 3] SKU Overview:
-      Required SKUs: {63: 2, 62: 2, 39: 1, 24: 5, 30: 5, 67: 1}
-      Provided SKUs: {30: 30, 22: 21, 2: 69, 24: 40, 54: 61, 4: 44, 11: 41, 63: 11, 1: 59, 0: 36, 7: 43, 39: 22, 5: 29, 8: 104, 9: 39, 13: 55, 67: 33, 66: 20, 25: 49, 62: 26}
-      📦 Tote-Level SKU Breakdown (5 totes):
-         Tote 8 @ Stack 438:
-           ✅ Needed: {30: 5, 24: 5}
-           🔇 Noise: {30: 25, 22: 21, 2: 18, 24: 35}
+      Required SKUs: {63: 2, 62: 2, 39: 1, 24: 5, 26: 4, 29: 1}
+      Provided SKUs: {54: 22, 4: 44, 11: 74, 63: 11, 1: 69, 0: 86, 7: 29, 26: 27, 2: 104, 18: 20, 62: 49, 38: 39, 53: 26, 6: 20, 5: 45, 24: 22, 9: 34, 69: 16, 28: 42, 64: 25, 39: 42, 29: 34, 10: 34}
+      📦 Tote-Level SKU Breakdown (6 totes):
          Tote 98 @ Stack 1820:
            ✅ Needed: {63: 2}
            🔇 Noise: {54: 22, 4: 44, 11: 41, 63: 9, 1: 36, 0: 36}
-         Tote 134 @ Stack 1787:
+         Tote 99 @ Stack 1820:
+           ✅ Needed: {26: 4}
+           🔇 Noise: {7: 29, 26: 23, 2: 47, 1: 33}
+         Tote 12 @ Stack 448:
+           ✅ Needed: {62: 2}
+           🔇 Noise: {18: 20, 62: 47, 38: 39, 53: 26}
+         Tote 11 @ Stack 1031:
+           ✅ Needed: {24: 5}
+           🔇 Noise: {6: 20, 5: 45, 24: 17, 9: 34}
+         Tote 6 @ Stack 2096:
            ✅ Needed: {39: 1}
-           🔇 Noise: {1: 23, 7: 43, 39: 21, 5: 29, 8: 47}
+           🔇 Noise: {69: 16, 28: 42, 64: 25, 39: 41}
+         Tote 123 @ Stack 1061:
+           ✅ Needed: {29: 1}
+           🔇 Noise: {0: 50, 2: 57, 11: 33, 29: 33, 10: 34}
+  ✅ [SubTask 3] Validation PASSED (6 SKU types, 15 units)
+      ℹ️ Excess SKUs (over-supply):
+         - SKU 63: +9 extra
+         - SKU 62: +47 extra
+         - SKU 39: +41 extra
+         - SKU 24: +17 extra
+         - SKU 26: +23 extra
+         - SKU 29: +33 extra
+
+  📋 [SubTask 4] SKU Overview:
+      Required SKUs: {67: 1, 19: 3, 30: 5, 47: 1, 46: 1}
+      Provided SKUs: {0: 48, 5: 38, 7: 30, 19: 35, 6: 47, 8: 92, 9: 66, 2: 51, 13: 109, 67: 33, 47: 29, 1: 40, 10: 30, 51: 45, 29: 34, 46: 20, 12: 47, 27: 10, 11: 20, 30: 22, 20: 13}
+      📦 Tote-Level SKU Breakdown (5 totes):
+         Tote 135 @ Stack 1787:
+           ✅ Needed: {19: 3}
+           🔇 Noise: {0: 48, 5: 38, 7: 30, 19: 32, 6: 47}
          Tote 137 @ Stack 1787:
            ✅ Needed: {67: 1}
            🔇 Noise: {8: 57, 9: 39, 2: 51, 13: 55, 67: 32}
-         Tote 12 @ Stack 448:
-           ✅ Needed: {62: 2}
-           🔇 Noise: {66: 20, 25: 49, 54: 39, 62: 24}
-  ✅ [SubTask 3] Validation PASSED (6 SKU types, 16 units)
-      ℹ️ Excess SKUs (over-supply):
-         - SKU 63: +9 extra
-         - SKU 62: +24 extra
-         - SKU 39: +21 extra
-         - SKU 24: +35 extra
-         - SKU 30: +25 extra
-         - SKU 67: +32 extra
-
-  📋 [SubTask 4] SKU Overview:
-      Required SKUs: {19: 3, 29: 1, 46: 1, 26: 4, 47: 1}
-      Provided SKUs: {3: 94, 46: 17, 53: 31, 56: 43, 38: 34, 4: 58, 12: 27, 19: 19, 10: 70, 6: 59, 26: 32, 63: 26, 43: 38, 8: 35, 47: 29, 9: 27, 1: 40, 29: 30, 34: 19, 44: 37, 21: 31}
-      📦 Tote-Level SKU Breakdown (5 totes):
-         Tote 13 @ Stack 344:
-           ✅ Needed: {46: 1}
-           🔇 Noise: {3: 43, 46: 16, 53: 31, 56: 43}
-         Tote 191 @ Stack 706:
-           ✅ Needed: {19: 3}
-           🔇 Noise: {38: 34, 4: 29, 12: 27, 19: 16, 3: 51, 10: 47}
-         Tote 55 @ Stack 786:
-           ✅ Needed: {26: 4}
-           🔇 Noise: {6: 59, 10: 23, 26: 28, 63: 26, 43: 38, 4: 29}
          Tote 169 @ Stack 801:
            ✅ Needed: {47: 1}
            🔇 Noise: {8: 35, 47: 28, 9: 27, 1: 40}
-         Tote 0 @ Stack 1909:
-           ✅ Needed: {29: 1}
-           🔇 Noise: {29: 29, 34: 19, 44: 37, 21: 31}
-  ✅ [SubTask 4] Validation PASSED (5 SKU types, 10 units)
+         Tote 16 @ Stack 1564:
+           ✅ Needed: {46: 1}
+           🔇 Noise: {10: 30, 51: 45, 29: 34, 46: 19}
+         Tote 197 @ Stack 822:
+           ✅ Needed: {30: 5}
+           🔇 Noise: {12: 47, 13: 54, 27: 10, 11: 20, 30: 17, 20: 13}
+  ✅ [SubTask 4] Validation PASSED (5 SKU types, 11 units)
       ℹ️ Excess SKUs (over-supply):
-         - SKU 19: +16 extra
-         - SKU 29: +29 extra
-         - SKU 46: +16 extra
-         - SKU 26: +28 extra
+         - SKU 67: +32 extra
+         - SKU 19: +32 extra
+         - SKU 30: +17 extra
          - SKU 47: +28 extra
+         - SKU 46: +19 extra
 
   📋 [SubTask 5] SKU Overview:
       Required SKUs: {0: 1, 65: 1, 2: 3, 3: 3, 1: 1, 64: 1}
-      Provided SKUs: {12: 75, 1: 58, 3: 52, 0: 67, 11: 63, 13: 46, 4: 22, 2: 37, 54: 37, 50: 28, 5: 31, 64: 20, 55: 37, 7: 23, 65: 20}
+      Provided SKUs: {12: 75, 1: 58, 3: 29, 0: 67, 11: 25, 13: 46, 4: 22, 2: 37, 54: 37, 50: 28, 5: 31, 64: 20, 26: 45, 65: 27, 63: 21, 20: 16}
       📦 Tote-Level SKU Breakdown (4 totes):
          Tote 23 @ Stack 1791:
            ✅ Needed: {1: 1, 3: 3, 0: 1}
@@ -148,15 +148,15 @@ PART 3: SP3 Hit Validation
          Tote 108 @ Stack 2090:
            ✅ Needed: {64: 1}
            🔇 Noise: {50: 28, 5: 31, 64: 19, 0: 24}
-         Tote 190 @ Stack 912:
+         Tote 10 @ Stack 2319:
            ✅ Needed: {65: 1}
-           🔇 Noise: {55: 37, 7: 23, 11: 38, 65: 19, 3: 23}
+           🔇 Noise: {26: 45, 65: 26, 63: 21, 20: 16}
   ✅ [SubTask 5] Validation PASSED (6 SKU types, 10 units)
       ℹ️ Excess SKUs (over-supply):
          - SKU 0: +66 extra
-         - SKU 65: +19 extra
+         - SKU 65: +26 extra
          - SKU 2: +34 extra
-         - SKU 3: +49 extra
+         - SKU 3: +26 extra
          - SKU 1: +57 extra
          - SKU 64: +19 extra
 
@@ -184,7 +184,7 @@ PART 3: SP3 Hit Validation
 
   📋 [SubTask 7] SKU Overview:
       Required SKUs: {9: 4, 10: 1, 11: 3, 12: 4, 13: 3, 49: 2}
-      Provided SKUs: {59: 24, 12: 26, 9: 100, 13: 39, 58: 31, 7: 85, 3: 49, 5: 21, 11: 55, 35: 25, 10: 48, 50: 19, 21: 40, 1: 24, 43: 29, 49: 50, 64: 18, 48: 39}
+      Provided SKUs: {59: 24, 12: 26, 9: 100, 13: 39, 58: 31, 7: 85, 3: 49, 5: 21, 11: 55, 35: 25, 10: 48, 50: 19, 21: 40, 1: 24, 14: 19, 49: 50, 16: 20, 33: 36}
       📦 Tote-Level SKU Breakdown (4 totes):
          Tote 76 @ Stack 682:
            ✅ Needed: {12: 4, 9: 4, 13: 3}
@@ -195,9 +195,9 @@ PART 3: SP3 Hit Validation
          Tote 80 @ Stack 682:
            ✅ Needed: {10: 1}
            🔇 Noise: {10: 47, 11: 31, 50: 19, 21: 40, 7: 45, 1: 24}
-         Tote 15 @ Stack 988:
+         Tote 5 @ Stack 843:
            ✅ Needed: {49: 2}
-           🔇 Noise: {43: 29, 49: 48, 64: 18, 48: 39}
+           🔇 Noise: {14: 19, 49: 48, 16: 20, 33: 36}
   ✅ [SubTask 7] Validation PASSED (6 SKU types, 17 units)
       ℹ️ Excess SKUs (over-supply):
          - SKU 9: +96 extra
@@ -208,84 +208,82 @@ PART 3: SP3 Hit Validation
          - SKU 49: +48 extra
 
   📋 [SubTask 8] SKU Overview:
-      Required SKUs: {27: 5, 20: 1, 30: 1, 18: 2, 23: 2, 17: 5}
-      Provided SKUs: {27: 48, 54: 32, 1: 68, 9: 119, 10: 38, 2: 81, 7: 44, 4: 29, 0: 143, 23: 38, 56: 22, 11: 64, 45: 40, 6: 109, 63: 13, 18: 51, 20: 25, 3: 45, 17: 36, 12: 47, 13: 54, 30: 22}
-      📦 Tote-Level SKU Breakdown (6 totes):
-         Tote 97 @ Stack 1820:
-           ✅ Needed: {27: 5}
-           🔇 Noise: {27: 33, 54: 13, 1: 31, 9: 36, 10: 38, 2: 49}
-         Tote 100 @ Stack 1820:
-           ✅ Needed: {23: 2}
-           🔇 Noise: {7: 44, 1: 37, 4: 29, 0: 41, 23: 36, 56: 22}
-         Tote 101 @ Stack 1820:
-           ✅ Needed: {18: 2}
-           🔇 Noise: {11: 44, 45: 40, 6: 50, 63: 13, 18: 26, 0: 54}
+      Required SKUs: {27: 5, 20: 1, 30: 1, 17: 5, 59: 2, 18: 2}
+      Provided SKUs: {30: 30, 56: 21, 59: 18, 60: 40, 20: 12, 2: 32, 18: 23, 9: 41, 3: 45, 0: 43, 27: 35, 13: 44, 12: 104, 5: 37, 6: 53, 17: 49, 34: 39}
+      📦 Tote-Level SKU Breakdown (4 totes):
+         Tote 8 @ Stack 438:
+           ✅ Needed: {30: 1, 59: 2}
+           🔇 Noise: {30: 29, 56: 21, 59: 16, 60: 40}
          Tote 107 @ Stack 1272:
-           ✅ Needed: {20: 1}
-           🔇 Noise: {20: 11, 2: 32, 18: 23, 9: 41, 3: 45}
-         Tote 75 @ Stack 682:
+           ✅ Needed: {20: 1, 18: 2}
+           🔇 Noise: {20: 11, 2: 32, 18: 21, 9: 41, 3: 45}
+         Tote 30 @ Stack 353:
+           ✅ Needed: {27: 5}
+           🔇 Noise: {0: 43, 27: 30, 13: 23, 12: 59, 5: 37, 6: 53}
+         Tote 2 @ Stack 2074:
            ✅ Needed: {17: 5}
-           🔇 Noise: {17: 31, 0: 48, 6: 59, 9: 42, 54: 19}
-         Tote 197 @ Stack 822:
-           ✅ Needed: {30: 1}
-           🔇 Noise: {12: 47, 13: 54, 27: 10, 11: 20, 30: 21, 20: 13}
+           🔇 Noise: {17: 44, 34: 39, 13: 21, 12: 45}
   ✅ [SubTask 8] Validation PASSED (6 SKU types, 16 units)
       ℹ️ Excess SKUs (over-supply):
-         - SKU 27: +43 extra
-         - SKU 20: +24 extra
-         - SKU 30: +21 extra
-         - SKU 18: +49 extra
-         - SKU 23: +36 extra
-         - SKU 17: +31 extra
+         - SKU 27: +30 extra
+         - SKU 20: +11 extra
+         - SKU 30: +29 extra
+         - SKU 17: +44 extra
+         - SKU 59: +16 extra
+         - SKU 18: +21 extra
 
   📋 [SubTask 9] SKU Overview:
-      Required SKUs: {19: 5, 37: 5, 46: 1, 59: 2, 39: 3}
-      Provided SKUs: {20: 30, 19: 45, 51: 34, 37: 20, 59: 20, 38: 45, 69: 22, 61: 58, 15: 15, 4: 43, 7: 60, 2: 60, 39: 10, 8: 34, 53: 24, 12: 60, 46: 31}
-      📦 Tote-Level SKU Breakdown (4 totes):
-         Tote 16 @ Stack 1564:
-           ✅ Needed: {19: 5, 37: 5}
-           🔇 Noise: {20: 30, 19: 40, 51: 34, 37: 15}
-         Tote 11 @ Stack 1031:
-           ✅ Needed: {59: 2}
-           🔇 Noise: {59: 18, 38: 45, 69: 22, 61: 34}
+      Required SKUs: {19: 5, 23: 2, 39: 3, 46: 1, 37: 5}
+      Provided SKUs: {13: 26, 66: 11, 8: 83, 9: 66, 23: 14, 4: 132, 19: 35, 60: 25, 15: 15, 7: 85, 61: 24, 2: 60, 39: 10, 37: 10, 10: 50, 53: 24, 12: 60, 46: 31}
+      📦 Tote-Level SKU Breakdown (5 totes):
+         Tote 35 @ Stack 965:
+           ✅ Needed: {23: 2}
+           🔇 Noise: {13: 26, 66: 11, 8: 49, 9: 42, 23: 12}
+         Tote 36 @ Stack 965:
+           ✅ Needed: {19: 5}
+           🔇 Noise: {9: 24, 4: 40, 19: 30, 60: 25}
          Tote 121 @ Stack 1061:
            ✅ Needed: {39: 3}
            🔇 Noise: {15: 15, 4: 43, 7: 60, 61: 24, 2: 60, 39: 7}
+         Tote 180 @ Stack 1962:
+           ✅ Needed: {37: 5}
+           🔇 Noise: {4: 49, 7: 25, 37: 5, 10: 50}
          Tote 112 @ Stack 2090:
            ✅ Needed: {46: 1}
            🔇 Noise: {8: 34, 53: 24, 12: 60, 46: 30}
   ✅ [SubTask 9] Validation PASSED (5 SKU types, 16 units)
       ℹ️ Excess SKUs (over-supply):
-         - SKU 19: +40 extra
-         - SKU 37: +15 extra
-         - SKU 46: +30 extra
-         - SKU 59: +18 extra
+         - SKU 19: +30 extra
+         - SKU 23: +12 extra
          - SKU 39: +7 extra
+         - SKU 46: +30 extra
+         - SKU 37: +5 extra
 
   📋 [SubTask 10] SKU Overview:
       Required SKUs: {64: 3, 0: 3, 3: 2, 4: 4, 5: 5, 7: 1}
-      Provided SKUs: {7: 75, 4: 24, 3: 141, 2: 21, 11: 31, 5: 93, 9: 51, 12: 51, 13: 49, 0: 22, 16: 11, 21: 15, 42: 31, 64: 32, 53: 27, 8: 27}
+      Provided SKUs: {0: 84, 4: 68, 6: 70, 62: 20, 8: 125, 7: 46, 3: 114, 5: 79, 12: 60, 64: 32, 53: 27}
       📦 Tote-Level SKU Breakdown (4 totes):
-         Tote 153 @ Stack 742:
-           ✅ Needed: {7: 1, 4: 4, 3: 2}
-           🔇 Noise: {7: 22, 4: 20, 3: 49, 2: 21, 11: 31}
-         Tote 154 @ Stack 742:
-           ✅ Needed: {5: 5}
-           🔇 Noise: {5: 33, 9: 51, 12: 51, 7: 52, 3: 36}
-         Tote 155 @ Stack 742:
-           ✅ Needed: {0: 3}
-           🔇 Noise: {13: 49, 0: 19, 16: 11, 21: 15, 5: 55, 42: 31}
+         Tote 62 @ Stack 2308:
+           ✅ Needed: {0: 3, 4: 4, 7: 1}
+           🔇 Noise: {0: 25, 4: 23, 6: 37, 62: 20, 8: 53, 7: 45}
+         Tote 65 @ Stack 2308:
+           ✅ Needed: {3: 2, 5: 5}
+           🔇 Noise: {3: 58, 6: 33, 5: 15, 12: 60}
+         Tote 66 @ Stack 2308:
+           🔇 Noise: {4: 41, 8: 45, 0: 56, 5: 59}
          Tote 143 @ Stack 382:
            ✅ Needed: {64: 3}
            🔇 Noise: {3: 54, 64: 29, 53: 27, 8: 27}
   ✅ [SubTask 10] Validation PASSED (6 SKU types, 18 units)
       ℹ️ Excess SKUs (over-supply):
          - SKU 64: +29 extra
-         - SKU 0: +19 extra
-         - SKU 3: +139 extra
-         - SKU 4: +20 extra
-         - SKU 5: +88 extra
-         - SKU 7: +74 extra
+         - SKU 0: +81 extra
+         - SKU 3: +112 extra
+         - SKU 4: +64 extra
+         - SKU 5: +74 extra
+         - SKU 7: +45 extra
+      ⚠️ Redundant Totes (not contributing to required SKUs): 1
+         - Tote 66 (Stack 2308)
 
   📋 [SubTask 11] SKU Overview:
       Required SKUs: {8: 4, 9: 2, 10: 2, 11: 4, 12: 4, 13: 4}
@@ -314,80 +312,77 @@ PART 3: SP3 Hit Validation
 
   📋 [SubTask 12] SKU Overview:
       Required SKUs: {6: 2, 16: 5, 53: 4, 27: 2, 63: 5, 28: 3}
-      Provided SKUs: {10: 24, 65: 13, 18: 43, 7: 91, 6: 126, 32: 32, 2: 40, 1: 64, 39: 10, 63: 33, 28: 17, 8: 56, 53: 14, 57: 23, 0: 43, 27: 35, 13: 23, 12: 59, 5: 37, 15: 27, 16: 41, 23: 50}
-      📦 Tote-Level SKU Breakdown (5 totes):
-         Tote 125 @ Stack 691:
-           ✅ Needed: {6: 2}
-           🔇 Noise: {10: 24, 65: 13, 18: 15, 7: 37, 6: 25, 32: 32}
-         Tote 131 @ Stack 691:
-           ✅ Needed: {63: 5}
-           🔇 Noise: {2: 40, 1: 29, 39: 10, 63: 28, 7: 54}
+      Provided SKUs: {6: 105, 10: 61, 26: 32, 63: 26, 43: 38, 4: 29, 28: 17, 1: 66, 8: 56, 53: 24, 57: 23, 27: 38, 54: 13, 9: 36, 2: 49, 16: 30, 7: 28, 11: 31}
+      📦 Tote-Level SKU Breakdown (4 totes):
+         Tote 55 @ Stack 786:
+           ✅ Needed: {6: 2, 63: 5}
+           🔇 Noise: {6: 57, 10: 23, 26: 32, 63: 21, 43: 38, 4: 29}
          Tote 48 @ Stack 678:
            ✅ Needed: {28: 3, 53: 4}
            🔇 Noise: {28: 14, 6: 46, 1: 35, 8: 56, 53: 10, 57: 23}
-         Tote 30 @ Stack 353:
+         Tote 97 @ Stack 1820:
            ✅ Needed: {27: 2}
-           🔇 Noise: {0: 43, 27: 33, 13: 23, 12: 59, 5: 37, 6: 53}
-         Tote 7 @ Stack 390:
+           🔇 Noise: {27: 36, 54: 13, 1: 31, 9: 36, 10: 38, 2: 49}
+         Tote 106 @ Stack 1820:
            ✅ Needed: {16: 5}
-           🔇 Noise: {18: 28, 15: 27, 16: 36, 23: 50}
+           🔇 Noise: {16: 25, 7: 28, 53: 10, 11: 31}
   ✅ [SubTask 12] Validation PASSED (6 SKU types, 21 units)
       ℹ️ Excess SKUs (over-supply):
-         - SKU 6: +124 extra
-         - SKU 16: +36 extra
-         - SKU 53: +10 extra
-         - SKU 27: +33 extra
-         - SKU 63: +28 extra
+         - SKU 6: +103 extra
+         - SKU 16: +25 extra
+         - SKU 53: +20 extra
+         - SKU 27: +36 extra
+         - SKU 63: +21 extra
          - SKU 28: +14 extra
 
   📋 [SubTask 13] SKU Overview:
       Required SKUs: {48: 5, 65: 5, 61: 2, 29: 5, 41: 4, 14: 4}
-      Provided SKUs: {8: 38, 14: 37, 13: 49, 21: 17, 7: 78, 3: 54, 9: 56, 29: 21, 4: 45, 10: 85, 6: 78, 48: 23, 61: 24, 11: 46, 1: 57, 41: 34, 35: 33, 12: 57, 26: 11, 5: 28, 44: 25, 65: 14}
+      Provided SKUs: {10: 109, 65: 13, 18: 15, 7: 115, 6: 69, 32: 32, 13: 49, 48: 23, 8: 38, 14: 37, 21: 17, 3: 54, 9: 56, 29: 21, 4: 22, 61: 43, 19: 17, 35: 64, 2: 43, 41: 34, 12: 57}
       📦 Tote-Level SKU Breakdown (6 totes):
+         Tote 125 @ Stack 691:
+           ✅ Needed: {65: 5}
+           🔇 Noise: {10: 24, 65: 8, 18: 15, 7: 37, 6: 27, 32: 32}
+         Tote 126 @ Stack 691:
+           ✅ Needed: {48: 5}
+           🔇 Noise: {13: 28, 10: 50, 6: 42, 48: 18}
          Tote 83 @ Stack 1587:
            ✅ Needed: {14: 4}
            🔇 Noise: {8: 38, 14: 33, 13: 21, 21: 17}
          Tote 86 @ Stack 1587:
            ✅ Needed: {29: 5}
            🔇 Noise: {7: 46, 3: 54, 9: 56, 29: 16, 4: 22}
-         Tote 126 @ Stack 691:
-           ✅ Needed: {48: 5}
-           🔇 Noise: {13: 28, 10: 50, 6: 42, 48: 18}
-         Tote 170 @ Stack 801:
+         Tote 13 @ Stack 344:
            ✅ Needed: {61: 2}
-           🔇 Noise: {61: 22, 11: 46, 6: 36, 1: 57, 4: 23}
+           🔇 Noise: {61: 41, 19: 17, 35: 31, 2: 43}
          Tote 95 @ Stack 1438:
            ✅ Needed: {41: 4}
            🔇 Noise: {41: 30, 10: 35, 35: 33, 12: 57, 7: 32}
-         Tote 67 @ Stack 2308:
-           ✅ Needed: {65: 5}
-           🔇 Noise: {26: 11, 5: 28, 44: 25, 65: 9}
   ✅ [SubTask 13] Validation PASSED (6 SKU types, 25 units)
       ℹ️ Excess SKUs (over-supply):
          - SKU 48: +18 extra
-         - SKU 65: +9 extra
-         - SKU 61: +22 extra
+         - SKU 65: +8 extra
+         - SKU 61: +41 extra
          - SKU 29: +16 extra
          - SKU 41: +30 extra
          - SKU 14: +33 extra
 
   📋 [SubTask 14] SKU Overview:
-      Required SKUs: {40: 3, 31: 5, 36: 3}
-      Provided SKUs: {1: 19, 39: 50, 65: 20, 31: 36, 17: 43, 12: 41, 36: 25, 6: 41, 52: 15, 40: 42, 57: 20, 68: 33}
+      Required SKUs: {40: 3, 36: 3, 31: 5}
+      Provided SKUs: {48: 43, 40: 41, 45: 25, 67: 41, 36: 35, 1: 31, 52: 21, 43: 19, 31: 29, 37: 25, 21: 43, 66: 19}
       📦 Tote-Level SKU Breakdown (3 totes):
-         Tote 5 @ Stack 843:
-           ✅ Needed: {31: 5}
-           🔇 Noise: {1: 19, 39: 50, 65: 20, 31: 31}
          Tote 1 @ Stack 1511:
-           ✅ Needed: {36: 3}
-           🔇 Noise: {17: 43, 12: 41, 36: 22, 6: 41}
-         Tote 9 @ Stack 2152:
            ✅ Needed: {40: 3}
-           🔇 Noise: {52: 15, 40: 39, 57: 20, 68: 33}
+           🔇 Noise: {48: 43, 40: 38, 45: 25, 67: 41}
+         Tote 4 @ Stack 1518:
+           ✅ Needed: {36: 3}
+           🔇 Noise: {36: 32, 1: 31, 52: 21, 43: 19}
+         Tote 3 @ Stack 2083:
+           ✅ Needed: {31: 5}
+           🔇 Noise: {31: 24, 37: 25, 21: 43, 66: 19}
   ✅ [SubTask 14] Validation PASSED (3 SKU types, 11 units)
       ℹ️ Excess SKUs (over-supply):
-         - SKU 40: +39 extra
-         - SKU 31: +31 extra
-         - SKU 36: +22 extra
+         - SKU 40: +38 extra
+         - SKU 36: +32 extra
+         - SKU 31: +24 extra
   >>> ✅ SP3 Validation Complete. All SubTasks have sufficient tote coverage.
 
