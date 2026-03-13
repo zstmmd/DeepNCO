@@ -1,0 +1,51 @@
+=== SP4 LKH Routing Final Results ===
+Total Objective (Makespan/Cost): 3580653.0s
+
+
+🚐 === Robot 0 Route ===
+  [  0.0s] 🟢 Start @ Depot (1.0, 0.0) | Load: 0/8
+  [ 17.0s] 📦 PICKUP  (SubTask: 2, Task: 4) @ Stack 778 (8.0, 10.0) | Load: +1 -> 0/8
+  [ 35.0s] 📦 PICKUP  (SubTask: 5, Task: 13) @ Stack 1932 (7.0, 25.0) | Load: +1 -> 1/8
+  [ 44.0s] 📦 PICKUP  (SubTask: 1, Task: 16) @ Stack 2242 (9.0, 29.0) | Load: +1 -> 2/8
+  [ 88.0s] 📦 PICKUP  (SubTask: 2, Task: 0) @ Stack 1894 (46.0, 24.0) | Load: +1 -> 3/8
+  [112.0s] 📦 PICKUP  (SubTask: 2, Task: 2) @ Stack 512 (50.0, 6.0) | Load: +1 -> 4/8
+  [129.0s] 📦 PICKUP  (SubTask: 2, Task: 3) @ Stack 754 (61.0, 9.0) | Load: +1 -> 5/8
+  [137.0s] 📦 PICKUP  (SubTask: 3, Task: 5) @ Stack 835 (65.0, 10.0) | Load: +1 -> 6/8
+  [145.0s] 📦 PICKUP  (SubTask: 5, Task: 14) @ Stack 450 (65.0, 5.0) | Load: +1 -> 7/8
+  [164.0s] 🚚 DELIVER (SubTask: 1, Task: 16, Rank: 0) @ Station 1 (76.0, 0.0) | Load: -1 -> 8/8
+  [164.0s] 🚚 DELIVER (SubTask: 2, Task: 0, Rank: 1) @ Station 1 (76.0, 0.0) | Load: -1 -> 7/8
+  [164.0s] 🚚 DELIVER (SubTask: 5, Task: 14, Rank: 2) @ Station 1 (76.0, 0.0) | Load: -1 -> 6/8
+  [164.0s] 🚚 DELIVER (SubTask: 2, Task: 4, Rank: 1) @ Station 1 (76.0, 0.0) | Load: -1 -> 5/8
+  [164.0s] 🚚 DELIVER (SubTask: 2, Task: 2, Rank: 1) @ Station 1 (76.0, 0.0) | Load: -1 -> 4/8
+  [164.0s] 🚚 DELIVER (SubTask: 2, Task: 3, Rank: 1) @ Station 1 (76.0, 0.0) | Load: -1 -> 3/8
+  [164.0s] 🚚 DELIVER (SubTask: 5, Task: 13, Rank: 2) @ Station 1 (76.0, 0.0) | Load: -1 -> 2/8
+  [180.0s] 📦 PICKUP  (SubTask: 5, Task: 12) @ Stack 918 (71.0, 11.0) | Load: +7 -> 1/8
+  [199.0s] 🚚 DELIVER (SubTask: 5, Task: 12, Rank: 2) @ Station 1 (76.0, 0.0) | Load: -7 -> 8/8
+  [229.0s] 📦 PICKUP  (SubTask: 2, Task: 1) @ Stack 2152 (73.0, 27.0) | Load: +1 -> 1/8
+  [243.0s] 📦 PICKUP  (SubTask: 3, Task: 6) @ Stack 1837 (66.0, 23.0) | Load: +1 -> 2/8
+  [256.0s] 📦 PICKUP  (SubTask: 1, Task: 15) @ Stack 1302 (70.0, 16.0) | Load: +3 -> 3/8
+  [281.0s] 🚚 DELIVER (SubTask: 1, Task: 15, Rank: 0) @ Station 1 (76.0, 0.0) | Load: -3 -> 6/8
+  [281.0s] 🚚 DELIVER (SubTask: 2, Task: 1, Rank: 1) @ Station 1 (76.0, 0.0) | Load: -1 -> 3/8
+  [357.0s] 🚚 DELIVER (SubTask: 3, Task: 6, Rank: 1) @ Station 0 (0.0, 0.0) | Load: -1 -> 2/8
+  [357.0s] 🚚 DELIVER (SubTask: 3, Task: 5, Rank: 1) @ Station 0 (0.0, 0.0) | Load: -1 -> 1/8
+  [358.0s] 🔴 End @ Depot (1.0, 0.0)   | Load: 0/8
+  -> Total tasks visited: 24, Return Time: 358.0s
+
+
+🚐 === Robot 1 Route ===
+  [  0.0s] 🟢 Start @ Depot (1.0, 0.0) | Load: 0/8
+  [ 77.0s] 📦 PICKUP  (SubTask: 0, Task: 11) @ Stack 1294 (62.0, 16.0) | Load: +1 -> 0/8
+  [ 80.0s] 📦 PICKUP  (SubTask: 6, Task: 7) @ Stack 1294 (62.0, 16.0) | Load: +1 -> 1/8
+  [ 88.0s] 📦 PICKUP  (SubTask: 6, Task: 8) @ Stack 1603 (63.0, 20.0) | Load: +1 -> 2/8
+  [147.0s] 📦 PICKUP  (SubTask: 6, Task: 9) @ Stack 1858 (10.0, 24.0) | Load: +1 -> 3/8
+  [154.0s] 📦 PICKUP  (SubTask: 4, Task: 17) @ Stack 1932 (7.0, 25.0) | Load: +4 -> 4/8
+  [189.0s] 🚚 DELIVER (SubTask: 6, Task: 8, Rank: 3) @ Station 0 (0.0, 0.0) | Load: -1 -> 8/8
+  [189.0s] 🚚 DELIVER (SubTask: 4, Task: 17, Rank: 2) @ Station 0 (0.0, 0.0) | Load: -4 -> 7/8
+  [189.0s] 🚚 DELIVER (SubTask: 6, Task: 9, Rank: 3) @ Station 0 (0.0, 0.0) | Load: -1 -> 3/8
+  [189.0s] 🚚 DELIVER (SubTask: 0, Task: 11, Rank: 0) @ Station 0 (0.0, 0.0) | Load: -1 -> 2/8
+  [240.0s] 📦 PICKUP  (SubTask: 0, Task: 10) @ Stack 1343 (34.0, 17.0) | Load: +7 -> 1/8
+  [294.0s] 🚚 DELIVER (SubTask: 0, Task: 10, Rank: 0) @ Station 0 (0.0, 0.0) | Load: -7 -> 8/8
+  [294.0s] 🚚 DELIVER (SubTask: 6, Task: 7, Rank: 3) @ Station 0 (0.0, 0.0) | Load: -1 -> 1/8
+  [295.0s] 🔴 End @ Depot (1.0, 0.0)   | Load: 0/8
+  -> Total tasks visited: 12, Return Time: 295.0s
+

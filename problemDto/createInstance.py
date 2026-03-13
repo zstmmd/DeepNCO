@@ -40,7 +40,7 @@ class CreateOFSProblem:
         configs = {
             "SMALL": {
                 "map_size": (4, 4),  # 较小的地图
-                "resources": (3, 2, 200),  # 3个机器人, 2个工作站, 200个料箱
+                "resources": (2, 2, 200),  # 3个机器人, 2个工作站, 200个料箱
                 "data": (2, 60),  # 2个BOM, 60种SKU
                 "bom_complexity": (20, 5)  # 每个bom最多20种SKU，每种最多5个
             },

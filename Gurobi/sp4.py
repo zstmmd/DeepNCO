@@ -5,7 +5,8 @@ from typing import List, Dict, Tuple, Set
 from collections import defaultdict
 import os
 import sys
-
+from ortools.constraint_solver import routing_enums_pb2
+from ortools.constraint_solver import pywrapcp
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
@@ -52,7 +53,6 @@ class SP4_Robot_Router:
                     # 🔧 修复：使用二维 T 变量
                     arrival_time = T[i, r].X
                     trip_idx = int(trip[i, r].X) if (i, r) in trip else 0
-
                     pt, subtask, task_obj, _, _ = nodes_map[i]
                     visited_nodes.append((arrival_time, i, task_obj, trip_idx))
 
@@ -82,216 +82,272 @@ class SP4_Robot_Router:
                         print(f"    [{seq}] Stack {task_obj.target_stack_id} @ {time:.1f}s "
                               f"(SubTask {task_obj.sub_task_id}, Load={task_obj.total_load_count})")
 
-    def _solve_heuristic(self, sub_tasks: List[SubTask]) -> Tuple[Dict[int, float], Dict[int, int]]:
-        """
-        修正后的启发式：
-        """
-        print(f"  >>> [SP4] Using Heuristic Solver (Direct Routing A->Stack->B)...")
+    def _solve_LKH(self, sub_tasks: List) -> Tuple[Dict[int, float], Dict[int, int]]:
+        print(f"  >>> [SP4] Starting LKH-based Routing (OR-Tools)...")
 
-        valid_tasks = [t for t in sub_tasks if t.execution_tasks]
+        # 1. 提取有效任务
+        valid_tasks = [st for st in sub_tasks if st.execution_tasks]
         if not valid_tasks:
             return {}, {}
+        num_vehicles = len(self.problem.robot_list)
+        depot_pt = self.problem.robot_list[0].start_point
+        # 2. 构建节点映射 (Node Mapping)
+        # Index 0: Depot (起点和终点)
+        # Index 1 ~ K: Pickups (取货点 P)
+        # Index K+1 ~ 2K: Deliveries (卸货点 D)
 
-        robot_arrival_times = {}
-        subtask_robot_assignment = {}
+        nodes_info = []  # 存储 (point_obj, task_obj, n_type)
+        nodes_info.append((depot_pt, None, 'depot'))  # Index 0
 
-        # ✅ 关键修改：统一起点（与 MIP 一致）
-        unified_start_point = self.problem.robot_list[0].start_point
+        pickups = []
+        deliveries = []
+        pair_map = []  # [(pickup_index, delivery_index), ...]
+        subtask_groups = defaultdict(list)  # subtask_id -> [pickup_indices]
 
-        # 初始化状态
-        robot_times = {r.id: 0.0 for r in self.problem.robot_list}
-        # ✅ 所有机器人从统一起点出发
-        robot_positions = {r.id: unified_start_point for r in self.problem.robot_list}
-        robot_routes = {r.id: [] for r in self.problem.robot_list}
-        robot_trip_counter = {r.id: 0 for r in self.problem.robot_list}
-
-        # 贪婪分配
+        # 解析任务生成 P 和 D
         for st in valid_tasks:
-            total_demand = sum(task.total_load_count for task in st.execution_tasks)
-            target_station_pt = self.problem.station_list[st.assigned_station_id].point
+            for task in st.execution_tasks:
+                stack_pt = self.problem.point_to_stack[task.target_stack_id].store_point
+                station_pt = self.problem.station_list[st.assigned_station_id].point
 
-            # --- 1. 选车阶段 (Cost Estimation) ---
-            best_robot = None
-            best_cost = float('inf')
+                # 暂存 P 和 D 信息
+                pickups.append((stack_pt, task, 'pickup', st.id))
+                deliveries.append((station_pt, task, 'delivery', st.id))
 
-            for robot in self.problem.robot_list:
-                r_id = robot.id
-                current_pos = robot_positions[r_id]
-                first_stack = self.problem.point_to_stack[st.execution_tasks[0].target_stack_id]
+        # 拼装 nodes_info: [Depot] + [All Pickups] + [All Deliveries]
+        num_tasks = len(pickups)
+        for p in pickups:
+            nodes_info.append((p[0], p[1], p[2]))
+        for d in deliveries:
+            nodes_info.append((d[0], d[1], d[2]))
 
-                # 关键修正：无论是不是第一趟，都直接计算 CurrentPos -> FirstStack
-                # 如果是 Trip 0，CurrentPos 是起点
-                # 如果是 Trip > 0，CurrentPos 是上一单的 Station
-                dist_to_first = abs(current_pos.x - first_stack.store_point.x) + \
-                                abs(current_pos.y - first_stack.store_point.y)
-                start_overhead = dist_to_first / self.robot_speed
+        # 构建配对关系
+        for i in range(num_tasks):
+            p_idx = i + 1
+            d_idx = num_tasks + i + 1
+            pair_map.append((p_idx, d_idx))
 
-                # 估算总时间
-                trips_needed = (total_demand + self.robot_capacity - 1) // self.robot_capacity
-                station_to_stack_dist = abs(target_station_pt.x - first_stack.store_point.x) + \
-                                        abs(target_station_pt.y - first_stack.store_point.y)
+            st_id = pickups[i][3]
+            subtask_groups[st_id].append(p_idx)
 
-                # 第一趟：Current -> Stack -> Station
-                # 后续趟：Station -> Stack -> Station
-                # 近似估算后续趟次
-                subsequent_trips_cost = 0
-                if trips_needed > 1:
-                    avg_cycle = (2 * station_to_stack_dist / self.robot_speed)
-                    subsequent_trips_cost = (trips_needed - 1) * avg_cycle
+        # 3. 构建距离矩阵和需求数组
+        num_nodes = len(nodes_info)
+        distance_matrix = [[0] * num_nodes for _ in range(num_nodes)]
+        demands = [0] * num_nodes
+        service_times = [0] * num_nodes
 
-                service_cost = sum(t.robot_service_time for t in st.execution_tasks)
+        for i in range(num_nodes):
+            pt_i, task_i, type_i = nodes_info[i]
 
-                estimated_completion_time = robot_times[r_id] + start_overhead + subsequent_trips_cost + service_cost
+            # 提取需求和耗时
+            if type_i == 'pickup':
+                demands[i] = task_i.total_load_count
+                service_times[i] = int(task_i.robot_service_time)
+            elif type_i == 'delivery':
+                demands[i] = -task_i.total_load_count
+                service_times[i] = 0  # 卸货耗时
 
-                if estimated_completion_time < best_cost:
-                    best_cost = estimated_completion_time
-                    best_robot = r_id
+            for j in range(num_nodes):
+                pt_j, _, _ = nodes_info[j]
+                # 计算曼哈顿距离耗时 (放大10倍转为整数，OR-Tools 需要整数)
+                dist_time = (abs(pt_i.x - pt_j.x) + abs(pt_i.y - pt_j.y)) / self.robot_speed
+                distance_matrix[i][j] = int(dist_time * 10)
 
-            # --- 2. 执行阶段 ---
-            r_id = best_robot
-            st.assigned_robot_id = r_id
-            subtask_robot_assignment[st.id] = r_id
+        # 4. 初始化 OR-Tools Routing Model
+        manager = pywrapcp.RoutingIndexManager(num_nodes, num_vehicles, 0)
+        routing = pywrapcp.RoutingModel(manager)
+        # =====================================================================
+        # 准备工作：在前面循环构建 deliveries 列表时，记录 task_id -> delivery_index
+        # =====================================================================
+        task_to_delivery_index = {}
+        # 假设 deliveries 列表存的是卸货点 D 节点
+        for offset, (pt, task_obj, n_type, st_id) in enumerate(deliveries):
+            # 根据 OR-Tools 的节点编号规则：0是起点，1~K是P，K+1~2K是D
+            d_node = num_tasks + offset + 1
+            task_to_delivery_index[task_obj.task_id] = manager.NodeToIndex(d_node)
 
-            current_time = robot_times[r_id]
-            current_pos = robot_positions[r_id]
-            trip_sequence = robot_trip_counter[r_id]
 
-            remaining_tasks = list(st.execution_tasks)
+        # 5.1 距离/时间 回调
+        def time_callback(from_index, to_index):
+            from_node = manager.IndexToNode(from_index)
+            to_node = manager.IndexToNode(to_index)
+            # 时间 = 行驶时间 + 节点服务时间
+            return distance_matrix[from_node][to_node] + (service_times[from_node] * 10)
 
-            # 处理多趟搬运
-            while remaining_tasks:
-                current_trip_tasks = []
-                trip_load = 0
+        transit_callback_index = routing.RegisterTransitCallback(time_callback)
+        routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
 
-                # 如果不是该子任务的第一趟（即同一子任务内的第二、三趟），
-                # 起点是该子任务的目标 Station，而不是上一单的 Station
-                if len(current_trip_tasks) == 0 and len(remaining_tasks) < len(st.execution_tasks):
-                    # 检查是否是刚送完上一趟回来（即 st 内的多趟搬运）
-                    # 判断逻辑：如果 trip_sequence > robot_trip_counter[r_id] 说明已经在循环里增加过趟次了
-                    if trip_sequence > robot_trip_counter[r_id]:
-                        current_pos = target_station_pt
+        # 5.2 容量 回调
+        def demand_callback(from_index):
+            from_node = manager.IndexToNode(from_index)
+            return demands[from_node]
 
-                # 贪婪装载
-                while remaining_tasks:
-                    best_task = None
-                    best_dist = float('inf')
-                    # 找出每个站点当前优先级最高的任务
-                    station_best_candidates = {}
-                    for task in remaining_tasks:
-                        sid = task.target_station_id
-                        # 兼容处理：如果没有 priority 属性，使用 rank 或默认值
-                        prio = getattr(task, 'priority', getattr(task, 'station_sequence_rank', 9999))
+        demand_callback_index = routing.RegisterUnaryTransitCallback(demand_callback)
 
-                        if sid not in station_best_candidates:
-                            station_best_candidates[sid] = task
-                        else:
-                            # 选优先级数值更小（更高优）的
-                            curr_best = station_best_candidates[sid]
-                            curr_prio = getattr(curr_best, 'priority',
-                                                getattr(curr_best, 'station_sequence_rank', 9999))
-                            if prio < curr_prio:
-                                station_best_candidates[sid] = task
-                    candidate_pool = list(station_best_candidates.values())
+        # 6. 添加维度约束 (Dimensions)
+        # 6.1 容量约束
+        routing.AddDimensionWithVehicleCapacity(
+            demand_callback_index,
+            0,  # null capacity slack
+            [self.robot_capacity] *num_vehicles,  # 每个机器人的最大容量
+            True,  # 起点容量为0
+            'Capacity'
+        )
 
-                    for task in candidate_pool:
-                        if trip_load + task.total_load_count > self.robot_capacity:
-                            continue
+        # 6.2 时间维度 (用于记录到达时间和满足先后顺序)
+        time = "Time"
+        routing.AddDimension(
+            transit_callback_index,
+            30000,  # 允许的最大等待时间 slack
+            300000,  # 每天最大时间 (极大值)
+            True,  # 不强制起始时间为 0，但通常是 0
+            time
+        )
+        time_dimension = routing.GetDimensionOrDie(time)
+        time_dimension.SetGlobalSpanCostCoefficient(100)
+        # 7. 施加 PDP 特殊约束
+        solver = routing.solver()
 
-                        curr_subtask_id = task.sub_task_id
-                        curr_station_id = task.target_station_id
+        # 7.1 取送货成对，且 P 在 D 前面
+        for p_idx, d_idx in pair_map:
+            p_index = manager.NodeToIndex(p_idx)
+            d_index = manager.NodeToIndex(d_idx)
 
-                        # Check if there are existing tasks in the current trip
-                        if current_trip_tasks:
-                            last_task = current_trip_tasks[-1]
-                            last_subtask_id = last_task.sub_task_id
-                            # Assume SubTask has this attribute or get from task
-                            last_station_id = getattr(last_task, 'target_station_id', None)
+            # 必须由同一台车完成
+            routing.AddPickupAndDelivery(p_idx, d_idx)
+            solver.Add(routing.VehicleVar(p_index) == routing.VehicleVar(d_index))
+            # P 必须在 D 之前
+            solver.Add(time_dimension.CumulVar(p_index) <= time_dimension.CumulVar(d_index))
 
-                            # Different SubTask AND Different Station -> Forbidden direct connection in same trip
-                            if last_subtask_id != curr_subtask_id and last_station_id != curr_station_id:
-                                continue
+        # 4.2 同 SubTask 同车约束
+        for st_id, p_indices in subtask_groups.items():
+            if len(p_indices) > 1:
+                base_index = manager.NodeToIndex(p_indices[0])
+                for other_p in p_indices[1:]:
+                    other_index = manager.NodeToIndex(other_p)
 
-                        # Calculate distance
-                        stack = self.problem.point_to_stack[task.target_stack_id]
-                        dist = abs(current_pos.x - stack.store_point.x) + \
-                               abs(current_pos.y - stack.store_point.y)
+                    # 🌟 关键新增：状态绑定！要么一起被运，要么一起被丢弃！
+                    # 这样引擎就不会在试探时出现一个被丢弃、一个在车上的自相矛盾状态
+                    solver.Add(routing.ActiveVar(base_index) == routing.ActiveVar(other_index))
 
-                        if dist < best_dist:
-                            best_dist = dist
-                            best_task = task
+                    # 车辆绑定：必须在同一辆车上
+                    # （如果它们一起被丢弃，车号都是 -1，-1 == -1 依然成立，完美防崩溃！）
+                    solver.Add(routing.VehicleVar(base_index) == routing.VehicleVar(other_index))
 
-                    if best_task is None: break
+        # # 8. 配置启发式策略 (启动 Lin-Kernighan 引擎)
+        search_parameters = pywrapcp.DefaultRoutingSearchParameters()
+        # 初始解构造：插入启发式
+        search_parameters.first_solution_strategy = (
+            routing_enums_pb2.FirstSolutionStrategy.PARALLEL_CHEAPEST_INSERTION)
+        search_parameters.local_search_metaheuristic = (routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH)
+        search_parameters.time_limit.seconds = 100
+        routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
+        time_dimension.SetGlobalSpanCostCoefficient(10000)
+        # 9. 求解
+        solution = routing.SolveWithParameters(search_parameters)
 
-                    # 移动到 Stack
-                    stack = self.problem.point_to_stack[best_task.target_stack_id]
-                    travel_time = best_dist / self.robot_speed
-                    current_time += travel_time
 
-                    # 记录时间
-                    best_task.robot_id = r_id
-                    best_task.arrival_time_at_stack = current_time
-                    best_task.robot_visit_sequence = trip_sequence
-                    best_task.trip_id = trip_sequence + 1
-                    robot_arrival_times[stack.store_point.idx] = current_time
+        # 诊断输出
+        print(f"  >>> [Diag] num_nodes={num_nodes}, num_vehicles={num_vehicles}")
+        print(f"  >>> [Diag] num_tasks={num_tasks}, pairs={len(pair_map)}")
+        print(f"  >>> [Diag] total demand={sum(d for d in demands if d > 0)}, capacity={self.robot_capacity}")
+        print(f"  >>> [Diag] subtask_groups={dict(subtask_groups)}")
+        print(f"  >>> [Diag] solution={solution}")
+        if solution is None:
+            print(f"  >>> [Diag] routing status={routing.status()}")
+            # 0=NOT_SOLVED, 1=SUCCESS, 2=PARTIAL_SUCCESS, 3=FAIL, 4=FAIL_TIMEOUT, 5=INVALID
+        result_times = {}
+        result_assign = {}
 
-                    current_time += best_task.robot_service_time
-                    trip_load += best_task.total_load_count
-                    current_pos = stack.store_point
-                    current_trip_tasks.append(best_task)
-                    remaining_tasks.remove(best_task)
+        if solution:
+            obj_val = solution.ObjectiveValue() / 10.0
+            print(f"\n" + "=" * 50)
+            print(f"✅ LKH Engine Solved! Total Objective: {obj_val:.1f}s")
+            print("=" * 50)
 
-                # 本趟结束，去往当前单的 Target Station
-                return_dist = abs(current_pos.x - target_station_pt.x) + \
-                              abs(current_pos.y - target_station_pt.y)
-                current_time += return_dist / self.robot_speed
-                current_pos = target_station_pt  # 更新位置为 Station B
+            # --- 新增：准备日志文件 ---
+            log_dir = os.path.join(ROOT_DIR, 'log')
+            if not os.path.exists(log_dir):
+                os.makedirs(log_dir)
+            result_log_path = os.path.join(log_dir, 'SP4_result.txt')
 
-                robot_routes[r_id].append({
-                    'trip': trip_sequence + 1,
-                    'start_time': current_trip_tasks[0].arrival_time_at_stack if current_trip_tasks else current_time,
-                    'end_time': current_time,
-                    'tasks': current_trip_tasks,
-                    'depot_used': target_station_pt,  # ✅ 新增
-                    'depot_layer': trip_sequence,
-                    'load': trip_load  # <--- [FIXED] 添加 load 字段，供后续打印使用
-                })
-                trip_sequence += 1
+            with open(result_log_path, 'w', encoding='utf-8') as f_log:
+                f_log.write(f"=== SP4 LKH Routing Final Results ===\n")
+                f_log.write(f"Total Objective (Makespan/Cost): {obj_val:.1f}s\n\n")
 
-            # 任务结束状态更新
-            robot_times[r_id] = current_time
-            robot_positions[r_id] = current_pos  # 停留在 Station B
-            robot_trip_counter[r_id] = trip_sequence
+                # 获取容量维度，用于打印实时载重
+                capacity_dimension = routing.GetDimensionOrDie('Capacity')
 
-        # --- 3. 结果解析与打印 ---
-        print(f"\n  >>> [SP4] Heuristic Solved.")
-        print(f"  - Total arrival times: {len(robot_arrival_times)}")
-        print(f"  - SubTask assignments: {len(subtask_robot_assignment)}")
+                for vehicle_id in range(num_vehicles):
+                    robot_id = self.problem.robot_list[vehicle_id].id
+                    header = f"\n🚐 === Robot {robot_id} Route ==="
+                    print(header)
+                    f_log.write(header + "\n")
 
-        for r_id in sorted(robot_routes.keys()):
-            routes = robot_routes[r_id]
-            if not routes:
-                continue
+                    index = routing.Start(vehicle_id)
+                    step_count = 0
 
-            print(f"\n  === Robot {r_id} Routes (Heuristic) ===")
-            for route in routes:
-                print(f"  Trip {route['trip']}: {len(route['tasks'])} tasks, "
-                      f"load={route['load']}/{self.robot_capacity}, "
-                      f"time [{route['start_time']:.1f}s, {route['end_time']:.1f}s]，depot use {route['depot_used']},depot layer {route['depot_layer']}  ")
+                    while not routing.IsEnd(index):
+                        node_index = manager.IndexToNode(index)
+                        pt, task_obj, n_type = nodes_info[node_index]
 
-                for seq, task in enumerate(route['tasks']):
-                    print(f"    [{seq}] Stack {task.target_stack_id} @ {task.arrival_time_at_stack:.1f}s "
-                          f"(SubTask {task.sub_task_id}, Load={task.total_load_count})")
+                        # 从解中提取时间和载重 (除以 10 还原真实时间)
+                        arr_time = solution.Min(time_dimension.CumulVar(index)) / 10.0
+                        current_load = solution.Min(capacity_dimension.CumulVar(index))
 
-        total_trips = sum(len(routes) for routes in robot_routes.values())
-        max_time = max(robot_times.values()) if robot_times else 0
+                        # 提取坐标
+                        coord = f"({pt.x:.1f}, {pt.y:.1f})"
 
-        print(f"\n  === Heuristic Summary ===")
-        print(f"  - Total trips: {total_trips}")
-        print(f"  - Makespan: {max_time:.2f}s")
-        print(
-            f"  - Active robots: {sum(1 for routes in robot_routes.values() if routes)}/{len(self.problem.robot_list)}")
+                        if n_type == 'depot':
+                            line = f"  [{arr_time:>5.1f}s] 🟢 Start @ Depot {coord} | Load: {current_load}/{self.robot_capacity}"
 
-        return robot_arrival_times, subtask_robot_assignment, max_time
+                        elif n_type == 'pickup':
+                            demand_val = task_obj.total_load_count
+                            line = (
+                                f"  [{arr_time:>5.1f}s] 📦 PICKUP  (SubTask: {task_obj.sub_task_id}, Task: {task_obj.task_id}) "
+                                f"@ Stack {task_obj.target_stack_id} {coord} | Load: +{demand_val} -> {current_load}/{self.robot_capacity}")
+
+                            # 回填结果
+                            result_times[pt.idx] = arr_time
+                            task_obj.arrival_time_at_stack = arr_time
+                            task_obj.robot_id = robot_id
+                            result_assign[task_obj.sub_task_id] = robot_id
+
+                        elif n_type == 'delivery':
+                            demand_val = task_obj.total_load_count
+                            rank_val = getattr(task_obj, 'station_sequence_rank', 'N/A')
+                            line = (
+                                f"  [{arr_time:>5.1f}s] 🚚 DELIVER (SubTask: {task_obj.sub_task_id}, Task: {task_obj.task_id}, Rank: {rank_val}) "
+                                f"@ Station {task_obj.target_station_id} {coord} | Load: -{demand_val} -> {current_load}/{self.robot_capacity}")
+
+                        print(line)
+                        f_log.write(line + "\n")
+
+                        # 步进到下一个节点
+                        index = solution.Value(routing.NextVar(index))
+                        step_count += 1
+
+                    # 打印终点信息 (返回 Depot)
+                    node_index = manager.IndexToNode(index)
+                    pt, _, _ = nodes_info[node_index]
+                    coord = f"({pt.x:.1f}, {pt.y:.1f})"
+                    end_time = solution.Min(time_dimension.CumulVar(index)) / 10.0
+                    final_load = solution.Min(capacity_dimension.CumulVar(index))
+
+                    end_line = f"  [{end_time:>5.1f}s] 🔴 End @ Depot {coord}   | Load: {final_load}/{self.robot_capacity}"
+                    summary_line = f"  -> Total tasks visited: {step_count - 1}, Return Time: {end_time:.1f}s\n"
+
+                    print(end_line)
+                    print(summary_line)
+                    f_log.write(end_line + "\n")
+                    f_log.write(summary_line + "\n")
+
+            print(f"  >>> [Log] Final results written to {result_log_path}")
+            return result_times, result_assign
+        else:
+            print("  >>> [Error] LKH Engine Failed to find a solution (Infeasible).")
+            # 可能是容量限制太死，或者有些点根本无法到达
+            return {}, {}
 
     def solve(self,
               sub_tasks: List[SubTask],
@@ -310,10 +366,10 @@ class SP4_Robot_Router:
         if use_mip:
             return self._solve_mip_pdp_v2(sub_tasks)
         else:
-            return self._solve_heuristic(sub_tasks)
+            return self._solve_LKH(sub_tasks)
 
     def _solve_mip_pdp_v2(self, sub_tasks: List[SubTask]) -> Tuple[Dict[int, float], Dict[int, int]]:
-        """
+        r"""
         PDP-VRP 建模
 
         节点定义:
@@ -359,7 +415,7 @@ class SP4_Robot_Router:
         # ============================================================
         # 2. 节点构建
         # ============================================================
-        nodes_map = {}  # {node_id: (point, subtask, task_obj, task.skupick,type, extra)}
+        nodes_map = {}  # {node_id: (point, subtask, task_obj, task.total,type, extra)}
         node_id = 0
 
         # (A) 起点
@@ -390,7 +446,7 @@ class SP4_Robot_Router:
 
                 # P 节点
                 p_id = node_id
-                nodes_map[node_id] = (stack_pt, st, task, task.sku_pick_count, 'pickup', station_id)
+                nodes_map[node_id] = (stack_pt, st, task, task.total_load_count, 'pickup', station_id)
                 p_nodes.append(p_id)
                 subtask_p_nodes[st.id].append(p_id)
                 task_station_map[p_id] = station_id
@@ -399,7 +455,7 @@ class SP4_Robot_Router:
 
                 # D 节点
                 d_id = node_id
-                nodes_map[node_id] = (station_pt, st, task, task.sku_pick_count, 'delivery', station_id)
+                nodes_map[node_id] = (station_pt, st, task, task.total_load_count, 'delivery', station_id)
                 d_nodes.append(d_id)
                 task_station_map[d_id] = station_id
                 node_to_task_id[d_id] = task.task_id
@@ -410,7 +466,7 @@ class SP4_Robot_Router:
         N = list(range(node_id))
         R = list(range(len(self.problem.robot_list)))
         num_robots = len(R)
-
+        self.logger.log_node_definitions(nodes_map)
         # ============================================================
         # 3. 距离矩阵 & 弧集合 (剪枝)
         # ============================================================
@@ -540,203 +596,192 @@ class SP4_Robot_Router:
 
         M_time = 10000
         C = self.robot_capacity
+        with gp.Model("SP4_PDP_v2") as model:
+            model.Params.OutputFlag = 1
+            model.Params.MIPGap = 0.02
+            model.Params.TimeLimit = 180
+            model.Params.LazyConstraints = 1
 
-        # ============================================================
-        # 5. 建模
-        # ============================================================
-        m = gp.Model("SP4_PDP_v2")
-        m.Params.OutputFlag = 1
-        m.Params.MIPGap = 0.02
-        m.Params.TimeLimit = 180
-        m.Params.LazyConstraints = 1
-
-        # --- 决策变量 ---
-        # x[i,j,r]: 机器人r走边(i->j)
-        x = m.addVars(
-            [(i, j, r) for (i, j) in arcs for r in R],
-            vtype=GRB.BINARY, name="x"
-        )
-        # y[i,r]: 机器人r访问节点i
-        y = m.addVars(N, R, vtype=GRB.BINARY, name="y")
-        # T[i,r]: 机器人r到达节点i的时间
-        T = m.addVars(N, R, vtype=GRB.CONTINUOUS, lb=0, name="T")
-        # Q[i,r]: 机器人r离开节点i时的负载
-        Q = m.addVars(N, R, vtype=GRB.CONTINUOUS, lb=0, ub=C, name="Q")
-        # Z: Makespan
-        Z = m.addVar(vtype=GRB.CONTINUOUS, lb=0, name="Z")
-
-        # ============================================================
-        # 6. 约束
-        # ============================================================
-
-        # --- 约束1: 起点/终点 ---
-        for r in R:
-            # 每个机器人必须从起点出发
-            m.addConstr(y[start_node, r] == 1, name=f"StartVisit_{r}")
-            m.addConstr(T[start_node, r] == 0, name=f"StartTime_{r}")
-            m.addConstr(Q[start_node, r] == 0, name=f"StartLoad_{r}")
-            # 起点出度 = 1
-            m.addConstr(
-                gp.quicksum(x[start_node, j, r] for j in N if (start_node, j) in tau) == 1,
-                name=f"StartOut_{r}"
+            # --- 决策变量 ---
+            # x[i,j,r]: 机器人r走边(i->j)
+            x = model.addVars(
+                [(i, j, r) for (i, j) in arcs for r in R],
+                vtype=GRB.BINARY, name="x"
             )
-            # 终点入度 = 1
-            m.addConstr(
-                gp.quicksum(x[i, end_node, r] for i in N if (i, end_node) in tau) == 1,
-                name=f"EndIn_{r}"
-            )
-            # 终点出度 = 0（终点没有出边，由剪枝保证）
+            # y[i,r]: 机器人r访问节点i
+            y = model.addVars(N, R, vtype=GRB.BINARY, name="y")
+            # T[i,r]: 机器人r到达节点i的时间
+            T = model.addVars(N, R, vtype=GRB.CONTINUOUS, lb=0, name="T")
+            # Q[i,r]: 机器人r离开节点i时的负载
+            Q = model.addVars(N, R, vtype=GRB.CONTINUOUS, lb=0, ub=C, name="Q")
+            # Z: Makespan
+            Z = model.addVar(vtype=GRB.CONTINUOUS, lb=0, name="Z")
 
-        # --- 约束2: 覆盖约束（每个P节点被恰好一个机器人访问）---
-        for p in p_nodes:
-            m.addConstr(
-                gp.quicksum(y[p, r] for r in R) == 1,
-                name=f"CoverP_{p}"
-            )
+            # ============================================================
+            # 6. 约束
+            # ============================================================
 
-        # --- 约束3: P-D配对约束（同一机器人服务）---
-        for tasks, (p_id, d_id) in pair_map.items():
+            # --- 约束1: 起点/终点 ---
             for r in R:
-                # P和D必须由同一机器人服务
-                m.addConstr(y[p_id, r] == y[d_id, r], name=f"PairSameRobot_{p_id}_{d_id}_{r}")
-
-        # --- 约束4: 流守恒（中间节点入度=出度）---
-        for r in R:
-            for i in p_nodes + d_nodes:
-                in_flow = gp.quicksum(x[j, i, r] for j in N if (j, i) in tau)
-                out_flow = gp.quicksum(x[i, j, r] for j in N if (i, j) in tau)
-                m.addConstr(in_flow == y[i, r], name=f"FlowIn_{i}_{r}")
-                m.addConstr(out_flow == y[i, r], name=f"FlowOut_{i}_{r}")
-
-        # --- 约束5: 优先级约束（P必须在D之前）---
-        # 使用时间变量直接保证: T[P] + service[P] + travel(P,D) <= T[D]
-        for tasks, (p_id, d_id) in pair_map.items():
-            for r in R:
-                # 若机器人r服务该对，则T[D] >= T[P] + service[P]
-                # 使用 Big-M 松弛
-                m.addConstr(
-                    T[d_id, r] >= T[p_id, r] + service_time[p_id] - M_time * (1 - y[p_id, r]),
-                    name=f"PrecedenceTime_{p_id}_{d_id}_{r}"
+                # 每个机器人必须从起点出发
+                model.addConstr(y[start_node, r] == 1, name=f"StartVisit_{r}")
+                model.addConstr(T[start_node, r] == 0, name=f"StartTime_{r}")
+                model.addConstr(Q[start_node, r] == 0, name=f"StartLoad_{r}")
+                # 起点出度 = 1
+                model.addConstr(
+                    gp.quicksum(x[start_node, j, r] for j in N if (start_node, j) in tau) == 1,
+                    name=f"StartOut_{r}"
                 )
-
-        # --- 约束6: 同SubTask同机器人 ---
-        for st_id, p_node_list in subtask_p_nodes.items():
-            if len(p_node_list) > 1:
-                base = p_node_list[0]
-                for other in p_node_list[1:]:
-                    for r in R:
-                        m.addConstr(
-                            y[base, r] == y[other, r],
-                            name=f"SameRobotST_{st_id}_{base}_{other}_{r}"
-                        )
-
-        # --- 约束7: 容量约束（MTZ风格）---
-        for r in R:
-            # 起点负载=0
-            m.addConstr(Q[start_node, r] == 0)
-
-            for i in N:
-                m.addConstr(T[i, r] <= M_time * y[i, r], name=f"GhostTimeBind_{i}_{r}")
-            for i, j in arcs:
-                if (i, j, r) not in x:
-                    continue
-                d_i = demand[i]  # P节点>0, D节点<0
-
-                # Q[j] = Q[i] + demand[j] (线性化)
-                # Big-M: Q[j] >= Q[i] + demand[j] - C*(1-x[i,j,r])
-                #        Q[j] <= Q[i] + demand[j] + C*(1-x[i,j,r])
-                m.addConstr(
-                    Q[j, r] >= Q[i, r] + demand[j] - C * (1 - x[i, j, r]),
-                    name=f"LoadLB_{i}_{j}_{r}"
+                # 终点入度 = 1
+                model.addConstr(
+                    gp.quicksum(x[i, end_node, r] for i in N if (i, end_node) in tau) == 1,
+                    name=f"EndIn_{r}"
                 )
-                m.addConstr(
-                    Q[j, r] <= Q[i, r] + demand[j] + C * (1 - x[i, j, r]),
-                    name=f"LoadUB_{i}_{j}_{r}"
-                )
+                # 终点出度 = 0（终点没有出边，由剪枝保证）
 
-            # 容量上限（P节点负载不能超过C）
+            # --- 约束2: 覆盖约束（每个P节点被恰好一个机器人访问）---
             for p in p_nodes:
-                m.addConstr(Q[p, r] <= C, name=f"CapP_{p}_{r}")
-
-        # --- 约束8: 时间连续性（Big-M）---
-        for r in R:
-            m.addConstr(T[start_node, r] == 0)
-            for i, j in arcs:
-                if (i, j, r) not in x:
-                    continue
-                m.addConstr(
-                    T[j, r] >= T[i, r] + service_time[i] + tau[i, j] - M_time * (1 - x[i, j, r]),
-                    name=f"TimeCont_{i}_{j}_{r}"
+                model.addConstr(
+                    gp.quicksum(y[p, r] for r in R) == 1,
+                    name=f"CoverP_{p}"
                 )
-            # Makespan
-            m.addConstr(Z >= T[end_node, r], name=f"Makespan_{r}")
 
-
-        # --- 约束10: 对称破缺 ---
-        for r in range(1, num_robots):
-            m.addConstr(
-                gp.quicksum(y[p, r] for p in p_nodes) <=
-                gp.quicksum(y[p, r - 1] for p in p_nodes),
-                name=f"SymBreak_{r}"
-            )
-
-        # ============================================================
-        # 7. 目标函数
-        # ============================================================
-        total_travel = gp.quicksum(tau[i, j] * x[i, j, r] for (i, j) in arcs for r in R)
-        m.setObjective(Z + 0.01 * total_travel, GRB.MINIMIZE)
-
-
-        # ============================================================
-        # 9. 分阶段求解
-        # ============================================================
-        m._vars = x
-        m._nodes_map = nodes_map
-        m._p_nodes = set(p_nodes)
-        m._d_nodes = set(d_nodes)
-
-
-        print("\n  >>> [Phase 1] Quick feasibility (60s)...")
-        m.Params.TimeLimit = 60
-        m.Params.MIPFocus = 1
-        m.Params.Heuristics = 0.3
-
-        m.optimize()
-
-        if m.SolCount > 0:
-            incumbent = m.objVal
-            print(f"  >>> [Phase 1] Incumbent: {incumbent:.2f}")
-            print(f"\n  >>> [Phase 2] Improving (120s)...")
-            m.Params.TimeLimit = 120
-            m.Params.MIPFocus = 2
-            m.Params.Cuts = 3
-            m.Params.Heuristics = 0.05
-            m.Params.Cutoff = incumbent * 0.95
-            m.optimize()
-
-        # ============================================================
-        # 10. 结果提取
-        # ============================================================
-        result_times = {}
-        result_assign = {}
-
-        if m.status in [GRB.OPTIMAL, GRB.TIME_LIMIT] and m.SolCount > 0:
-            print(f"  >>> PDP-v2 Solved. Obj={m.objVal:.2f}")
-            for task, (p_id, d_id) in pair_map.items():
-                _, subtask, task_obj,_, _, _ = nodes_map[p_id]
+            # --- 约束3: P-D配对约束（同一机器人服务）---
+            for tasks, (p_id, d_id) in pair_map.items():
                 for r in R:
-                    if y[p_id, r].X > 0.5:
-                        arr_time = T[p_id, r].X
-                        pt = nodes_map[p_id][0]
-                        result_times[pt.idx] = arr_time
-                        result_assign[subtask.id] = self.problem.robot_list[r].id
-                        # 回填
-                        task_obj.arrival_time_at_stack = arr_time
-                        task_obj.robot_id = self.problem.robot_list[r].id
-        else:
-            print("  >>> PDP-v2 Infeasible or no solution found.")
-            print("  >>> Falling back to heuristic.")
-            return 0,0
+                    # P和D必须由同一机器人服务
+                    model.addConstr(y[p_id, r] == y[d_id, r], name=f"PairSameRobot_{p_id}_{d_id}_{r}")
+
+            # --- 约束4: 流守恒（中间节点入度=出度）---
+            for r in R:
+                for i in p_nodes + d_nodes:
+                    in_flow = gp.quicksum(x[j, i, r] for j in N if (j, i) in tau)
+                    out_flow = gp.quicksum(x[i, j, r] for j in N if (i, j) in tau)
+                    model.addConstr(in_flow == y[i, r], name=f"FlowIn_{i}_{r}")
+                    model.addConstr(out_flow == y[i, r], name=f"FlowOut_{i}_{r}")
+
+            # --- 约束5: 优先级约束（P必须在D之前）---
+            # 使用时间变量直接保证: T[P] + service[P] + travel(P,D) <= T[D]
+            for tasks, (p_id, d_id) in pair_map.items():
+                for r in R:
+                    # 若机器人r服务该对，则T[D] >= T[P] + service[P]
+                    # 使用 Big-M 松弛
+                    model.addConstr(
+                        T[d_id, r] >= T[p_id, r] + service_time[p_id] - M_time * (1 - y[p_id, r]),
+                        name=f"PrecedenceTime_{p_id}_{d_id}_{r}"
+                    )
+
+            # --- 约束6: 同SubTask同机器人 ---
+            for st_id, p_node_list in subtask_p_nodes.items():
+                if len(p_node_list) > 1:
+                    base = p_node_list[0]
+                    for other in p_node_list[1:]:
+                        for r in R:
+                            model.addConstr(
+                                y[base, r] == y[other, r],
+                                name=f"SameRobotST_{st_id}_{base}_{other}_{r}"
+                            )
+
+            # --- 约束7: 容量约束（MTZ风格）---
+            for r in R:
+                # 起点负载=0
+                model.addConstr(Q[start_node, r] == 0)
+
+                for i in N:
+                    model.addConstr(T[i, r] <= M_time * y[i, r], name=f"GhostTimeBind_{i}_{r}")
+                for i, j in arcs:
+                    if (i, j, r) not in x:
+                        continue
+                    d_i = demand[i]  # P节点>0, D节点<0
+
+                    # Q[j] = Q[i] + demand[j] (线性化)
+                    # Big-M: Q[j] >= Q[i] + demand[j] - C*(1-x[i,j,r])
+                    #        Q[j] <= Q[i] + demand[j] + C*(1-x[i,j,r])
+                    model.addConstr(
+                        Q[j, r] >= Q[i, r] + demand[j] - C * (1 - x[i, j, r]),
+                        name=f"LoadLB_{i}_{j}_{r}"
+                    )
+                    model.addConstr(
+                        Q[j, r] <= Q[i, r] + demand[j] + C * (1 - x[i, j, r]),
+                        name=f"LoadUB_{i}_{j}_{r}"
+                    )
+
+                # 容量上限（P节点负载不能超过C）
+                for p in p_nodes:
+                    model.addConstr(Q[p, r] <= C, name=f"CapP_{p}_{r}")
+
+            # --- 约束8: 时间连续性（Big-M）---
+            for r in R:
+                model.addConstr(T[start_node, r] == 0)
+                for i, j in arcs:
+                    if (i, j, r) not in x:
+                        continue
+                    model.addConstr(
+                        T[j, r] >= T[i, r] + service_time[i] + tau[i, j] - M_time * (1 - x[i, j, r]),
+                        name=f"TimeCont_{i}_{j}_{r}"
+                    )
+                # Makespan
+                model.addConstr(Z >= T[end_node, r], name=f"Makespan_{r}")
+
+
+            # --- 约束10: 对称破缺 ---
+            for r in range(1, num_robots):
+                model.addConstr(
+                    gp.quicksum(y[p, r] for p in p_nodes) <=
+                    gp.quicksum(y[p, r - 1] for p in p_nodes),
+                    name=f"SymBreak_{r}"
+                )
+
+            # ============================================================
+            # 7. 目标函数
+            # ============================================================
+            total_travel = gp.quicksum(tau[i, j] * x[i, j, r] for (i, j) in arcs for r in R)
+            model.setObjective(Z + 0.01 * total_travel, GRB.MINIMIZE)
+
+            model.write("model.lp")
+            # ============================================================
+            # 9. 分阶段求解
+            # ============================================================
+            model._x_vars = x
+            model._nodes_map = nodes_map
+            model._p_nodes = set(p_nodes)
+            model._d_nodes = set(d_nodes)
+
+
+            print("\n  >>> [Phase 1] Quick feasibility (60s)...")
+            model.Params.TimeLimit = 3600
+            model.Params.MIPFocus = 1
+            model.Params.Heuristics = 0.3
+
+            model.optimize()
+
+            # ============================================================
+            # 10. 结果提取
+            # ============================================================
+            result_times = {}
+            result_assign = {}
+
+            if model.status in [GRB.OPTIMAL, GRB.TIME_LIMIT] and model.SolCount > 0:
+                print(f"  >>> PDP-v2 Solved. Obj={model.objVal:.2f}")
+                self.logger.log_solution(x, y, T, Q, nodes_map, R, p_nodes, d_nodes)
+                for task, (p_id, d_id) in pair_map.items():
+                    _, subtask, task_obj,_, _, _ = nodes_map[p_id]
+                    for r in R:
+                        if y[p_id, r].X > 0.5:
+                            arr_time = T[p_id, r].X
+                            pt = nodes_map[p_id][0]
+
+                            print(f"      [路线验证] 任务 {task_obj.task_id} (Rank {task_obj.station_sequence_rank}): "
+                                  f"取货时间 = {T[p_id, r].X:.1f}s, 卸货时间 = {T[d_id, r].X:.1f}s")
+                            result_times[pt.idx] = arr_time
+                            result_assign[subtask.id] = self.problem.robot_list[r].id
+                            # 回填
+                            task_obj.arrival_time_at_stack = arr_time
+                            task_obj.robot_id = self.problem.robot_list[r].id
+            else:
+                print("  >>> PDP-v2 Infeasible or no solution found.")
+                print("  >>> Falling back to heuristic.")
+                return {}, {}
 
         return result_times, result_assign
     
@@ -991,10 +1036,10 @@ class SP4Logger:
             return f"End @ Point:{pt.idx} ({pt.x},{pt.y})"
         elif n_type == 'pickup':
             stack_id = task_obj.target_stack_id if task_obj else "?"
-            return f"Pickup @ Stack{stack_id}, Point:{pt.idx} ({pt.x},{pt.y}), Task:{task_obj.task_id}"
+            return f"Pickup @ Stack{stack_id}, Point:{pt.idx} ({pt.x},{pt.y}), Task:{task_obj.task_id}, Stack_total_tote:{task_obj.total_load_count}"
         elif n_type == 'delivery':
             station_id = layer if layer != -1 else (subtask.assigned_station_id if subtask else "?")
-            return f"Delivery @ Station{station_id}, Point:{pt.idx} ({pt.x},{pt.y}), Task:{task_obj.task_id}"
+            return f"Delivery @ Station{station_id}, Point:{pt.idx} ({pt.x},{pt.y}), Task:{task_obj.task_id}, Stack_total_tote:{task_obj.total_load_count}"
 
         return f"Node_{n_id} ({n_type})"
 
@@ -1010,7 +1055,8 @@ class SP4Logger:
 
             # 按 ID 排序输出
             for n_id in sorted(nodes_map.keys()):
-                point, _, _, n_type, _ = nodes_map[n_id]
+                stack_pt, st, task, total_load_count, n_type, station_id=nodes_map[n_id]
+
                 desc = self._get_node_desc(n_id, nodes_map)
                 f.write(f"{n_id:<10} | {n_type:<12} | {desc}\n")
             f.write("\n")
@@ -1373,7 +1419,7 @@ if __name__ == "__main__":
     print("=== Integrated SP1-SP2-SP3-SP4 Pipeline Test ===")
     print("=" * 60)
     print("\n[Phase 0] Generating Problem Instance...")
-    problem_dto = CreateOFSProblem.generate_problem_by_scale('SMALL3', seed=SEED)
+    problem_dto = CreateOFSProblem.generate_problem_by_scale('SMALL', seed=SEED)
     print(f"  - Orders: {len(problem_dto.order_list)}")
     print(f"  - Robots: {len(problem_dto.robot_list)}")
     print(f"  - Stations: {len(problem_dto.station_list)}")
@@ -1457,7 +1503,7 @@ if __name__ == "__main__":
     # # 5. SP4: 机器人路径规划
     sp4 = SP4_Robot_Router(problem_dto)
     checksp3hit(sub_tasks, problem_dto, logger=sp4.logger)
-    arrival_times, robot_assign = sp4.solve(sub_tasks, use_mip=True)
+    arrival_times, robot_assign = sp4.solve(sub_tasks, use_mip=False)
     # ✅ 回填结果
     # (1) 到达时间已在 _solve_mip() 中回填到 Task.arrival_time_at_stack
     # (2) 机器人分配已回填到 SubTask.assigned_robot_id
