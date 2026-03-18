@@ -1,0 +1,20 @@
+[Task Fields For TRA Validation]
+1. task_id
+2. sub_task_id
+3. target_station_id
+4. robot_id
+5. trip_id
+6. arrival_time_at_stack
+7. robot_service_time
+8. arrival_time_at_station
+9. sku_pick_count
+10. picking_duration
+11. station_service_time
+12. noise_tote_ids (count)
+13. start_process_time
+14. end_process_time
+15. tote_wait_time
+16. extra_service_used
+17. total_process_duration
+18. sp3_station_service_source
+19. sp3_station_service_inputs

@@ -1,7 +1,7 @@
 import math
 import gurobipy as gp
 from gurobipy import GRB
-from typing import List, Dict, Tuple, Set
+from typing import List, Dict, Tuple, Set, Optional
 from collections import defaultdict
 import os
 import sys
@@ -34,6 +34,7 @@ class SP4_Robot_Router:
         self.robot_speed = OFSConfig.ROBOT_SPEED
         self.t_shift = OFSConfig.PACKING_TIME
         self.t_lift = OFSConfig.LIFTING_TIME
+        self.lkh_time_limit_seconds = 100
         # --- 初始化 Logger ---
         log_dir = os.path.join(ROOT_DIR, 'log')
         # 实例化 logger
@@ -205,7 +206,7 @@ class SP4_Robot_Router:
         )
         time_dimension = routing.GetDimensionOrDie(time)
         time_dimension.SetGlobalSpanCostCoefficient(100)
-        # 7. 施加 PDP 特殊约束
+    
         solver = routing.solver()
 
         # 7.1 取送货成对，且 P 在 D 前面
@@ -225,22 +226,14 @@ class SP4_Robot_Router:
                 base_index = manager.NodeToIndex(p_indices[0])
                 for other_p in p_indices[1:]:
                     other_index = manager.NodeToIndex(other_p)
-
-                    # 🌟 关键新增：状态绑定！要么一起被运，要么一起被丢弃！
-                    # 这样引擎就不会在试探时出现一个被丢弃、一个在车上的自相矛盾状态
                     solver.Add(routing.ActiveVar(base_index) == routing.ActiveVar(other_index))
-
-                    # 车辆绑定：必须在同一辆车上
-                    # （如果它们一起被丢弃，车号都是 -1，-1 == -1 依然成立，完美防崩溃！）
                     solver.Add(routing.VehicleVar(base_index) == routing.VehicleVar(other_index))
 
-        # # 8. 配置启发式策略 (启动 Lin-Kernighan 引擎)
         search_parameters = pywrapcp.DefaultRoutingSearchParameters()
-        # 初始解构造：插入启发式
         search_parameters.first_solution_strategy = (
             routing_enums_pb2.FirstSolutionStrategy.PARALLEL_CHEAPEST_INSERTION)
         search_parameters.local_search_metaheuristic = (routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH)
-        search_parameters.time_limit.seconds = 100
+        search_parameters.time_limit.seconds = int(self.lkh_time_limit_seconds)
         routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
         time_dimension.SetGlobalSpanCostCoefficient(10000)
         # 9. 求解
@@ -262,7 +255,7 @@ class SP4_Robot_Router:
         if solution:
             obj_val = solution.ObjectiveValue() / 10.0
             print(f"\n" + "=" * 50)
-            print(f"✅ LKH Engine Solved! Total Objective: {obj_val:.1f}s")
+            print(f"[OK] LKH Engine Solved. Total Objective: {obj_val:.1f}s")
             print("=" * 50)
 
             # --- 新增：准备日志文件 ---
@@ -280,7 +273,7 @@ class SP4_Robot_Router:
 
                 for vehicle_id in range(num_vehicles):
                     robot_id = self.problem.robot_list[vehicle_id].id
-                    header = f"\n🚐 === Robot {robot_id} Route ==="
+                    header = f"\n=== Robot {robot_id} Route ==="
                     print(header)
                     f_log.write(header + "\n")
 
@@ -292,19 +285,19 @@ class SP4_Robot_Router:
                         pt, task_obj, n_type = nodes_info[node_index]
 
                         # 从解中提取时间和载重 (除以 10 还原真实时间)
-                        arr_time = solution.Min(time_dimension.CumulVar(index)) / 10.0
-                        current_load = solution.Min(capacity_dimension.CumulVar(index))
+                        arr_time = solution.Value(time_dimension.CumulVar(index)) / 10.0
+                        current_load = solution.Value(capacity_dimension.CumulVar(index))
 
                         # 提取坐标
                         coord = f"({pt.x:.1f}, {pt.y:.1f})"
 
                         if n_type == 'depot':
-                            line = f"  [{arr_time:>5.1f}s] 🟢 Start @ Depot {coord} | Load: {current_load}/{self.robot_capacity}"
+                            line = f"  [{arr_time:>5.1f}s] Start @ Depot {coord} | Load: {current_load}/{self.robot_capacity}"
 
                         elif n_type == 'pickup':
                             demand_val = task_obj.total_load_count
                             line = (
-                                f"  [{arr_time:>5.1f}s] 📦 PICKUP  (SubTask: {task_obj.sub_task_id}, Task: {task_obj.task_id}) "
+                                f"  [{arr_time:>5.1f}s] PICKUP  (SubTask: {task_obj.sub_task_id}, Task: {task_obj.task_id}) "
                                 f"@ Stack {task_obj.target_stack_id} {coord} | Load: +{demand_val} -> {current_load}/{self.robot_capacity}")
 
                             # 回填结果
@@ -317,8 +310,10 @@ class SP4_Robot_Router:
                             demand_val = task_obj.total_load_count
                             rank_val = getattr(task_obj, 'station_sequence_rank', 'N/A')
                             line = (
-                                f"  [{arr_time:>5.1f}s] 🚚 DELIVER (SubTask: {task_obj.sub_task_id}, Task: {task_obj.task_id}, Rank: {rank_val}) "
+                                f"  [{arr_time:>5.1f}s] DELIVER (SubTask: {task_obj.sub_task_id}, Task: {task_obj.task_id}, Rank: {rank_val}) "
                                 f"@ Station {task_obj.target_station_id} {coord} | Load: -{demand_val} -> {current_load}/{self.robot_capacity}")
+                            # 回填站点到达时间（优先使用 SP4 的实际到达时间）
+                            task_obj.arrival_time_at_station = arr_time
 
                         print(line)
                         f_log.write(line + "\n")
@@ -331,10 +326,10 @@ class SP4_Robot_Router:
                     node_index = manager.IndexToNode(index)
                     pt, _, _ = nodes_info[node_index]
                     coord = f"({pt.x:.1f}, {pt.y:.1f})"
-                    end_time = solution.Min(time_dimension.CumulVar(index)) / 10.0
-                    final_load = solution.Min(capacity_dimension.CumulVar(index))
+                    end_time = solution.Value(time_dimension.CumulVar(index)) / 10.0
+                    final_load = solution.Value(capacity_dimension.CumulVar(index))
 
-                    end_line = f"  [{end_time:>5.1f}s] 🔴 End @ Depot {coord}   | Load: {final_load}/{self.robot_capacity}"
+                    end_line = f"  [{end_time:>5.1f}s] End @ Depot {coord}   | Load: {final_load}/{self.robot_capacity}"
                     summary_line = f"  -> Total tasks visited: {step_count - 1}, Return Time: {end_time:.1f}s\n"
 
                     print(end_line)
@@ -351,7 +346,8 @@ class SP4_Robot_Router:
 
     def solve(self,
               sub_tasks: List[SubTask],
-              use_mip: bool = True) -> Tuple[Dict[int, float], Dict[int, int]]:
+              use_mip: bool = True,
+              lkh_time_limit_seconds: Optional[int] = None) -> Tuple[Dict[int, float], Dict[int, int]]:
         """
         执行求解
 
@@ -366,6 +362,8 @@ class SP4_Robot_Router:
         if use_mip:
             return self._solve_mip_pdp_v2(sub_tasks)
         else:
+            if lkh_time_limit_seconds is not None:
+                self.lkh_time_limit_seconds = int(lkh_time_limit_seconds)
             return self._solve_LKH(sub_tasks)
 
     def _solve_mip_pdp_v2(self, sub_tasks: List[SubTask]) -> Tuple[Dict[int, float], Dict[int, int]]:
@@ -901,7 +899,7 @@ class SP4_Robot_Router:
                 break  # 每次只加一个最强的割
 
         if cuts_added > 0:
-            print(f"  🔪 Added {cuts_added} lazy cut(s)")
+            print(f"  [CUT] Added {cuts_added} lazy cut(s)")
 
     def _find_components_union_find(self, edges):
         """使用并查集快速查找连通分量（比 DFS 快）"""
@@ -1233,7 +1231,7 @@ class SP4Logger:
 
 def checksp3hit(
         sub_tasks: List[SubTask], problem, logger: SP4Logger = None):
-    header = f"  >>>🔍 SP3 结果验证：检查料箱命中是否满足 SubTask 的 SKU 需求 (含冗余检查) ..."
+    header = f"  >>> [Check] SP3 结果验证：检查料箱命中是否满足 SubTask 的 SKU 需求 (含冗余检查) ..."
     print(header)
     if logger:
         logger.log_validation("\n" + "=" * 60 + "\nPART 3: SP3 Hit Validation\n" + "=" * 60)
@@ -1262,7 +1260,7 @@ def checksp3hit(
             for tote_id in task.hit_tote_ids:
                 tote = problem.id_to_tote.get(tote_id)
                 if not tote:
-                    print(f"  ❌ [SubTask {st.id}] Tote {tote_id} not found in problem.id_to_tote")
+                    print(f"  [ERR] [SubTask {st.id}] Tote {tote_id} not found in problem.id_to_tote")
                     continue
 
                 # ✅ 关键修改：计算该料箱实际贡献的 SKU
@@ -1316,7 +1314,7 @@ def checksp3hit(
         # 4. ✅ 输出验证结果（修正版）
         log_lines = []
 
-        msg = f"\n  📋 [SubTask {st.id}] SKU Overview:"
+        msg = f"\n  [SubTask {st.id}] SKU Overview:"
         print(msg)
         log_lines.append(msg)
 
@@ -1329,7 +1327,7 @@ def checksp3hit(
         log_lines.append(msg)
 
         # ✅ 核心修改：显示每个料箱的实际贡献（扣除已满足的SKU）
-        msg = f"      📦 Tote-Level SKU Breakdown ({len(tote_sku_details)} totes):"
+        msg = f"      Tote-Level SKU Breakdown ({len(tote_sku_details)} totes):"
         print(msg)
         log_lines.append(msg)
 
@@ -1339,28 +1337,28 @@ def checksp3hit(
             log_lines.append(msg)
 
             if needed_skus:
-                msg = f"           ✅ Needed: {needed_skus}"
+                msg = f"           Needed: {needed_skus}"
                 print(msg)
                 log_lines.append(msg)
 
             if noise_skus:
-                msg = f"           🔇 Noise: {noise_skus}"
+                msg = f"           Noise: {noise_skus}"
                 print(msg)
                 log_lines.append(msg)
 
             # 如果两者都为空，说明是完全冗余的料箱
             if not needed_skus and not noise_skus:
-                msg = f"           ⚠️ Completely Redundant (all SKUs already satisfied)"
+                msg = f"           [WARN] Completely Redundant (all SKUs already satisfied)"
                 print(msg)
                 log_lines.append(msg)
 
         # 输出验证结果
         if missing_skus:
-            msg = f"\n  ❌ [SubTask {st.id}] Validation FAILED:"
+            msg = f"\n  [FAIL] [SubTask {st.id}] Validation FAILED:"
             print(msg)
             log_lines.append(msg)
 
-            msg = f"      ⚠️ Missing SKUs:"
+            msg = f"      Missing SKUs:"
             print(msg)
             log_lines.append(msg)
             for sku_id, shortage in missing_skus:
@@ -1368,13 +1366,13 @@ def checksp3hit(
                 print(msg)
                 log_lines.append(msg)
         else:
-            msg = f"  ✅ [SubTask {st.id}] Validation PASSED ({len(required_skus)} SKU types, {sum(required_skus.values())} units)"
+            msg = f"  [OK] [SubTask {st.id}] Validation PASSED ({len(required_skus)} SKU types, {sum(required_skus.values())} units)"
             print(msg)
             log_lines.append(msg)
 
         # 输出多余 SKU 信息
         if excess_skus:
-            msg = f"      ℹ️ Excess SKUs (over-supply):"
+            msg = f"      Excess SKUs (over-supply):"
             print(msg)
             log_lines.append(msg)
             for sku_id, excess in excess_skus:
@@ -1384,7 +1382,7 @@ def checksp3hit(
 
         # 输出冗余料箱信息
         if redundant_totes_info:
-            msg = f"      ⚠️ Redundant Totes (not contributing to required SKUs): {len(redundant_totes_info)}"
+            msg = f"      [WARN] Redundant Totes (not contributing to required SKUs): {len(redundant_totes_info)}"
             print(msg)
             log_lines.append(msg)
             for info in redundant_totes_info:
@@ -1396,7 +1394,7 @@ def checksp3hit(
             for line in log_lines:
                 logger.log_validation(line)
 
-    final_msg = f"  >>> ✅ SP3 Validation Complete. All SubTasks have sufficient tote coverage.\n"
+    final_msg = f"  >>> [OK] SP3 Validation Complete. All SubTasks have sufficient tote coverage.\n"
     print(final_msg)
     if logger:
         logger.log_validation(final_msg)
@@ -1499,7 +1497,7 @@ if __name__ == "__main__":
         print(f"Physical Task {task.task_id}: SubTask {task.sub_task_id}, "
               f"Stack {task.target_stack_id}, Tote {task.hit_tote_ids}, noise {task.noise_tote_ids}"
               f"Load {task.total_load_count}, Service Time {task.robot_service_time}s")
-    print(f"✅ Total load across all physical tasks: {sum_load}")
+    print(f"[OK] Total load across all physical tasks: {sum_load}")
     # # 5. SP4: 机器人路径规划
     sp4 = SP4_Robot_Router(problem_dto)
     checksp3hit(sub_tasks, problem_dto, logger=sp4.logger)

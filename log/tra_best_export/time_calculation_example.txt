@@ -1,0 +1,16 @@
+[Simple Example For Manual Validation]
+Config: PICKING_TIME = t_pick
+Case A (with noise):
+  sku_pick_count = 4, t_pick = 3.00, station_service_time = 6.00, noise_cnt > 0
+  picking_duration = 4 * 3.00 = 12.00
+  extra_service_used = 6.00
+  total_process_duration = 12.00 + 6.00 = 18.00
+  if arrival=100, station_next_available=110 -> start=max(100,110)=110
+  end = 110 + 18.00 = 128.00
+
+Case B (without noise):
+  sku_pick_count = 4, t_pick = 3.00, station_service_time = 6.00, noise_cnt = 0
+  picking_duration = 12.00
+  extra_service_used = 0.00
+  total_process_duration = 12.00
+  if arrival=100, station_next_available=110 -> start=110, end=122

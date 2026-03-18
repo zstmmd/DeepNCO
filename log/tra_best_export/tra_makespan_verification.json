@@ -1,0 +1,171 @@
+{
+  "status": "PASS",
+  "task_count": 18,
+  "max_task_end": 385.0,
+  "global_makespan": 385.0,
+  "failures": [],
+  "station_task_rows": [
+    {
+      "station_id": 0,
+      "task_id": 6,
+      "start": 197.0,
+      "end": 209.0,
+      "wait": 0.0,
+      "pick": 12.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 0,
+      "task_id": 7,
+      "start": 209.0,
+      "end": 221.0,
+      "wait": 12.0,
+      "pick": 12.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 0,
+      "task_id": 8,
+      "start": 221.0,
+      "end": 233.0,
+      "wait": 24.0,
+      "pick": 12.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 0,
+      "task_id": 4,
+      "start": 233.0,
+      "end": 236.0,
+      "wait": 36.0,
+      "pick": 3.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 0,
+      "task_id": 5,
+      "start": 236.0,
+      "end": 242.0,
+      "wait": 39.0,
+      "pick": 6.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 0,
+      "task_id": 9,
+      "start": 302.0,
+      "end": 376.0,
+      "wait": 0.0,
+      "pick": 66.0,
+      "extra": 8.0
+    },
+    {
+      "station_id": 0,
+      "task_id": 10,
+      "start": 376.0,
+      "end": 385.0,
+      "wait": 74.0,
+      "pick": 9.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 1,
+      "task_id": 16,
+      "start": 165.0,
+      "end": 200.0,
+      "wait": 0.0,
+      "pick": 33.0,
+      "extra": 2.0
+    },
+    {
+      "station_id": 1,
+      "task_id": 12,
+      "start": 200.0,
+      "end": 215.0,
+      "wait": 35.0,
+      "pick": 15.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 1,
+      "task_id": 2,
+      "start": 215.0,
+      "end": 221.0,
+      "wait": 50.0,
+      "pick": 6.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 1,
+      "task_id": 15,
+      "start": 221.0,
+      "end": 236.0,
+      "wait": 56.0,
+      "pick": 15.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 1,
+      "task_id": 17,
+      "start": 236.0,
+      "end": 248.0,
+      "wait": 15.0,
+      "pick": 12.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 1,
+      "task_id": 13,
+      "start": 248.0,
+      "end": 260.0,
+      "wait": 27.0,
+      "pick": 12.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 1,
+      "task_id": 0,
+      "start": 260.0,
+      "end": 272.0,
+      "wait": 39.0,
+      "pick": 12.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 1,
+      "task_id": 1,
+      "start": 272.0,
+      "end": 300.0,
+      "wait": 51.0,
+      "pick": 24.0,
+      "extra": 4.0
+    },
+    {
+      "station_id": 1,
+      "task_id": 3,
+      "start": 300.0,
+      "end": 303.0,
+      "wait": 79.0,
+      "pick": 3.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 1,
+      "task_id": 11,
+      "start": 303.0,
+      "end": 347.0,
+      "wait": 47.0,
+      "pick": 36.0,
+      "extra": 8.0
+    },
+    {
+      "station_id": 1,
+      "task_id": 14,
+      "start": 347.0,
+      "end": 385.0,
+      "wait": 44.0,
+      "pick": 36.0,
+      "extra": 2.0
+    }
+  ]
+}

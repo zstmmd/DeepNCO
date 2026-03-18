@@ -1,0 +1,86 @@
+{
+  "config": {
+    "scale": "SMALL",
+    "seed": 42,
+    "max_iters": 1,
+    "no_improve_limit": 3,
+    "epsilon": 0.05,
+    "sp2_use_mip": true,
+    "sp3_use_mip": false,
+    "sp4_use_mip": false,
+    "sp2_time_limit_sec": 10.0,
+    "sp4_lkh_time_limit_seconds": 1,
+    "switch_to_exact_iter": 999999,
+    "exact_sp2_use_mip": true,
+    "exact_sp3_use_mip": true,
+    "exact_sp4_use_mip": false,
+    "exact_sp2_time_limit_sec": 600.0,
+    "exact_sp4_lkh_time_limit_seconds": 120,
+    "log_dir": "log",
+    "export_best_solution": false,
+    "enable_sp1_feedback_analysis": false,
+    "sp1_feedback_spread_threshold": 40,
+    "sp1_feedback_top_k": 10
+  },
+  "best": {
+    "z": 408.0,
+    "iter_id": 0,
+    "seed": 42,
+    "subtask_station_rank": {
+      "0": [
+        0,
+        0
+      ],
+      "1": [
+        1,
+        0
+      ],
+      "2": [
+        1,
+        1
+      ],
+      "3": [
+        0,
+        1
+      ],
+      "4": [
+        0,
+        2
+      ],
+      "5": [
+        1,
+        2
+      ],
+      "6": [
+        0,
+        3
+      ]
+    },
+    "sp1_capacity_limits": {
+      "0": 6,
+      "1": 6
+    }
+  },
+  "iters": [
+    {
+      "iter": 0,
+      "focus": "init",
+      "z": 408.0,
+      "best_z": 408.0,
+      "improved": true,
+      "skipped": false,
+      "lb": null,
+      "epsilon": 0.05
+    },
+    {
+      "iter": 1,
+      "focus": "sp3",
+      "z": 408.0,
+      "best_z": 408.0,
+      "improved": false,
+      "skipped": false,
+      "lb": 372.0,
+      "epsilon": 0.05
+    }
+  ]
+}

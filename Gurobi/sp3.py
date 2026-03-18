@@ -12,6 +12,7 @@ from entity.stack import Stack
 from problemDto.ofs_problem_dto import OFSProblemDTO
 from config.ofs_config import OFSConfig
 import copy
+import random
 
 
 class SP3_Bin_Hitter:
@@ -34,6 +35,13 @@ class SP3_Bin_Hitter:
         self.w_routing = 0.5
         self.stack_allocation: Dict[int, int] = {}
         self.BigM = 10000
+        # --- 命中控制参数（可通过配置覆盖） ---
+        # 每次对一个料架执行操作（FLIP/SORT）时，至少命中的料箱数量（上限按该架可命中数截断）
+        self.min_hits_per_op = getattr(OFSConfig, 'SP3_MIN_HITS_PER_OP', 1)
+        # 若为 SORT，要求命中占区间的最小比例（0~1，0 表示不强制）
+        self.min_hit_ratio_sort = getattr(OFSConfig, 'SP3_MIN_HIT_RATIO_SORT', 0.0)
+        # 结果阶段：若某个 Task 没有命中料箱，是否直接丢弃该 Task
+        self.require_positive_hit = getattr(OFSConfig, 'SP3_REQUIRE_POSITIVE_HIT', True)
 
         # ✅ 虚拟层级管理
         self.stack_snapshots: Dict[int, List[Tote]] = {}  # {stack_id: [current_totes]}
@@ -79,6 +87,10 @@ class SP3_Bin_Hitter:
             task.reset_execution_details()
             if task.assigned_station_id == -1:
                 continue
+
+            # Reset runtime coverage markers for this subtask.
+            task.sp3_unmet_sku_total = 0
+            task.sp3_coverage_ok = True
 
             p_tasks, totes, cost = self._solve_single_subtask_mip(
                 task, beta_congestion, sp4_routing_costs
@@ -310,7 +322,17 @@ class SP3_Bin_Hitter:
             bin_sum = gp.quicksum(u_use[b.id] for b in bins)
             m.addConstr(m_flip[u] + m_sort[u] <= 1)
             m.addConstr(bin_sum <= self.BigM * (m_flip[u] + m_sort[u]))
+            # 若选择在该架上执行操作，则必须至少选择一个命中料箱
             m.addConstr(m_flip[u] + m_sort[u] <= bin_sum)
+            # 可选：强化下界，至少命中 min_hits_per_op 个（按可命中上限截断）
+            if self.min_hits_per_op and self.min_hits_per_op > 1:
+                avail_hits_u = 0
+                for b in bins:
+                    if any(s_id in needed_sku_ids for s_id in b.sku_quantity_map):
+                        avail_hits_u += 1
+                threshold_u = min(self.min_hits_per_op, avail_hits_u)
+                if threshold_u > 1:
+                    m.addConstr(bin_sum >= threshold_u * (m_flip[u] + m_sort[u]))
             m.addConstr(idx_high[u] >= top_layer_idx * is_top_inc[u] - self.BigM * (1 - m_sort[u]))
 
             # ✅ 使用虚拟层级构建约束
@@ -340,6 +362,12 @@ class SP3_Bin_Hitter:
             noise_expr = range_size - bin_sum
             sc_raw = beta * self.t_move * noise_expr
             m.addConstr(cost_sc[u] >= sc_raw - self.BigM * (1 - m_sort[u]))
+            # 若启用命中占比约束：bin_sum >= ratio * range_size
+            if self.min_hit_ratio_sort and self.min_hit_ratio_sort > 0.0:
+                # 仅在 SORT 模式生效
+                m.addConstr(
+                    bin_sum >= self.min_hit_ratio_sort * range_size - self.BigM * (1 - m_sort[u])
+                )
 
             m.addConstr(cost_fc[u] >= 0)
             m.addConstr(cost_rc[u] >= 0)
@@ -414,6 +442,9 @@ class SP3_Bin_Hitter:
                         robot_time_val = cost_rc[u].X / self.alpha
 
                     if physical_carried_totes:
+                        # 若不允许 0 命中，则直接跳过
+                        if self.require_positive_hit and len(hit_totes) == 0:
+                            continue
                         # ✅ [新增] 计算该 Task 实际命中的 SKU 数量
                         current_task_pick_count = 0
                         for t_id in hit_totes:
@@ -436,6 +467,11 @@ class SP3_Bin_Hitter:
                             operation_mode=mode,
                             robot_service_time=robot_time_val,
                             station_service_time=station_time_val,
+                            sp3_station_service_source="SP3_MIP",
+                            sp3_station_service_inputs=(
+                                f"mode={mode};beta={float(beta):.6f};t_move={float(self.t_move):.6f};"
+                                f"noise_cnt={len(noise_totes)};cost_sc={float(cost_sc[u].X):.6f}"
+                            ),
                             target_tote_ids=physical_carried_totes,
                             hit_tote_ids=hit_totes,
                             noise_tote_ids=noise_totes,
@@ -453,6 +489,12 @@ class SP3_Bin_Hitter:
 
         elif m.status == GRB.INFEASIBLE:
             print(f"  [SP3] Task {task.id} INFEASIBLE.")
+
+        unmet_total = int(sum(v for v in remaining_demand.values() if v > 0))
+        task.sp3_unmet_sku_total = unmet_total
+        task.sp3_coverage_ok = (unmet_total == 0)
+        if unmet_total > 0:
+            print(f"  [SP3][WARN] SubTask {task.id} unmet sku units: {unmet_total}")
 
         return p_tasks, selected_totes_for_feedback, total_sc_cost
 
@@ -472,6 +514,9 @@ class SP3_Bin_Hitter:
             # ✅ 虚拟层级管理
             self.stack_snapshots: Dict[int, List[Tote]] = {}
             self.layer_mapping: Dict[int, int] = {}
+            # 约束/安全开关
+            self.require_positive_hit = getattr(OFSConfig, 'SP3_REQUIRE_POSITIVE_HIT', True)
+            self.min_hit_ratio_sort = getattr(OFSConfig, 'SP3_MIN_HIT_RATIO_SORT', 0.0)
 
         def solve(self,
                   sub_tasks: List[SubTask],
@@ -509,6 +554,10 @@ class SP3_Bin_Hitter:
                 task.reset_execution_details()
                 if task.assigned_station_id == -1:
                     continue
+
+                # Reset runtime coverage markers for this subtask.
+                task.sp3_unmet_sku_total = 0
+                task.sp3_coverage_ok = True
 
                 # ✅ [新增] 追踪该 SubTask 的剩余需求
                 task_remaining_demand = defaultdict(int)
@@ -599,6 +648,9 @@ class SP3_Bin_Hitter:
                                 hit_totes_ids.append(tid)
                             else:
                                 noise_totes_ids.append(tid)
+                        # 若不允许 0 命中，则直接跳过该批（避免生成无命中 Task）
+                        if self.require_positive_hit and len(hit_totes_ids) == 0:
+                            break
 
                         # ✅ [新增] 计算当前 Task 的 sku_pick_count
                         current_pick_count = 0
@@ -622,6 +674,12 @@ class SP3_Bin_Hitter:
                             hit_tote_ids=hit_totes_ids,
                             robot_service_time=rc_time,
                             station_service_time=sc_time,
+                            sp3_station_service_source="SP3_HEURISTIC",
+                            sp3_station_service_inputs=(
+                                f"mode={mode};beta={float(beta_congestion):.6f};"
+                                f"t_move={float(self.t_move):.6f};noise_cnt={len(noise_totes_ids)};"
+                                f"sc_time={float(sc_time):.6f}"
+                            ),
                             noise_tote_ids=noise_totes_ids,
                             sort_layer_range=layer_range,
                             sku_pick_count=current_pick_count  # ✅ 传入计算结果
@@ -648,6 +706,12 @@ class SP3_Bin_Hitter:
                 for used_stack_idx in used_stacks_in_task:
                     if used_stack_idx in self.stack_allocation:
                         del self.stack_allocation[used_stack_idx]
+
+                unmet_total = int(sum(v for v in task_remaining_demand.values() if v > 0))
+                task.sp3_unmet_sku_total = unmet_total
+                task.sp3_coverage_ok = (unmet_total == 0)
+                if unmet_total > 0:
+                    print(f"  [SP3 Heuristic][WARN] SubTask {task.id} unmet sku units: {unmet_total}")
 
             print(f"  >>> [SP3 Heuristic] Applying Priority Sorting...")
 

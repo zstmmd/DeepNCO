@@ -1,0 +1,5 @@
+scale,run_id,seed,iter,focus,z,best_z,lb,improved,skipped,epsilon
+SMALL,0,42,0,init,448.0,448.0,,True,False,0.05
+SMALL,0,42,1,sp3,448.0,448.0,403.0,False,False,0.05
+SMALL,0,42,2,sp2,500.0,448.0,181.0,False,False,0.05
+SMALL,0,42,3,sp4,500.0,448.0,393.0,False,False,0.05

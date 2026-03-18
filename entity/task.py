@@ -42,6 +42,10 @@ class Task:
     robot_service_time: float = 0.0
     # 工作台操作耗时 (剔除噪音箱 + 拣选)
     station_service_time: float = 0.0
+    # station_service_time 的来源标记 (SP3_MIP / SP3_HEURISTIC)
+    sp3_station_service_source: str = ""
+    # station_service_time 的关键输入参数，便于核对
+    sp3_station_service_inputs: str = ""
 
     #预计到达工作站的时间 (用于软耦合时间窗检查)
     arrival_time_at_station: float = 0.0
@@ -59,7 +63,11 @@ class Task:
 
     # 该任务造成的捡货时长 (sku_count * t_pick)
     picking_duration: float = 0.0
-    trip_id = 0
+    # 仿真阶段实际使用的额外服务时长
+    extra_service_used: float = 0.0
+    # 仿真阶段总处理时长 = picking_duration + extra_service_used
+    total_process_duration: float = 0.0
+    trip_id: int = 0
     # --- 路径信息 ---
     # 记录该任务对应的机器人具体路径 [(x, y, time), ...]
     # 用于输出到 txt

@@ -1,0 +1,5 @@
+[TRA Makespan Verification]
+status=PASS
+task_count=18
+max_task_end=385.000000
+global_makespan=385.000000

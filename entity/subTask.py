@@ -99,6 +99,13 @@ class SubTask:
         self.execution_tasks = []  # 清空关联的任务
         self.involved_stacks = []  # 清空涉及的堆垛
         self.visit_points = []  # 清空访问点位
+        self.completion_time = 0.0
+        # 机器人分配结果依赖 SP4，重跑时需要清空
+        self.assigned_robot_id = -1
+        # 运行时缓存也一并清理，避免使用旧值
+        self._cached_start_pt = None
+        self._cached_end_pt = None
+        self._cached_duration = 0.0
     @property
     def capacity_usage(self) -> int:
         """

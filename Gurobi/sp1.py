@@ -29,6 +29,11 @@ class SP1_BOM_Splitter:
         self.order_capacity_limits: Dict[int, int] = {}
         self._init_capacity_limits()
 
+        # --- [可选] SKU-SKU 互斥矩阵（软耦合约束/惩罚的载体） ---
+        # 语义：若 (a,b) 互斥，则尽量不要把 SKU a 与 SKU b 放到同一个 SubTask。
+        # 默认不启用（集合为空），不改变现有行为。
+        self.incompatibility_pairs: Set[Tuple[int, int]] = set()
+
     def _init_capacity_limits(self):
         """初始化容量限制为全局默认值"""
         default_cap = OFSConfig.ROBOT_CAPACITY - 2
@@ -46,6 +51,27 @@ class SP1_BOM_Splitter:
             valid_limit = max(1, min(new_limit, OFSConfig.ROBOT_CAPACITY))
             self.order_capacity_limits[order_id] = valid_limit
             print(f"[SP1 Feedback] Order {order_id} capacity limit updated: {current} -> {valid_limit}")
+
+    def add_incompatibility(self, sku_a: int, sku_b: int):
+        """
+        [软耦合接口] 添加一对 SKU 互斥关系（对称）。
+        用于 TRA 更外层根据反馈逐步学习“不要同打包”的 SKU 组合。
+        """
+        a, b = int(sku_a), int(sku_b)
+        if a == b:
+            return
+        if a > b:
+            a, b = b, a
+        self.incompatibility_pairs.add((a, b))
+
+    def _has_incompatibility(self, sku_ids: List[int], candidate_id: int) -> bool:
+        """判断 candidate_id 与当前 sku_ids 是否存在互斥关系。"""
+        c = int(candidate_id)
+        for sid in sku_ids:
+            a, b = (sid, c) if sid < c else (c, sid)
+            if (a, b) in self.incompatibility_pairs:
+                return True
+        return False
 
     def solve(self, use_mip: bool = False) -> List[SubTask]:
         """
@@ -201,6 +227,9 @@ class SP1_BOM_Splitter:
                 covered_skus = stack_to_skus[best_stack] & remaining_skus
                 for sku_id in covered_skus:
                     if len(current_task_skus) < cap_limit:
+                        # 可选互斥过滤：若互斥，则跳过，留给后续子任务
+                        if self.incompatibility_pairs and self._has_incompatibility(current_task_skus, sku_id):
+                            continue
                         current_task_skus.append(sku_id)
                         remaining_skus.remove(sku_id)
 

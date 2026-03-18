@@ -69,7 +69,8 @@ class SP2_Station_Assigner:
                                 tasks: List[SubTask],
                                 sp4_robot_arrival_times: Dict[int, float],
                                 sp3_tote_selection: Optional[Dict[int, List[int]]] = None,
-                                sp3_sorting_costs: Optional[Dict[int, float]] = None):
+                                sp3_sorting_costs: Optional[Dict[int, float]] = None,
+                                time_limit_sec: float = 60.0):
         """
         基于 MIP 优化任务指派
 
@@ -107,7 +108,7 @@ class SP2_Station_Assigner:
         # 2. 建模
         m = gp.Model("SP2_RHMA_Iter")
         m.Params.OutputFlag = 0
-        m.Params.TimeLimit = 60
+        m.Params.TimeLimit = float(time_limit_sec)
 
         # 决策变量
         y = m.addVars(K, P, S, vtype=GRB.BINARY, name="y")  # 指派 y[任务, 位次, 站点]

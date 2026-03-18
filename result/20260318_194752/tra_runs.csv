@@ -1,0 +1,2 @@
+algorithm,scale,run_id,seed,best_z,runtime_sec,iter_count,skip_ratio,sp2_best_z,sp3_best_z,sp4_best_z,sp2_lb_mean,sp3_lb_mean,sp4_lb_mean,status
+tra,SMALL,0,42,408.0,3.093032899996615,2,0.0,nan,408.0,nan,0.0,372.0,0.0,ok

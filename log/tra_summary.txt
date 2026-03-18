@@ -1,0 +1,8 @@
+=== TRA Rotating Outer Loop Summary ===
+scale=SMALL, seed=42
+best_z=408.000s @ iter=0
+
+iter | focus |          z |       best | imp | skip |         lb
+------------------------------------------------------------------------
+   0 | init |    408.000 |    408.000 |   Y |    N |    -   
+   1 |  sp3 |    408.000 |    408.000 |   N |    N |    372.000
