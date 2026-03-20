@@ -1,0 +1,17 @@
+{
+  "generated_at": "2026-03-19T22:08:34",
+  "scales": [
+    "SMALL"
+  ],
+  "iter_limit": 8,
+  "seed": 42,
+  "algorithms": [
+    "baseline",
+    "tra_none",
+    "tra_all",
+    "tra_mu",
+    "tra_pi",
+    "tra_beta",
+    "tra_affinity"
+  ]
+}

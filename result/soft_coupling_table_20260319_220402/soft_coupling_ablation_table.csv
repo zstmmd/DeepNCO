@@ -1,0 +1,8 @@
+scale,algorithm,iter_count,best_z,sub_obj1_subtask_count,sub_obj2_station_idle_total,sub_obj3_hit_stack_count,sub_obj4_robot_path_length,solve_time_sec,status
+SMALL,baseline,1,463.0,7.0,473.0,17.0,600.0,6.203628299990669,ok
+SMALL,tra_none,8,463.0,7.0,473.0,17.0,600.0,52.91979659997742,ok
+SMALL,tra_all,8,382.0,7.0,983.0,17.0,804.0,38.74931370001286,ok
+SMALL,tra_mu,8,459.0,7.0,553.0,17.0,624.0,32.6958790999779,ok
+SMALL,tra_pi,8,463.0,7.0,473.0,17.0,600.0,53.2410592000233,ok
+SMALL,tra_beta,8,463.0,7.0,473.0,17.0,600.0,54.44650079999701,ok
+SMALL,tra_affinity,8,463.0,7.0,473.0,17.0,600.0,34.45097770000575,ok

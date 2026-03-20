@@ -1,0 +1,92 @@
+{
+  "best_iter": 7,
+  "best_z": 375.0,
+  "recomputed_z": 375.0,
+  "global_makespan": 375.0,
+  "sp1": {
+    "subtask_count": 6,
+    "avg_sku_per_subtask": 5.833333333333333,
+    "max_sku_per_subtask": 7.0
+  },
+  "sp2": {
+    "station_idle_total": 397.0,
+    "station_utilization_mean": 0.456,
+    "station_load_max": 9.0,
+    "station_load_std": 2.5,
+    "station_load_max_ratio": 1.3846153846153846
+  },
+  "sp3": {
+    "hit_stack_count": 13.0,
+    "noise_ratio": 0.2571428571428571,
+    "avg_stack_span": 5.5,
+    "sorting_cost_proxy": 18.0
+  },
+  "sp4": {
+    "robot_path_length_total": 542.0,
+    "robot_utilization_mean": 0.06133333333333334,
+    "latest_robot_finish": 297.0,
+    "robot_finish_ratio": 0.792,
+    "arrival_slack_mean": 29.46153846153846
+  },
+  "coverage": {
+    "coverage_ok": true,
+    "unmet_sku_total": 0,
+    "unmet_subtask_count": 0,
+    "subtasks": [
+      {
+        "subtask_id": 0,
+        "order_id": 0,
+        "required_sku_units": 26,
+        "provided_sku_units": 26,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 1,
+        "order_id": 0,
+        "required_sku_units": 23,
+        "provided_sku_units": 23,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 2,
+        "order_id": 0,
+        "required_sku_units": 11,
+        "provided_sku_units": 11,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 3,
+        "order_id": 1,
+        "required_sku_units": 15,
+        "provided_sku_units": 15,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 4,
+        "order_id": 1,
+        "required_sku_units": 20,
+        "provided_sku_units": 20,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 5,
+        "order_id": 1,
+        "required_sku_units": 13,
+        "provided_sku_units": 13,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      }
+    ]
+  }
+}

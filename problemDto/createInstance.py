@@ -227,7 +227,7 @@ class CreateOFSProblem:
             tote_num,
             hot_sku_count * min_redundancy_per_hot_sku  # 动态下界
         )
-        unassigned_skus = set(skus_list_obj)
+        unassigned_skus: Dict[int, SKUs] = {sku.id: sku for sku in skus_list_obj}
         random.shuffle(stack_list)  # 随机化 Stack 顺序
         # 填充料箱逻辑
         # 我们可以遍历 Stack 列表来填充，而不是原来的 while 循环
@@ -245,7 +245,8 @@ class CreateOFSProblem:
 
             # 从未分配集合中选4 个 SKU (确保快速覆盖)
             num_skus = min(4, len(unassigned_skus))
-            selected = random.sample(list(unassigned_skus), num_skus)
+            selected_ids = random.sample(sorted(unassigned_skus.keys()), num_skus)
+            selected = [unassigned_skus[sku_id] for sku_id in selected_ids]
 
             tote.skus_list = selected
             tote.capacity = [random.randint(15, 50) for _ in selected]
@@ -256,7 +257,7 @@ class CreateOFSProblem:
                 sku.storeToteList.append(tote.id)
                 sku.storeQuantityList.append(tote.sku_quantity_map[sku.id])
                 sku.tote_quantity_map[tote.id] = tote.sku_quantity_map[sku.id]
-                unassigned_skus.discard(sku)
+                unassigned_skus.pop(sku.id, None)
 
             # 加入 Stack
             stack.add_tote(tote)
@@ -350,7 +351,7 @@ class CreateOFSProblem:
         unique_sku_ids: Set[int] = set()
         for order in orders:
             # 更新order的unique_sku_list
-            unique_ids_in_order = set(order.order_product_id_list)
+            unique_ids_in_order = sorted(set(order.order_product_id_list))
             order.unique_sku_list = [sku_map[sku_id] for sku_id in unique_ids_in_order]
             unique_sku_ids.update(order.order_product_id_list)
         # 新增：更新所有order需要的sku的存储点point列表和数量
@@ -386,8 +387,8 @@ class CreateOFSProblem:
                             order.point_sku_quantity[point_idx].get(sku.id, 0) + quantity_in_tote
 
             # 从point_map中生成不重复的Point对象列表
-            order.sku_storage_points = list(point_map.values())
-        ofs_problem_dto.need_points = list(sku_storepoint_list)
+            order.sku_storage_points = sorted(point_map.values(), key=lambda p: p.idx)
+        ofs_problem_dto.need_points = sorted(sku_storepoint_list, key=lambda p: p.idx)
         ofs_problem_dto.n = len(unique_sku_ids)
         ofs_problem_dto.node_num = len(ofs_problem_dto.need_points)
 
@@ -416,7 +417,7 @@ class CreateOFSProblem:
             order = Order(i)
 
             # 生成时间
-            base_time = datetime.now()
+            base_time = datetime(2025, 1, 1, 8, 0, 0)
             random_minutes = random.randint(0, 480)  # 8小时内
             order.order_in_time = base_time - timedelta(minutes=random_minutes)
 

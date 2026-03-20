@@ -1,0 +1,11 @@
+[
+  {
+    "scale": "SMALL",
+    "result_root": "D:\\研究生\\毕设代码\\DeepNCO\\result\\tra_vns_case_SMALL_20260320_194130",
+    "best_z": 375.0,
+    "total_runtime_sec": 350.3664655999746,
+    "iter_count": 11,
+    "coverage_ok": true,
+    "verification_status": "PASS"
+  }
+]

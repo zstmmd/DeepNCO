@@ -1,2 +1,0 @@
-scale,seed,sp1_subtask_num,sp1_avg_unique_sku_per_subtask,sp2_max_station_load,sp2_station_load_variance,sp3_task_num,sp3_sorting_cost_total,sp3_noise_tote_total,sp4_max_arrival_stack,sp4_max_arrival_station,global_makespan,runtime_total_sec,runtime_sp1_sec,runtime_sp2_sec,runtime_sp3_sec,runtime_sp4_sec
-SMALL,42,7.0,5.0,4.0,0.25,19.0,20.0,10.0,324.0,359.0,418.0,2.174321200000122,0.0007520999934058636,0.00012170000991318375,0.0029587000026367605,1.015211799996905

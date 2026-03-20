@@ -1,2 +1,0 @@
-scale,baseline_count,tra_count,baseline_makespan_mean,baseline_runtime_mean,tra_makespan_mean,tra_makespan_best,tra_makespan_worst,tra_makespan_std,tra_cv,tra_p95,tra_p99,tra_runtime_mean,tra_runtime_total,tra_failure_count
-SMALL,1,1,395.0,121.2067614000116,448.0,448.0,448.0,0.0,0.0,448.0,448.0,5.182775799999945,5.182775799999945,0

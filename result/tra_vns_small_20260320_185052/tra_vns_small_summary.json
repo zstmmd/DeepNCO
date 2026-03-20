@@ -1,0 +1,91 @@
+{
+  "scale": "SMALL",
+  "seed": 42,
+  "tra_max_iters": 10,
+  "vns_max_trials": 10,
+  "best_z": 338.0,
+  "total_runtime_sec": 439.8018770000199,
+  "iter_count": 11,
+  "mode_stats": {
+    "M_R": {
+      "calls": 0.0,
+      "success": 0.0,
+      "fail": 0.0,
+      "skip": 0.0,
+      "last_gap": 1.0
+    },
+    "M_Y": {
+      "calls": 0.0,
+      "success": 0.0,
+      "fail": 0.0,
+      "skip": 0.0,
+      "last_gap": 1.0
+    },
+    "M_B": {
+      "calls": 0.0,
+      "success": 0.0,
+      "fail": 0.0,
+      "skip": 0.0,
+      "last_gap": 1.0
+    },
+    "M_X": {
+      "calls": 10.0,
+      "success": 6.0,
+      "fail": 1.0,
+      "skip": 0.0,
+      "last_gap": 0.3668639053254438
+    },
+    "M_XYB": {
+      "calls": 0.0,
+      "success": 0.0,
+      "fail": 0.0,
+      "skip": 0.0,
+      "last_gap": 1.0
+    }
+  },
+  "final_metrics": {
+    "iter": 10,
+    "focus": "M_X",
+    "mode": "M_X",
+    "roles": {
+      "X": "Active",
+      "Y": "Anchored",
+      "B": "Anchored",
+      "R": "Frozen"
+    },
+    "vns_type": "Full",
+    "z": 338.0,
+    "z_before": 338.0,
+    "z_cand": 338.0,
+    "best_z": 338.0,
+    "best_z_after": 338.0,
+    "improved": false,
+    "skipped": false,
+    "lb": 214.0,
+    "LB_0": 258.0,
+    "LB_mode": 214.0,
+    "gap_mode": 0.3668639053254438,
+    "accepted_type": "reject",
+    "iter_runtime_sec": 46.895499199978076,
+    "epsilon": 0.05,
+    "subtask_count": 7.0,
+    "avg_sku_per_subtask": 5.0,
+    "max_sku_per_subtask": 8.0,
+    "station_idle_total": 310.0,
+    "station_utilization_mean": 0.5088757396449705,
+    "station_load_max": 9.0,
+    "station_load_std": 2.0,
+    "station_load_max_ratio": 1.2857142857142858,
+    "hit_stack_count": 14.0,
+    "noise_ratio": 0.30303030303030304,
+    "avg_stack_span": 4.6,
+    "sorting_cost_proxy": 20.0,
+    "robot_path_length_total": 536.0,
+    "robot_utilization_mean": 0.057692307692307696,
+    "latest_robot_finish": 258.0,
+    "robot_finish_ratio": 0.7633136094674556,
+    "arrival_slack_mean": 34.0,
+    "global_makespan": 338.0,
+    "UB": 338.0
+  }
+}

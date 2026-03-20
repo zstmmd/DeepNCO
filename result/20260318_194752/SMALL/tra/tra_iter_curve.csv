@@ -1,3 +1,0 @@
-scale,run_id,seed,iter,focus,z,best_z,lb,improved,skipped,epsilon
-SMALL,0,42,0,init,408.0,408.0,,True,False,0.05
-SMALL,0,42,1,sp3,408.0,408.0,372.0,False,False,0.05

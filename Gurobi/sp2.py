@@ -70,6 +70,8 @@ class SP2_Station_Assigner:
                                 sp4_robot_arrival_times: Dict[int, float],
                                 sp3_tote_selection: Optional[Dict[int, List[int]]] = None,
                                 sp3_sorting_costs: Optional[Dict[int, float]] = None,
+                                shadow_assignment_penalty: Optional[Dict[Tuple[int, int], float]] = None,
+                                shadow_weight: float = 1.0,
                                 time_limit_sec: float = 60.0):
         """
         基于 MIP 优化任务指派
@@ -151,7 +153,21 @@ class SP2_Station_Assigner:
                 m.addConstr(C_max >= t[p, s] + proc_time_p)
 
         # 4. 求解
-        m.setObjective(C_max, GRB.MINIMIZE)
+        # Objective: makespan + shadow penalties
+        obj = C_max
+        if shadow_assignment_penalty:
+            sw = max(0.0, float(shadow_weight))
+            pen = gp.LinExpr()
+            for k_idx, task in enumerate(tasks):
+                oid = int(getattr(task.parent_order, 'order_id', -1))
+                for s in S:
+                    pi = float(shadow_assignment_penalty.get((oid, self.stations[s].id), 0.0))
+                    if pi <= 0:
+                        continue
+                    pen += pi * gp.quicksum(y[k_idx, p, s] for p in P)
+            if sw > 0:
+                obj = obj + sw * pen
+        m.setObjective(obj, GRB.MINIMIZE)
         m.optimize()
 
         if m.status in [GRB.OPTIMAL, GRB.TIME_LIMIT]:

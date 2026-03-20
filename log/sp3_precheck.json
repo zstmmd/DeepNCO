@@ -1,0 +1,112 @@
+{
+  "unmet_subtask_count": 0,
+  "unmet_sku_total": 0,
+  "details": [
+    {
+      "subtask_id": 0,
+      "unmet": 0,
+      "unmet_skus": {},
+      "chosen_stacks": [
+        1343,
+        1611
+      ],
+      "hit_totes": [
+        12,
+        108,
+        111,
+        114
+      ]
+    },
+    {
+      "subtask_id": 1,
+      "unmet": 0,
+      "unmet_skus": {},
+      "chosen_stacks": [
+        1302,
+        1858
+      ],
+      "hit_totes": [
+        62,
+        64,
+        156
+      ]
+    },
+    {
+      "subtask_id": 2,
+      "unmet": 0,
+      "unmet_skus": {},
+      "chosen_stacks": [
+        512,
+        754,
+        835,
+        1603,
+        2004
+      ],
+      "hit_totes": [
+        5,
+        10,
+        14,
+        102,
+        192
+      ]
+    },
+    {
+      "subtask_id": 3,
+      "unmet": 0,
+      "unmet_skus": {},
+      "chosen_stacks": [
+        1364,
+        1478
+      ],
+      "hit_totes": [
+        3,
+        4
+      ]
+    },
+    {
+      "subtask_id": 4,
+      "unmet": 0,
+      "unmet_skus": {},
+      "chosen_stacks": [
+        1932
+      ],
+      "hit_totes": [
+        145,
+        146,
+        148
+      ]
+    },
+    {
+      "subtask_id": 5,
+      "unmet": 0,
+      "unmet_skus": {},
+      "chosen_stacks": [
+        450,
+        918,
+        1932
+      ],
+      "hit_totes": [
+        27,
+        92,
+        95,
+        98,
+        142
+      ]
+    },
+    {
+      "subtask_id": 6,
+      "unmet": 0,
+      "unmet_skus": {},
+      "chosen_stacks": [
+        1296,
+        1837,
+        2144
+      ],
+      "hit_totes": [
+        0,
+        11,
+        18
+      ]
+    }
+  ]
+}

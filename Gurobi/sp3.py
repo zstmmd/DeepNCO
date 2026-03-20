@@ -789,10 +789,30 @@ class SP3_Bin_Hitter:
             self.stack_snapshots[stack_id] = remaining_totes
 
         def _greedy_tote_selection_v2(self, task: SubTask) -> Dict[int, List[Tote]]:
-            # ... (保持原样) ...
-            pending_skus = sorted([sku.id for sku in task.sku_list])
-            pending_skus_set = set(pending_skus)
+            # 需求使用 multiset（计数），避免把同 SKU 多件压成 set 造成漏选
+            pending_demand = defaultdict(int)
+            for sku in task.sku_list:
+                pending_demand[sku.id] += 1
+            pending_skus_set = set(k for k, v in pending_demand.items() if v > 0)
             selected_stacks_map = defaultdict(list)
+
+            # 新指标：鼓励选择“能命中更多需要 tote 的堆垛”
+            w_multi = float(getattr(OFSConfig, "SP3_MULTI_HIT_WEIGHT", 10.0))
+            # 稀缺性指标：SKU 出现的堆垛越少，优先级越高（权重可配）
+            w_scarcity = float(getattr(OFSConfig, "SP3_SCARCITY_WEIGHT", 5.0))
+            sku_stack_count = defaultdict(int)
+            if w_scarcity > 0:
+                # 只统计该 SubTask 相关 SKU 在当前快照中出现的堆垛数量
+                # 复杂度：O(|stacks| * stack_height)，但仅在启发式且规模可控
+                sku_ids_needed = set(pending_skus_set)
+                for _stack_id, totes in self.stack_snapshots.items():
+                    seen = set()
+                    for t in totes:
+                        for s_id in t.sku_quantity_map.keys():
+                            if s_id in sku_ids_needed:
+                                seen.add(s_id)
+                    for s_id in seen:
+                        sku_stack_count[s_id] += 1
 
             while pending_skus_set:
                 sku_availability = defaultdict(list)
@@ -808,11 +828,15 @@ class SP3_Bin_Hitter:
                         sku_availability[sku_id].append(tote)
 
                 if not sku_availability:
-                    print(f"  ⚠️ [Heuristic] Cannot find totes for remaining SKUs: {pending_skus_set}")
-                    break
+                    # 无可用 tote：记录 unmet，让上层通过 sp3_unmet_sku_total / sp3_coverage_ok 处理
+                    task.sp3_unmet_sku_total = int(sum(v for v in pending_demand.values() if v > 0))
+                    task.sp3_coverage_ok = False
+                    print(f"  [SP3 Heuristic][WARN] Cannot find totes for remaining SKU demand: {dict(pending_demand)}")
+                    return selected_stacks_map
 
                 stack_score = {}
                 stack_candidate_totes = defaultdict(list)
+                stack_need_tote_ids = defaultdict(set)  # s_idx -> {tote_id} that can contribute
                 for sku_id in sorted(pending_skus_set):
                     candidates = sku_availability.get(sku_id, [])
                     candidates.sort(key=lambda t: t.id)
@@ -827,15 +851,39 @@ class SP3_Bin_Hitter:
                         else:
                             normalized_layer = 0
                         layer_bonus = 10 * (1 - normalized_layer)
-                        total_score = bundle_bonus + layer_bonus
+                        # 稀缺性：该 sku 在越少堆垛出现，bonus 越大
+                        scarcity_bonus = 0.0
+                        if w_scarcity > 0:
+                            avail = int(sku_stack_count.get(sku_id, 0))
+                            if avail <= 0:
+                                avail = 1
+                            scarcity_bonus = w_scarcity * (1.0 / avail)
+
+                        total_score = bundle_bonus + layer_bonus + scarcity_bonus
                         if s_idx not in stack_score:
                             stack_score[s_idx] = 0
                         stack_score[s_idx] += total_score
                         if tote not in stack_candidate_totes[s_idx]:
                             stack_candidate_totes[s_idx].append(tote)
+                        # 贡献判断：该 tote 是否能对当前剩余需求做出正贡献
+                        contributes = False
+                        for s_id, qty in tote.sku_quantity_map.items():
+                            if qty <= 0:
+                                continue
+                            if pending_demand.get(s_id, 0) > 0:
+                                contributes = True
+                                break
+                        if contributes:
+                            stack_need_tote_ids[s_idx].add(tote.id)
 
                 if not stack_score:
                     break
+
+                # 将 needToteCnt 指标加入 stack_score（每个堆垛一次性奖励）
+                if w_multi > 0:
+                    for s_idx, tote_ids in stack_need_tote_ids.items():
+                        need_cnt = min(self.robot_capacity, len(tote_ids))
+                        stack_score[s_idx] = stack_score.get(s_idx, 0) + w_multi * need_cnt
 
                 best_stack_idx = max(stack_score.items(), key=lambda x: (x[1], -x[0]))[0]
                 chosen_totes = stack_candidate_totes[best_stack_idx]
@@ -846,14 +894,23 @@ class SP3_Bin_Hitter:
                 ))
 
                 for t in chosen_totes:
-                    tote_sku_ids = set(s.id for s in t.skus_list)
-                    contributes = not pending_skus_set.isdisjoint(tote_sku_ids)
-                    if contributes:
+                    # 只要该 tote 能对剩余需求贡献，就选入，并按库存扣减需求
+                    used_any = False
+                    for s_id, qty in t.sku_quantity_map.items():
+                        if qty <= 0:
+                            continue
+                        if pending_demand.get(s_id, 0) <= 0:
+                            continue
+                        used = min(int(qty), int(pending_demand[s_id]))
+                        if used > 0:
+                            pending_demand[s_id] -= used
+                            used_any = True
+                            if pending_demand[s_id] <= 0:
+                                pending_demand.pop(s_id, None)
+                    if used_any:
                         if t not in selected_stacks_map[best_stack_idx]:
                             selected_stacks_map[best_stack_idx].append(t)
-                        for s_in_tote in t.skus_list:
-                            if s_in_tote.id in pending_skus_set:
-                                pending_skus_set.remove(s_in_tote.id)
+                        pending_skus_set = set(k for k, v in pending_demand.items() if v > 0)
             return selected_stacks_map
 
         def _decide_operation_mode(self,

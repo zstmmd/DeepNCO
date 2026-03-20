@@ -179,10 +179,18 @@ class GlobalTimeCalculator:
     def _write_robot_paths(self, output_dir):
         """输出机器人路径到 txt"""
         filename = os.path.join(output_dir, "robot_paths.txt")
+        has_task_timeline = False
+        for st in getattr(self.problem, "subtask_list", []) or []:
+            for t in getattr(st, "execution_tasks", []) or []:
+                if float(getattr(t, "arrival_time_at_stack", 0.0)) > 0.0 or float(getattr(t, "arrival_time_at_station", 0.0)) > 0.0:
+                    has_task_timeline = True
+                    break
+            if has_task_timeline:
+                break
 
         # 优先使用 SP4 的原始路由日志，保证时间线连续且与求解器一致。
         sp4_result_path = os.path.join(os.path.dirname(output_dir), "SP4_result.txt")
-        if os.path.exists(sp4_result_path):
+        if os.path.exists(sp4_result_path) and not has_task_timeline:
             with open(sp4_result_path, "r", encoding="utf-8") as src, open(filename, "w", encoding="utf-8") as dst:
                 current_robot = None
                 for raw_line in src:

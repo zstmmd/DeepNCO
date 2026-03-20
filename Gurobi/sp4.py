@@ -83,8 +83,9 @@ class SP4_Robot_Router:
                         print(f"    [{seq}] Stack {task_obj.target_stack_id} @ {time:.1f}s "
                               f"(SubTask {task_obj.sub_task_id}, Load={task_obj.total_load_count})")
 
-    def _solve_LKH(self, sub_tasks: List) -> Tuple[Dict[int, float], Dict[int, int]]:
+    def _solve_LKH(self, sub_tasks: List, soft_time_windows: Optional[Dict[int, float]] = None, mu: float = 0.0) -> Tuple[Dict[int, float], Dict[int, int]]:
         print(f"  >>> [SP4] Starting LKH-based Routing (OR-Tools)...")
+        quiet_mode = os.environ.get("OFS_BATCH_SILENT", "0") == "1"
 
         # 1. 提取有效任务
         valid_tasks = [st for st in sub_tasks if st.execution_tasks]
@@ -206,6 +207,36 @@ class SP4_Robot_Router:
         )
         time_dimension = routing.GetDimensionOrDie(time)
         time_dimension.SetGlobalSpanCostCoefficient(100)
+
+        # --- Soft upper bounds for deliveries (t_latest) ---
+        if soft_time_windows:
+            # Build task -> delivery index map (already below for logs; reconstruct here for safety)
+            try:
+                # reconstruct mapping for this scope
+                num_tasks = len([t for st in valid_tasks for t in st.execution_tasks])
+                # We rebuild pair_map as in original code
+                # Note: nodes_info: [0]=Depot, [1..K]=Pickups, [K+1..2K]=Deliveries
+                # We'll map by scanning deliveries constructed above
+                # We replicate minimal part to map task_id -> delivery index in manager space
+                task_to_delivery_index = {}
+                offset = 0
+                # Rebuild deliveries list like above
+                deliveries_tmp = []
+                for st in valid_tasks:
+                    for task in st.execution_tasks:
+                        station_pt = self.problem.station_list[st.assigned_station_id].point
+                        deliveries_tmp.append((station_pt, task, 'delivery', st.id))
+                for idx, (_pt, task_obj, _nt, _sid) in enumerate(deliveries_tmp):
+                    d_node = num_tasks + idx + 1
+                    task_to_delivery_index[task_obj.task_id] = manager.NodeToIndex(d_node)
+                # apply soft UB
+                penalty = max(0, int(round(mu * 10)))
+                for tid, latest in soft_time_windows.items():
+                    if tid in task_to_delivery_index:
+                        idx = task_to_delivery_index[tid]
+                        time_dimension.SetCumulVarSoftUpperBound(idx, int(round(float(latest) * 10)), penalty)
+            except Exception:
+                pass
     
         solver = routing.solver()
 
@@ -262,7 +293,7 @@ class SP4_Robot_Router:
             log_dir = os.path.join(ROOT_DIR, 'log')
             if not os.path.exists(log_dir):
                 os.makedirs(log_dir)
-            result_log_path = os.path.join(log_dir, 'SP4_result.txt')
+            result_log_path = os.devnull if quiet_mode else os.path.join(log_dir, 'SP4_result.txt')
 
             with open(result_log_path, 'w', encoding='utf-8') as f_log:
                 f_log.write(f"=== SP4 LKH Routing Final Results ===\n")
@@ -274,7 +305,8 @@ class SP4_Robot_Router:
                 for vehicle_id in range(num_vehicles):
                     robot_id = self.problem.robot_list[vehicle_id].id
                     header = f"\n=== Robot {robot_id} Route ==="
-                    print(header)
+                    if not quiet_mode:
+                        print(header)
                     f_log.write(header + "\n")
 
                     index = routing.Start(vehicle_id)
@@ -315,7 +347,8 @@ class SP4_Robot_Router:
                             # 回填站点到达时间（优先使用 SP4 的实际到达时间）
                             task_obj.arrival_time_at_station = arr_time
 
-                        print(line)
+                        if not quiet_mode:
+                            print(line)
                         f_log.write(line + "\n")
 
                         # 步进到下一个节点
@@ -332,12 +365,14 @@ class SP4_Robot_Router:
                     end_line = f"  [{end_time:>5.1f}s] End @ Depot {coord}   | Load: {final_load}/{self.robot_capacity}"
                     summary_line = f"  -> Total tasks visited: {step_count - 1}, Return Time: {end_time:.1f}s\n"
 
-                    print(end_line)
-                    print(summary_line)
+                    if not quiet_mode:
+                        print(end_line)
+                        print(summary_line)
                     f_log.write(end_line + "\n")
                     f_log.write(summary_line + "\n")
 
-            print(f"  >>> [Log] Final results written to {result_log_path}")
+            if not quiet_mode:
+                print(f"  >>> [Log] Final results written to {result_log_path}")
             return result_times, result_assign
         else:
             print("  >>> [Error] LKH Engine Failed to find a solution (Infeasible).")
@@ -347,7 +382,9 @@ class SP4_Robot_Router:
     def solve(self,
               sub_tasks: List[SubTask],
               use_mip: bool = True,
-              lkh_time_limit_seconds: Optional[int] = None) -> Tuple[Dict[int, float], Dict[int, int]]:
+              lkh_time_limit_seconds: Optional[int] = None,
+              soft_time_windows: Optional[Dict[int, float]] = None,
+              mu: float = 0.0) -> Tuple[Dict[int, float], Dict[int, int]]:
         """
         执行求解
 
@@ -364,7 +401,7 @@ class SP4_Robot_Router:
         else:
             if lkh_time_limit_seconds is not None:
                 self.lkh_time_limit_seconds = int(lkh_time_limit_seconds)
-            return self._solve_LKH(sub_tasks)
+            return self._solve_LKH(sub_tasks, soft_time_windows=soft_time_windows, mu=mu)
 
     def _solve_mip_pdp_v2(self, sub_tasks: List[SubTask]) -> Tuple[Dict[int, float], Dict[int, int]]:
         r"""
