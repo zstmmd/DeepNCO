@@ -1,8 +1,8 @@
-best_iter=7
-best_z=375.000000
-global_makespan=375.000000
+best_iter=0
+best_z=378.000000
+global_makespan=378.000000
 sp1_subtask_count=6, sp1_avg_sku_per_subtask=5.833333, sp1_max_sku_per_subtask=7.000000
-sp2_station_idle_total=397.000000, sp2_station_load_max=9.000000, sp2_station_load_std=2.500000
-sp3_hit_stack_count=13.000000, sp3_noise_ratio=0.257143, sp3_avg_stack_span=5.500000, sp3_sorting_cost_proxy=18.000000
-sp4_robot_path_length_total=542.000000, sp4_latest_robot_finish=297.000000, sp4_arrival_slack_mean=29.461538
+sp2_station_idle_total=398.000000, sp2_station_load_max=10.000000, sp2_station_load_std=2.500000
+sp3_hit_stack_count=15.000000, sp3_noise_ratio=0.068966, sp3_avg_stack_span=4.000000, sp3_sorting_cost_proxy=4.000000
+sp4_robot_path_length_total=522.000000, sp4_latest_robot_finish=273.000000, sp4_arrival_slack_mean=75.266667
 coverage_ok=True, unmet_sku_total=0, unmet_subtask_count=0

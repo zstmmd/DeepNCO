@@ -1,32 +1,32 @@
 {
-  "best_iter": 7,
-  "best_z": 375.0,
-  "recomputed_z": 375.0,
-  "global_makespan": 375.0,
+  "best_iter": 0,
+  "best_z": 378.0,
+  "recomputed_z": 378.0,
+  "global_makespan": 378.0,
   "sp1": {
     "subtask_count": 6,
     "avg_sku_per_subtask": 5.833333333333333,
     "max_sku_per_subtask": 7.0
   },
   "sp2": {
-    "station_idle_total": 397.0,
-    "station_utilization_mean": 0.456,
-    "station_load_max": 9.0,
+    "station_idle_total": 398.0,
+    "station_utilization_mean": 0.43386243386243384,
+    "station_load_max": 10.0,
     "station_load_std": 2.5,
-    "station_load_max_ratio": 1.3846153846153846
+    "station_load_max_ratio": 1.3333333333333333
   },
   "sp3": {
-    "hit_stack_count": 13.0,
-    "noise_ratio": 0.2571428571428571,
-    "avg_stack_span": 5.5,
-    "sorting_cost_proxy": 18.0
+    "hit_stack_count": 15.0,
+    "noise_ratio": 0.06896551724137931,
+    "avg_stack_span": 4.0,
+    "sorting_cost_proxy": 4.0
   },
   "sp4": {
-    "robot_path_length_total": 542.0,
-    "robot_utilization_mean": 0.06133333333333334,
-    "latest_robot_finish": 297.0,
-    "robot_finish_ratio": 0.792,
-    "arrival_slack_mean": 29.46153846153846
+    "robot_path_length_total": 522.0,
+    "robot_utilization_mean": 0.08597883597883597,
+    "latest_robot_finish": 273.0,
+    "robot_finish_ratio": 0.7222222222222222,
+    "arrival_slack_mean": 75.26666666666667
   },
   "coverage": {
     "coverage_ok": true,
@@ -45,8 +45,8 @@
       {
         "subtask_id": 1,
         "order_id": 0,
-        "required_sku_units": 23,
-        "provided_sku_units": 23,
+        "required_sku_units": 22,
+        "provided_sku_units": 22,
         "unmet_sku_units": 0,
         "unmet_skus": {},
         "coverage_ok": true
@@ -54,8 +54,8 @@
       {
         "subtask_id": 2,
         "order_id": 0,
-        "required_sku_units": 11,
-        "provided_sku_units": 11,
+        "required_sku_units": 12,
+        "provided_sku_units": 12,
         "unmet_sku_units": 0,
         "unmet_skus": {},
         "coverage_ok": true
@@ -63,8 +63,8 @@
       {
         "subtask_id": 3,
         "order_id": 1,
-        "required_sku_units": 15,
-        "provided_sku_units": 15,
+        "required_sku_units": 14,
+        "provided_sku_units": 14,
         "unmet_sku_units": 0,
         "unmet_skus": {},
         "coverage_ok": true
@@ -72,8 +72,8 @@
       {
         "subtask_id": 4,
         "order_id": 1,
-        "required_sku_units": 20,
-        "provided_sku_units": 20,
+        "required_sku_units": 13,
+        "provided_sku_units": 13,
         "unmet_sku_units": 0,
         "unmet_skus": {},
         "coverage_ok": true
@@ -81,8 +81,8 @@
       {
         "subtask_id": 5,
         "order_id": 1,
-        "required_sku_units": 13,
-        "provided_sku_units": 13,
+        "required_sku_units": 21,
+        "provided_sku_units": 21,
         "unmet_sku_units": 0,
         "unmet_skus": {},
         "coverage_ok": true

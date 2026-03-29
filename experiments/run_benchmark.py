@@ -4,6 +4,7 @@ import csv
 import json
 import math
 import os
+import shutil
 import statistics
 import sys
 import time
@@ -21,6 +22,8 @@ from Gurobi.sp2 import SP2_Station_Assigner
 from Gurobi.sp3 import SP3_Bin_Hitter
 from Gurobi.sp4 import SP4_Robot_Router
 from Gurobi.tra import TRAOptimizer, TRARunConfig
+from Gurobi.alns_relax_decomp import ALNSRelaxDecompConfig, ALNSRelaxDecompOptimizer
+from two_layer_tra import TwoLayerTRAConfig, TwoLayerTRAOptimizer
 from entity.calculate import GlobalTimeCalculator
 from config.ofs_config import OFSConfig
 
@@ -403,6 +406,50 @@ def _make_tra_config(scale: str, seed: int, max_iters: int, no_improve_limit: in
     )
 
 
+def _make_alns_relax_config(scale: str, seed: int, max_iters: int, no_improve_limit: int, epsilon: float,
+                            sp2_time_limit_sec: float, sp4_lkh_time_limit_seconds: int,
+                            enable_sp3_precheck: bool = True, precheck_fail_action: str = "log",
+                            enable_soft_mu: bool = False, enable_soft_pi: bool = False, enable_soft_beta: bool = False,
+                            enable_sku_affinity: bool = False, mu_value: float = 1.0, pi_scale: float = 1.0,
+                            pi_clip: float = 120.0, d0_threshold: float = 20.0, beta_base: float = 1.0,
+                            beta_gain: float = 1.0, beta_min: float = 0.5, beta_max: float = 3.0,
+                            sp2_shadow_weight: float = 1.0, weak_accept_eta: float = 0.02,
+                            alns_init_iters: int = 10) -> ALNSRelaxDecompConfig:
+    return ALNSRelaxDecompConfig(
+        scale=scale,
+        seed=seed,
+        max_iters=max_iters,
+        no_improve_limit=no_improve_limit,
+        epsilon=epsilon,
+        sp2_use_mip=True,
+        sp3_use_mip=True,
+        sp4_use_mip=False,
+        sp2_time_limit_sec=sp2_time_limit_sec,
+        sp4_lkh_time_limit_seconds=sp4_lkh_time_limit_seconds,
+        export_best_solution=False,
+        write_iteration_logs=False,
+        enable_sp1_feedback_analysis=False,
+        enable_sp3_precheck=enable_sp3_precheck,
+        sp3_precheck_fail_action=precheck_fail_action,
+        enable_soft_mu=enable_soft_mu,
+        enable_soft_pi=enable_soft_pi,
+        enable_soft_beta=enable_soft_beta,
+        enable_sku_affinity=enable_sku_affinity,
+        mu_value=mu_value,
+        pi_scale=pi_scale,
+        pi_clip=pi_clip,
+        d0_threshold=d0_threshold,
+        beta_base=beta_base,
+        beta_gain=beta_gain,
+        beta_min=beta_min,
+        beta_max=beta_max,
+        sp2_shadow_weight=sp2_shadow_weight,
+        enable_role_vns=False,
+        weak_accept_eta=weak_accept_eta,
+        alns_init_iters=alns_init_iters,
+    )
+
+
 def _tra_layer_row(scale: str, run_id: int, seed: int, iter_log: List[Dict[str, Any]], best_z: float,
                    runtime_sec: float, status: str, instance_info: Dict[str, Any],
                    unmet_sku_total: int, unmet_subtask_count: int,
@@ -475,6 +522,147 @@ def _write_csv(path: str, rows: List[Dict[str, Any]]):
 def _write_json(path: str, obj: Any):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(obj, f, ensure_ascii=False, indent=2)
+
+
+def _write_layer_augmented_proxy_csv(path: str, iter_rows: List[Dict[str, Any]]):
+    proxy_rows: List[Dict[str, Any]] = []
+    for row in iter_rows:
+        focus = str(row.get("focus", "")).upper()
+        out = {
+            "iter": int(row.get("iter", -1)),
+            "focus": focus,
+            "x_proxy": "",
+            "y_proxy": "",
+            "z_proxy": "",
+            "u_proxy": "",
+            "focused_local_obj": row.get("local_obj", ""),
+            "focused_augmented_obj": row.get("augmented_obj", ""),
+            "baseline_augmented_obj": row.get("baseline_augmented_obj", ""),
+            "commit_decision": row.get("commit_decision", row.get("accepted_type", "")),
+            "best_z": row.get("best_z", ""),
+        }
+        if focus == "X":
+            out["x_proxy"] = row.get("augmented_obj", "")
+        elif focus == "Y":
+            out["y_proxy"] = row.get("augmented_obj", "")
+        elif focus == "Z":
+            out["z_proxy"] = row.get("augmented_obj", "")
+        elif focus == "U":
+            out["u_proxy"] = row.get("augmented_obj", "")
+        proxy_rows.append(out)
+    _write_csv(path, proxy_rows)
+
+
+def _write_layer_solution_audit(path: str, opt) -> None:
+    problem = getattr(opt, "problem", None)
+    with open(path, "w", encoding="utf-8") as f:
+        if problem is None:
+            f.write("No problem state available.\n")
+            return
+
+        def _sku_count_dict_from_ids(sku_ids):
+            counts: Dict[int, int] = {}
+            for sku_id in sku_ids or []:
+                sid = int(getattr(sku_id, "id", sku_id))
+                counts[sid] = counts.get(sid, 0) + 1
+            return dict(sorted(counts.items()))
+
+        def _sku_count_dict_from_objs(skus):
+            counts: Dict[int, int] = {}
+            for sku in skus or []:
+                sid = int(getattr(sku, "id", -1))
+                counts[sid] = counts.get(sid, 0) + 1
+            return dict(sorted(counts.items()))
+
+        all_tasks = _collect_all_tasks(problem)
+        robot_to_tasks: Dict[int, List[Any]] = {}
+        for task in all_tasks:
+            rid = int(getattr(task, "robot_id", -1))
+            robot_to_tasks.setdefault(rid, []).append(task)
+
+        f.write("[ALNS Relax Solution Audit]\n")
+        f.write(f"global_makespan={float(getattr(problem, 'global_makespan', 0.0)):.6f}\n")
+        f.write(f"robot_capacity={int(getattr(OFSConfig, 'ROBOT_CAPACITY', 0))}\n")
+        f.write(f"picking_time={float(getattr(OFSConfig, 'PICKING_TIME', 0.0)):.6f}\n")
+        f.write(f"move_extra_tote_time={float(getattr(OFSConfig, 'MOVE_EXTRA_TOTE_TIME', 0.0)):.6f}\n")
+        f.write(f"task_count={int(len(all_tasks))}\n")
+
+        f.write("\n[BOM Requirements]\n")
+        for order in sorted(getattr(problem, "order_list", []) or [], key=lambda x: int(getattr(x, "order_id", -1))):
+            order_skus = getattr(order, "order_product_id_list", []) or []
+            f.write(
+                f"order_id={int(order.order_id)}, sku_unit_count={int(len(order_skus))}, "
+                f"unique_sku_count={int(len(set(order_skus)))}, sku_qty={_sku_count_dict_from_ids(order_skus)}\n"
+            )
+
+        f.write("\n[SP1 Allocation]\n")
+        for st in sorted(getattr(problem, "subtask_list", []) or [], key=lambda x: int(getattr(x, "id", -1))):
+            unique_skus = sorted(int(getattr(s, "id", -1)) for s in (getattr(st, "unique_sku_list", []) or []))
+            f.write(
+                f"subtask_id={int(st.id)}, order_id={int(getattr(st.parent_order, 'order_id', -1))}, "
+                f"sku_unit_count={int(len(getattr(st, 'sku_list', []) or []))}, "
+                f"unique_sku_count={int(len(unique_skus))}, unique_skus={unique_skus}, "
+                f"sku_qty={_sku_count_dict_from_objs(getattr(st, 'sku_list', []) or [])}\n"
+            )
+
+        f.write("\n[SP2 Assignment And Sequence]\n")
+        for st in sorted(
+            getattr(problem, "subtask_list", []) or [],
+            key=lambda x: (
+                int(getattr(x, "assigned_station_id", -1)),
+                int(getattr(x, "station_sequence_rank", -1)),
+                int(getattr(x, "id", -1)),
+            ),
+        ):
+            f.write(
+                f"subtask_id={int(st.id)}, station_id={int(getattr(st, 'assigned_station_id', -1))}, "
+                f"rank={int(getattr(st, 'station_sequence_rank', -1))}, "
+                f"estimated_process_start_time={float(getattr(st, 'estimated_process_start_time', 0.0)):.6f}, "
+                f"completion_time={float(getattr(st, 'completion_time', 0.0)):.6f}\n"
+            )
+
+        f.write("\n[SP3 Task Fields]\n")
+        for task in sorted(all_tasks, key=lambda t: int(getattr(t, "task_id", -1))):
+            f.write(f"task_id={int(getattr(task, 'task_id', -1))}\n")
+            for key, value in sorted(getattr(task, "__dict__", {}).items(), key=lambda kv: kv[0]):
+                f.write(f"  {key}={value}\n")
+
+        f.write("\n[SP4 Robot Paths]\n")
+        for rid in sorted(robot_to_tasks.keys()):
+            f.write(f"robot_id={rid}\n")
+            seq = sorted(
+                robot_to_tasks[rid],
+                key=lambda t: (
+                    int(getattr(t, "trip_id", 0)),
+                    float(getattr(t, "arrival_time_at_stack", 0.0)),
+                    int(getattr(t, "task_id", -1)),
+                ),
+            )
+            for task in seq:
+                f.write(
+                    f"  task_id={int(getattr(task, 'task_id', -1))}, subtask_id={int(getattr(task, 'sub_task_id', -1))}, "
+                    f"trip_id={int(getattr(task, 'trip_id', 0))}, target_stack_id={int(getattr(task, 'target_stack_id', -1))}, "
+                    f"target_station_id={int(getattr(task, 'target_station_id', -1))}, "
+                    f"arrival_stack={float(getattr(task, 'arrival_time_at_stack', 0.0)):.6f}, "
+                    f"arrival_station={float(getattr(task, 'arrival_time_at_station', 0.0)):.6f}, "
+                    f"robot_service_time={float(getattr(task, 'robot_service_time', 0.0)):.6f}, "
+                    f"load={int(getattr(task, 'total_load_count', 0))}\n"
+                )
+
+        f.write("\n[Quick Checks]\n")
+        issues = []
+        robot_capacity = int(getattr(OFSConfig, "ROBOT_CAPACITY", 0))
+        for task in all_tasks:
+            load = int(getattr(task, "total_load_count", 0))
+            if load > robot_capacity:
+                issues.append(f"task {int(task.task_id)} load {load} exceeds robot capacity {robot_capacity}")
+            if float(getattr(task, "end_process_time", 0.0)) + 1e-6 < float(getattr(task, "start_process_time", 0.0)):
+                issues.append(f"task {int(task.task_id)} end before start")
+        if not issues:
+            f.write("No obvious hard-constraint violations found in quick checks.\n")
+        else:
+            for item in issues:
+                f.write(f"{item}\n")
 
 
 def _save_line_plot_png(path: str, title: str, xlabel: str, ylabel: str,
@@ -772,6 +960,65 @@ def _write_report(path: str, summary_rows: List[Dict[str, Any]], scales: List[st
         f.write("\n".join(lines) + "\n")
 
 
+def _make_two_layer_tra_config(
+        scale: str,
+        seed: int,
+        max_iters: int,
+        no_improve_limit: int,
+        epsilon: float,
+        sp2_time_limit_sec: float,
+        sp4_lkh_time_limit_seconds: int,
+        enable_sp3_precheck: bool,
+        precheck_fail_action: str,
+        enable_soft_mu: bool = False,
+        enable_soft_pi: bool = False,
+        enable_soft_beta: bool = False,
+        enable_sku_affinity: bool = False,
+        mu_value: float = 1.0,
+        pi_scale: float = 1.0,
+        pi_clip: float = 120.0,
+        d0_threshold: float = 20.0,
+        beta_base: float = 1.0,
+        beta_gain: float = 1.0,
+        beta_min: float = 0.5,
+        beta_max: float = 3.0,
+        sp2_shadow_weight: float = 1.0,
+) -> TwoLayerTRAConfig:
+    cfg = TwoLayerTRAConfig(
+        scale=str(scale).upper(),
+        seed=int(seed),
+        max_iters=int(max_iters),
+        no_improve_limit=int(no_improve_limit),
+        epsilon=float(epsilon),
+        sp2_use_mip=True,
+        sp3_use_mip=False,
+        sp4_use_mip=False,
+        sp2_time_limit_sec=float(sp2_time_limit_sec),
+        sp4_lkh_time_limit_seconds=int(sp4_lkh_time_limit_seconds),
+        export_best_solution=True,
+        write_iteration_logs=True,
+        enable_sp3_precheck=bool(enable_sp3_precheck),
+        sp3_precheck_fail_action=str(precheck_fail_action),
+        enable_soft_mu=bool(enable_soft_mu),
+        enable_soft_pi=bool(enable_soft_pi),
+        enable_soft_beta=bool(enable_soft_beta),
+        enable_sku_affinity=bool(enable_sku_affinity),
+        mu_value=float(mu_value),
+        pi_scale=float(pi_scale),
+        pi_clip=float(pi_clip),
+        d0_threshold=float(d0_threshold),
+        beta_base=float(beta_base),
+        beta_gain=float(beta_gain),
+        beta_min=float(beta_min),
+        beta_max=float(beta_max),
+        sp2_shadow_weight=float(sp2_shadow_weight),
+    )
+    cfg.enable_sp1_feedback_analysis = False
+    cfg.enable_role_vns = False
+    cfg.enable_x1_initialization = True
+    return cfg
+
+
 def run_soft_coupling_ablation_table(
         scales: List[str],
         iter_limit: int = 1000,
@@ -1042,6 +1289,253 @@ def run_tra_vns_small_test(args) -> str:
         tra_max_iters=10,
         vns_max_trials=10,
         result_tag="tra_vns_small",
+    )
+
+
+def run_small_layer_augmented_case_export(
+    seed: int = 42,
+    max_iters: int = 10,
+    case: str = "SMALL",
+    no_improve_limit: int = 3,
+    epsilon: float = 0.05,
+    sp2_time_limit_sec: float = 10.0,
+    sp4_lkh_time_limit_seconds: int = 5,
+    export_best_solution: bool = True,
+    silent: bool = True
+
+) -> str:
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    result_tag: str = f"{case}_{seed}_layer_augmented"
+    result_root = _ensure_dir(os.path.join(ROOT_DIR, "result", f"{result_tag}_{timestamp}"))
+
+    cfg = _make_tra_config(
+        scale=case,
+        seed=int(seed),
+        max_iters=int(max_iters),
+        no_improve_limit=int(no_improve_limit),
+        epsilon=float(epsilon),
+        sp2_time_limit_sec=float(sp2_time_limit_sec),
+        sp4_lkh_time_limit_seconds=int(sp4_lkh_time_limit_seconds),
+        enable_role_vns=True,
+    )
+    cfg.search_scheme = "layer_augmented"
+    cfg.log_dir = result_root
+    cfg.write_iteration_logs = True
+    cfg.export_best_solution = bool(export_best_solution)
+    cfg.enable_sp1_feedback_analysis = False
+
+    opt = TRAOptimizer(cfg)
+
+    def _runner():
+        t0 = time.perf_counter()
+        best_z_val = float(opt.run())
+        runtime_sec = float(time.perf_counter() - t0)
+        return best_z_val, runtime_sec
+
+    if silent:
+        old_flag = os.environ.get("OFS_BATCH_SILENT")
+        os.environ["OFS_BATCH_SILENT"] = "1"
+        with open(os.devnull, "w", encoding="utf-8") as devnull:
+            with contextlib.redirect_stdout(devnull), contextlib.redirect_stderr(devnull):
+                best_z, total_runtime_sec = _runner()
+        if old_flag is None:
+            os.environ.pop("OFS_BATCH_SILENT", None)
+        else:
+            os.environ["OFS_BATCH_SILENT"] = old_flag
+    else:
+        best_z, total_runtime_sec = _runner()
+
+    iter_rows = list(getattr(opt, "iter_log", []) or [])
+    _write_layer_augmented_proxy_csv(os.path.join(result_root, "iter_xyzu_proxy_values.csv"), iter_rows)
+
+    best_iter = int(getattr(opt.best, "iter_id", -1)) if getattr(opt, "best", None) is not None else -1
+    with open(os.path.join(result_root, "run_brief.txt"), "w", encoding="utf-8") as f:
+        f.write(f"scale={str(case).upper()}\n")
+        f.write(f"seed={int(seed)}\n")
+        f.write(f"total_runtime_sec={float(total_runtime_sec):.6f}\n")
+        f.write(f"best_z={float(best_z):.3f}s @ iter={best_iter}\n")
+
+    return result_root
+
+
+def _run_alns_relax_case_export(scale: str, args, tra_max_iters: int = 10, vns_max_trials: int = 10,
+                                result_tag: str = "alns_relax_small") -> str:
+    scale = str(scale).upper()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    result_root = _ensure_dir(os.path.join(ROOT_DIR, "result", f"{result_tag}_{scale}_{timestamp}"))
+    cfg = _make_alns_relax_config(
+        scale=scale,
+        seed=int(args.base_seed),
+        max_iters=int(tra_max_iters),
+        no_improve_limit=int(tra_max_iters),
+        epsilon=float(args.epsilon),
+        sp2_time_limit_sec=float(args.sp2_time_limit_sec),
+        sp4_lkh_time_limit_seconds=int(args.sp4_lkh_time_limit_seconds),
+        enable_sp3_precheck=bool(args.precheck_sp3),
+        precheck_fail_action=str(args.precheck_fail),
+        enable_soft_mu=bool(args.enable_soft_mu),
+        enable_soft_pi=bool(args.enable_soft_pi),
+        enable_soft_beta=bool(args.enable_soft_beta),
+        enable_sku_affinity=bool(args.enable_sku_affinity),
+        mu_value=float(args.mu_value),
+        pi_scale=float(args.pi_scale),
+        pi_clip=float(args.pi_clip),
+        d0_threshold=float(args.d0_threshold),
+        beta_base=float(args.beta_base),
+        beta_gain=float(args.beta_gain),
+        beta_min=float(args.beta_min),
+        beta_max=float(args.beta_max),
+        sp2_shadow_weight=float(args.sp2_shadow_weight),
+        weak_accept_eta=float(args.weak_accept_eta),
+        alns_init_iters=int(vns_max_trials),
+    )
+    cfg.export_best_solution = True
+    cfg.write_iteration_logs = True
+    cfg.enable_sp1_feedback_analysis = False
+
+    t0 = time.perf_counter()
+    opt = ALNSRelaxDecompOptimizer(cfg)
+    best_z = float(opt.run())
+    total_runtime_sec = float(time.perf_counter() - t0)
+
+    iter_rows = list(opt.iter_log)
+    best_export_dir = os.path.join(ROOT_DIR, "log", "tra_best_export")
+    best_solution_objectives = {}
+    best_verification = {}
+    if os.path.exists(os.path.join(best_export_dir, "best_solution_objectives.json")):
+        with open(os.path.join(best_export_dir, "best_solution_objectives.json"), "r", encoding="utf-8") as f:
+            best_solution_objectives = json.load(f)
+    if os.path.exists(os.path.join(best_export_dir, "tra_makespan_verification.json")):
+        with open(os.path.join(best_export_dir, "tra_makespan_verification.json"), "r", encoding="utf-8") as f:
+            best_verification = json.load(f)
+    _write_csv(os.path.join(result_root, "tra_vns_small_iter_log.csv"), iter_rows)
+    _write_json(os.path.join(result_root, "tra_vns_small_iter_log.json"), iter_rows)
+
+    summary = {
+        "scale": scale,
+        "seed": int(args.base_seed),
+        "tra_max_iters": int(tra_max_iters),
+        "vns_max_trials": int(vns_max_trials),
+        "best_z": float(best_z),
+        "total_runtime_sec": float(total_runtime_sec),
+        "iter_count": int(len(iter_rows)),
+        "mode_stats": getattr(opt, "mode_stats", {}),
+        "final_metrics": (iter_rows[-1] if iter_rows else {}),
+        "best_solution_objectives": best_solution_objectives,
+        "best_verification": best_verification,
+    }
+    _write_json(os.path.join(result_root, "tra_vns_small_summary.json"), summary)
+    with open(os.path.join(result_root, "tra_vns_small_summary.txt"), "w", encoding="utf-8") as f:
+        f.write(f"scale={scale}\nseed={int(args.base_seed)}\n")
+        f.write(f"tra_max_iters={int(tra_max_iters)}\nvns_max_trials={int(vns_max_trials)}\n")
+        f.write(f"best_z={float(best_z):.6f}\n")
+        f.write(f"total_runtime_sec={float(total_runtime_sec):.6f}\n")
+        f.write(f"iter_count={int(len(iter_rows))}\n")
+
+    best_run_export_dir = os.path.join(result_root, "best_run_export")
+    if os.path.exists(best_export_dir):
+        if os.path.exists(best_run_export_dir):
+            shutil.rmtree(best_run_export_dir)
+        shutil.copytree(best_export_dir, best_run_export_dir)
+    _write_layer_solution_audit(os.path.join(result_root, "layer_solution_audit.txt"), opt)
+    print(f"[ALNS-RELAX-CASE] done. scale={scale}, result_root={result_root}")
+    return result_root
+
+
+def run_alns_relax_small_test(args) -> str:
+    return _run_alns_relax_case_export(
+        scale="SMALL",
+        args=args,
+        tra_max_iters=10,
+        vns_max_trials=10,
+        result_tag="alns_relax_small",
+    )
+
+
+def _run_two_layer_tra_case_export(scale: str, args, tra_max_iters: int = 10,
+                                   result_tag: str = "two_layer_tra_small") -> str:
+    scale = str(scale).upper()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    result_root = _ensure_dir(os.path.join(ROOT_DIR, "result", f"{result_tag}_{scale}_{timestamp}"))
+    cfg = _make_two_layer_tra_config(
+        scale=scale,
+        seed=int(args.base_seed),
+        max_iters=int(tra_max_iters),
+        no_improve_limit=int(tra_max_iters),
+        epsilon=float(args.epsilon),
+        sp2_time_limit_sec=float(args.sp2_time_limit_sec),
+        sp4_lkh_time_limit_seconds=int(args.sp4_lkh_time_limit_seconds),
+        enable_sp3_precheck=bool(args.precheck_sp3),
+        precheck_fail_action=str(args.precheck_fail),
+        enable_soft_mu=bool(args.enable_soft_mu),
+        enable_soft_pi=bool(args.enable_soft_pi),
+        enable_soft_beta=bool(args.enable_soft_beta),
+        enable_sku_affinity=bool(args.enable_sku_affinity),
+        mu_value=float(args.mu_value),
+        pi_scale=float(args.pi_scale),
+        pi_clip=float(args.pi_clip),
+        d0_threshold=float(args.d0_threshold),
+        beta_base=float(args.beta_base),
+        beta_gain=float(args.beta_gain),
+        beta_min=float(args.beta_min),
+        beta_max=float(args.beta_max),
+        sp2_shadow_weight=float(args.sp2_shadow_weight),
+    )
+    t0 = time.perf_counter()
+    opt = TwoLayerTRAOptimizer(cfg)
+    best_z = float(opt.run())
+    total_runtime_sec = float(time.perf_counter() - t0)
+
+    iter_rows = list(opt.iter_log)
+    best_export_dir = os.path.join(ROOT_DIR, "log", "tra_best_export")
+    best_solution_objectives = {}
+    best_verification = {}
+    if os.path.exists(os.path.join(best_export_dir, "best_solution_objectives.json")):
+        with open(os.path.join(best_export_dir, "best_solution_objectives.json"), "r", encoding="utf-8") as f:
+            best_solution_objectives = json.load(f)
+    if os.path.exists(os.path.join(best_export_dir, "tra_makespan_verification.json")):
+        with open(os.path.join(best_export_dir, "tra_makespan_verification.json"), "r", encoding="utf-8") as f:
+            best_verification = json.load(f)
+    _write_csv(os.path.join(result_root, "tra_vns_small_iter_log.csv"), iter_rows)
+    _write_json(os.path.join(result_root, "tra_vns_small_iter_log.json"), iter_rows)
+
+    summary = {
+        "scale": scale,
+        "seed": int(args.base_seed),
+        "tra_max_iters": int(tra_max_iters),
+        "vns_max_trials": 0,
+        "best_z": float(best_z),
+        "total_runtime_sec": float(total_runtime_sec),
+        "iter_count": int(len(iter_rows)),
+        "mode_stats": getattr(opt, "mode_stats", {}),
+        "final_metrics": (iter_rows[-1] if iter_rows else {}),
+        "best_solution_objectives": best_solution_objectives,
+        "best_verification": best_verification,
+    }
+    _write_json(os.path.join(result_root, "tra_vns_small_summary.json"), summary)
+    with open(os.path.join(result_root, "tra_vns_small_summary.txt"), "w", encoding="utf-8") as f:
+        f.write(f"scale={scale}\nseed={int(args.base_seed)}\n")
+        f.write(f"tra_max_iters={int(tra_max_iters)}\nvns_max_trials=0\n")
+        f.write(f"best_z={float(best_z):.6f}\n")
+        f.write(f"total_runtime_sec={float(total_runtime_sec):.6f}\n")
+        f.write(f"iter_count={int(len(iter_rows))}\n")
+
+    best_run_export_dir = os.path.join(result_root, "best_run_export")
+    if os.path.exists(best_export_dir):
+        if os.path.exists(best_run_export_dir):
+            shutil.rmtree(best_run_export_dir)
+        shutil.copytree(best_export_dir, best_run_export_dir)
+    _write_layer_solution_audit(os.path.join(result_root, "layer_solution_audit.txt"), opt)
+    print(f"[TWO-LAYER-TRA-CASE] done. scale={scale}, result_root={result_root}")
+    return result_root
+
+
+def run_two_layer_tra_small_test(args) -> str:
+    return _run_two_layer_tra_case_export(
+        scale="SMALL",
+        args=args,
+        tra_max_iters=10,
+        result_tag="two_layer_tra_small",
     )
 
 
@@ -1323,6 +1817,12 @@ def parse_args():
     parser.add_argument("--mode-fail-limit", type=int, default=3, help="Mode fail limit for role-VNS TRA")
     parser.add_argument("--run-tra-vns-small-test", action="store_true",
                         help="Run fixed SMALL test with TRA outer 10 iters and VNS inner 10 trials")
+    parser.add_argument("--run-alns-relax-small-test", action="store_true",
+                        help="Run fixed SMALL test with ALNS init + four-layer decomposition")
+    parser.add_argument("--run-two-layer-tra-small-test", action="store_true",
+                        help="Run fixed SMALL test with layered revolving coupled coordination")
+    parser.add_argument("--run-small-layer-augmented-case", action="store_true",
+                        help="Run one SMALL layer_augmented case export with proxy CSV and brief summary")
     parser.add_argument("--run-tra-vns-case-exports", action="store_true",
                         help="Run TRA-VNS case export for each scale in --scales, one result folder per scale")
     parser.add_argument("--run-soft-coupling-table", action="store_true",
@@ -1336,6 +1836,21 @@ if __name__ == "__main__":
     args = parse_args()
     if args.run_tra_vns_small_test:
         run_tra_vns_small_test(args)
+    elif args.run_alns_relax_small_test:
+        run_alns_relax_small_test(args)
+    elif args.run_two_layer_tra_small_test:
+        run_two_layer_tra_small_test(args)
+    elif args.run_small_layer_augmented_case:
+        run_small_layer_augmented_case_export(
+            seed=int(args.base_seed),
+            max_iters=int(args.tra_max_iters),
+            no_improve_limit=int(args.no_improve_limit),
+            epsilon=float(args.epsilon),
+            sp2_time_limit_sec=float(args.sp2_time_limit_sec),
+            sp4_lkh_time_limit_seconds=int(args.sp4_lkh_time_limit_seconds),
+            export_best_solution=False,
+            silent=True,
+        )
     elif args.run_tra_vns_case_exports:
         run_tra_vns_case_exports(args)
     elif args.run_soft_coupling_table:

@@ -1,7 +1,0 @@
-scale=SMALL
-seed=42
-tra_max_iters=10
-vns_max_trials=10
-best_z=375.000000
-total_runtime_sec=355.056793
-iter_count=11

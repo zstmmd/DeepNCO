@@ -25,6 +25,17 @@ class GlobalTimeCalculator:
         self._aggregate_times()
         return float(self.problem.global_makespan)
 
+    def calculate_with_existing_arrivals(self) -> float:
+        """
+        轻量仿真入口：
+        假设 task.arrival_time_at_station 已经由外部写好，只重置工作站状态并执行站台 FCFS + 聚合。
+        """
+        self._reset_station_runtime_state()
+        all_tasks = self._collect_all_execution_tasks()
+        self._simulate_station_fcfs(all_tasks)
+        self._aggregate_times()
+        return float(self.problem.global_makespan)
+
     def calculate_and_export(self, output_dir: str):
         """
         核心逻辑：计算所有时间节点并导出结果
