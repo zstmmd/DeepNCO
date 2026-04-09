@@ -53,7 +53,7 @@ class SP2_Station_Assigner:
         self.local_prox_rank_weight = 0.1
 
     def solve_initial_heuristic(self):
-        print("  >>> [SP2] Generating Initial Solution (Heuristic)...")
+        # #print("  >>> [SP2] Generating Initial Solution (Heuristic)...")
 
         station_makespan = {s.id: 0.0 for s in self.stations}
         station_counts = {s.id: 0 for s in self.stations}
@@ -72,7 +72,7 @@ class SP2_Station_Assigner:
             station_makespan[best_station_id] += proc_time
             station_counts[best_station_id] += 1
 
-        print(f"  >>> [SP2] Initial Heuristic Done. Max Makespan: {max(station_makespan.values()):.2f}")
+        ##print(f"  >>> [SP2] Initial Heuristic Done. Max Makespan: {max(station_makespan.values()):.2f}")
 
     def solve_mip_with_feedback(
         self,
@@ -84,7 +84,7 @@ class SP2_Station_Assigner:
         shadow_weight: float = 1.0,
         time_limit_sec: float = 60.0,
     ):
-        print("  >>> [SP2] Optimizing with MIP (Feedback: RobotTime, ToteSel, SortingCost)...")
+        #print("  >>> [SP2] Optimizing with MIP (Feedback: RobotTime, ToteSel, SortingCost)...")
 
         if not tasks:
             return
@@ -154,10 +154,10 @@ class SP2_Station_Assigner:
         m.optimize()
 
         if m.status in [GRB.OPTIMAL, GRB.TIME_LIMIT]:
-            print(f"  >>> [SP2] MIP Solved. Makespan: {C_max.X:.2f}")
+            #print(f"  >>> [SP2] MIP Solved. Makespan: {C_max.X:.2f}")
             self._apply_solution(tasks, y, t, K, P, S)
-        else:
-            print("  >>> [SP2] MIP Failed.")
+        # else:
+            #print("  >>> [SP2] MIP Failed.")
 
     def solve_local_layer(
         self,
@@ -587,7 +587,7 @@ if __name__ == "__main__":
         assert original_skus == generated_skus, f"Order {order.order_id} SKU mismatch!"
 
     problem_dto.subtask_list = initial_tasks
-    print("Initial task generation verified: all orders covered correctly.")
+    #print("Initial task generation verified: all orders covered correctly.")
     sp2_solver = SP2_Station_Assigner(problem_dto)
     sp2_solver.solve_initial_heuristic()
-    print("SP2 heuristic smoke done.")
+    #print("SP2 heuristic smoke done.")

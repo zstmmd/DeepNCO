@@ -53,7 +53,7 @@ class SP3_Bin_Hitter:
               sp4_routing_costs: Dict[int, float] = None
               ) -> Tuple[List[Task], Dict[int, List[int]], Dict[int, float]]:
 
-        print(f"  >>> [SP3] Solving with Virtual Layer (Beta={beta_congestion:.2f})...")
+        #print(f"  >>> [SP3] Solving with Virtual Layer (Beta={beta_congestion:.2f})...")
         self._initialize_stack_snapshots()
         self.stack_allocation = {}
         physical_tasks: List[Task] = []
@@ -197,7 +197,7 @@ class SP3_Bin_Hitter:
         stack_id = task.target_stack_id
 
         if stack_id not in self.stack_snapshots:
-            print(f"  [Warning] Stack {stack_id} not in snapshots.")
+            #print(f"  [Warning] Stack {stack_id} not in snapshots.")
             return
 
         current_totes = self.stack_snapshots[stack_id]
@@ -206,7 +206,7 @@ class SP3_Bin_Hitter:
         if task.operation_mode == 'FLIP':
             removed_ids = set(task.target_tote_ids)
             remaining_totes = [t for t in current_totes if t.id not in removed_ids]
-            # print(f"  [SP3] Stack {stack_id} FLIP: Removed {len(removed_ids)} totes, {len(remaining_totes)} remain.")
+            # #print(f"  [SP3] Stack {stack_id} FLIP: Removed {len(removed_ids)} totes, {len(remaining_totes)} remain.")
 
         elif task.operation_mode == 'SORT':
             if task.sort_layer_range is None:
@@ -218,7 +218,7 @@ class SP3_Bin_Hitter:
                 t for t in current_totes
                 if not (low <= self._get_virtual_layer(t.id) <= high)
             ]
-            # print(f"  [SP3] Stack {stack_id} SORT [{low}, {high}]: Removed {len(current_totes) - len(remaining_totes)} totes.")
+            # #print(f"  [SP3] Stack {stack_id} SORT [{low}, {high}]: Removed {len(current_totes) - len(remaining_totes)} totes.")
 
         else:
             return
@@ -523,7 +523,7 @@ class SP3_Bin_Hitter:
                   beta_congestion: float = 1.0
                   ) -> Tuple[List[Task], Dict[int, List[int]], Dict[int, float]]:
 
-            print(f"  >>> [SP3 Heuristic] Using Virtual Layer (Beta={beta_congestion:.2f})...")
+            #print(f"  >>> [SP3 Heuristic] Using Virtual Layer (Beta={beta_congestion:.2f})...")
             self._initialize_stack_snapshots()
             physical_tasks: List[Task] = []
             final_tote_selection = defaultdict(list)
@@ -713,7 +713,7 @@ class SP3_Bin_Hitter:
                 if unmet_total > 0:
                     print(f"  [SP3 Heuristic][WARN] SubTask {task.id} unmet sku units: {unmet_total}")
 
-            print(f"  >>> [SP3 Heuristic] Applying Priority Sorting...")
+            #print(f"  >>> [SP3 Heuristic] Applying Priority Sorting...")
 
             for pt in physical_tasks:
                 pt.efficiency_score = self._calculate_efficiency_score(pt)
@@ -831,7 +831,7 @@ class SP3_Bin_Hitter:
                     # 无可用 tote：记录 unmet，让上层通过 sp3_unmet_sku_total / sp3_coverage_ok 处理
                     task.sp3_unmet_sku_total = int(sum(v for v in pending_demand.values() if v > 0))
                     task.sp3_coverage_ok = False
-                    print(f"  [SP3 Heuristic][WARN] Cannot find totes for remaining SKU demand: {dict(pending_demand)}")
+                    #print(f"  [SP3 Heuristic][WARN] Cannot find totes for remaining SKU demand: {dict(pending_demand)}")
                     return selected_stacks_map
 
                 stack_score = {}

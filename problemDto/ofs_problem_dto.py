@@ -44,3 +44,7 @@ class OFSProblemDTO:
         self.total_robot_travel_dist: float = 0.0  # 机器人总运行距离
         self.total_station_idle_time: float = 0.0  # 所有工作站累计空闲
         self.point_to_stack: Dict[int, Stack] = {}  # Point.idx -> Stack 映射
+        self.scale_name: str = ""
+        self.generator_profile: str = ""
+        self.generator_summary: Dict = {}
+        self.redundancy_summary: Dict = {}

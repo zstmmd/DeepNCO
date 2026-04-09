@@ -1,8 +1,0 @@
-[TRA Makespan Verification]
-status=PASS
-task_count=15
-max_task_end=378.000000
-global_makespan=378.000000
-coverage_ok=True
-unmet_sku_total=0
-unmet_subtask_count=0

@@ -269,31 +269,37 @@ class SP4_Robot_Router:
         time_dimension.SetGlobalSpanCostCoefficient(10000)
         # 9. 求解
         solution = routing.SolveWithParameters(search_parameters)
+        verbose_console = bool(getattr(self.problem, "runtime_verbose_sp4", False)) and not bool(quiet_mode)
 
 
         # 诊断输出
-        print(f"  >>> [Diag] num_nodes={num_nodes}, num_vehicles={num_vehicles}")
-        print(f"  >>> [Diag] num_tasks={num_tasks}, pairs={len(pair_map)}")
-        print(f"  >>> [Diag] total demand={sum(d for d in demands if d > 0)}, capacity={self.robot_capacity}")
-        print(f"  >>> [Diag] subtask_groups={dict(subtask_groups)}")
-        print(f"  >>> [Diag] solution={solution}")
+        if verbose_console:
+            print(f"  >>> [Diag] num_nodes={num_nodes}, num_vehicles={num_vehicles}")
+            print(f"  >>> [Diag] num_tasks={num_tasks}, pairs={len(pair_map)}")
+            print(f"  >>> [Diag] total demand={sum(d for d in demands if d > 0)}, capacity={self.robot_capacity}")
+            print(f"  >>> [Diag] subtask_groups={dict(subtask_groups)}")
+            print(f"  >>> [Diag] solution={solution}")
         if solution is None:
-            print(f"  >>> [Diag] routing status={routing.status()}")
+            if verbose_console:
+                print(f"  >>> [Diag] routing status={routing.status()}")
             # 0=NOT_SOLVED, 1=SUCCESS, 2=PARTIAL_SUCCESS, 3=FAIL, 4=FAIL_TIMEOUT, 5=INVALID
         result_times = {}
         result_assign = {}
 
         if solution:
             obj_val = solution.ObjectiveValue() / 10.0
-            print(f"\n" + "=" * 50)
-            print(f"[OK] LKH Engine Solved. Total Objective: {obj_val:.1f}s")
-            print("=" * 50)
+            if verbose_console:
+                print(f"\n" + "=" * 50)
+                print(f"[OK] LKH Engine Solved. Total Objective: {obj_val:.1f}s")
+                print("=" * 50)
 
             # --- 新增：准备日志文件 ---
-            log_dir = os.path.join(ROOT_DIR, 'log')
-            if not os.path.exists(log_dir):
+            runtime_result_dir = getattr(self.problem, "runtime_result_dir", None)
+            log_dir = str(runtime_result_dir) if runtime_result_dir else os.path.join(ROOT_DIR, 'log')
+            write_result_log = bool(getattr(self.problem, "runtime_write_sp4_result", False)) and not bool(quiet_mode)
+            if write_result_log and not os.path.exists(log_dir):
                 os.makedirs(log_dir)
-            result_log_path = os.devnull if quiet_mode else os.path.join(log_dir, 'SP4_result.txt')
+            result_log_path = os.path.join(log_dir, 'SP4_result.txt') if write_result_log else os.devnull
 
             with open(result_log_path, 'w', encoding='utf-8') as f_log:
                 f_log.write(f"=== SP4 LKH Routing Final Results ===\n")
@@ -305,7 +311,7 @@ class SP4_Robot_Router:
                 for vehicle_id in range(num_vehicles):
                     robot_id = self.problem.robot_list[vehicle_id].id
                     header = f"\n=== Robot {robot_id} Route ==="
-                    if not quiet_mode:
+                    if verbose_console:
                         print(header)
                     f_log.write(header + "\n")
 
@@ -347,7 +353,7 @@ class SP4_Robot_Router:
                             # 回填站点到达时间（优先使用 SP4 的实际到达时间）
                             task_obj.arrival_time_at_station = arr_time
 
-                        if not quiet_mode:
+                        if verbose_console:
                             print(line)
                         f_log.write(line + "\n")
 
@@ -365,13 +371,13 @@ class SP4_Robot_Router:
                     end_line = f"  [{end_time:>5.1f}s] End @ Depot {coord}   | Load: {final_load}/{self.robot_capacity}"
                     summary_line = f"  -> Total tasks visited: {step_count - 1}, Return Time: {end_time:.1f}s\n"
 
-                    if not quiet_mode:
+                    if verbose_console:
                         print(end_line)
                         print(summary_line)
                     f_log.write(end_line + "\n")
                     f_log.write(summary_line + "\n")
 
-            if not quiet_mode:
+            if verbose_console:
                 print(f"  >>> [Log] Final results written to {result_log_path}")
             return result_times, result_assign
         else:
