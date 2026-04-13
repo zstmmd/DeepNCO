@@ -118,7 +118,7 @@ class TRARunConfig:
     search_scheme: str = "resource_time_alns"
     resource_real_eval_period: int = 8
     resource_validation_delta_thresh: float = 0.03
-    resource_sa_init_temp: float = 10.0
+    resource_sa_init_temp: float = 20.0
     resource_sa_cooling: float = 0.95
     resource_sa_reheat_factor: float = 1.25
     resource_weight_reaction: float = 0.2
@@ -637,6 +637,51 @@ class TRAOptimizer:
     def _current_search_scheme(self) -> str:
         return str(getattr(self.cfg, "search_scheme", "resource_time_alns") or "resource_time_alns").strip().lower()
 
+    def _fast_clone_subtasks(self, original_list: List[Any]) -> List[Any]:
+        """
+        极速克隆：仅对决策层发生变动的列表进行手动拷贝，
+        静态对象（如 SKU 实体、Order 实体）直接保留引用，绕过 deepcopy 的递归陷阱。
+        """
+        import copy
+        cloned_list = []
+        for st in original_list:
+            # 1. 浅拷贝 SubTask 这一层（复制了 id, station_id, rank 等所有标量）
+            new_st = copy.copy(st)
+
+            # 2. 重新初始化 SubTask 里的可变列表（防止修改新解时污染旧快照）
+            if hasattr(st, 'sku_list') and st.sku_list is not None:
+                new_st.sku_list = list(st.sku_list)
+            if hasattr(st, 'unique_sku_list') and st.unique_sku_list is not None:
+                new_st.unique_sku_list = list(st.unique_sku_list)
+            if hasattr(st, 'assigned_tote_ids') and st.assigned_tote_ids is not None:
+                new_st.assigned_tote_ids = list(st.assigned_tote_ids)
+            if hasattr(st, 'involved_stacks') and st.involved_stacks is not None:
+                new_st.involved_stacks = list(st.involved_stacks)
+            if hasattr(st, 'visit_points') and st.visit_points is not None:
+                new_st.visit_points = list(st.visit_points)
+
+            # 3. 深度处理最核心的 execution_tasks
+            if hasattr(st, 'execution_tasks') and st.execution_tasks is not None:
+                new_tasks = []
+                for task in st.execution_tasks:
+                    # 浅拷贝 Task 这一层（复制了各种 time, robot_id, mode 等标量）
+                    new_task = copy.copy(task)
+
+                    # 重新初始化 Task 里的可变列表
+                    if hasattr(task, 'target_tote_ids') and task.target_tote_ids is not None:
+                        new_task.target_tote_ids = list(task.target_tote_ids)
+                    if hasattr(task, 'hit_tote_ids') and task.hit_tote_ids is not None:
+                        new_task.hit_tote_ids = list(task.hit_tote_ids)
+                    if hasattr(task, 'noise_tote_ids') and task.noise_tote_ids is not None:
+                        new_task.noise_tote_ids = list(task.noise_tote_ids)
+                    if hasattr(task, 'detailed_path') and task.detailed_path is not None:
+                        new_task.detailed_path = list(task.detailed_path)
+
+                    new_tasks.append(new_task)
+                new_st.execution_tasks = new_tasks
+
+            cloned_list.append(new_st)
+        return cloned_list
     def _ensure_log_dir(self):
         if self._resolved_log_dir:
             os.makedirs(self._resolved_log_dir, exist_ok=True)
@@ -5627,25 +5672,42 @@ class TRAOptimizer:
         }
 
     def _z_build_plan_from_hits(
-        self,
-        st: Any,
-        task: Any,
-        stack_id: int,
-        hit_tote_ids: List[int],
-        mode: str,
-        exclude_task_ids: Optional[Set[int]] = None,
+            self,
+            st: Any,
+            task: Any,
+            stack_id: int,
+            hit_tote_ids: List[int],
+            mode: str,
+            exclude_task_ids: Optional[Set[int]] = None,
     ) -> Dict[str, Any]:
         stack = self.problem.point_to_stack.get(int(stack_id)) if self.problem is not None else None
         if stack is None or not getattr(stack, "totes", None):
             return {"valid": False}
         hit_set = {int(tid) for tid in hit_tote_ids if int(tid) >= 0}
-        ordered_hits = [int(getattr(tote, "id", -1)) for tote in getattr(stack, "totes", []) or [] if int(getattr(tote, "id", -1)) in hit_set]
+        ordered_hits = [int(getattr(tote, "id", -1)) for tote in getattr(stack, "totes", []) or [] if
+                        int(getattr(tote, "id", -1)) in hit_set]
+
+        # --- 新增：读取物理耗时参数 ---
+        top_layer_idx = len(getattr(stack, "totes", [])) - 1
+        t_shift = float(getattr(OFSConfig, "PACKING_TIME", 1.0))
+        t_lift = float(getattr(OFSConfig, "LIFTING_TIME", 1.0))
+        t_move = float(getattr(OFSConfig, "MOVE_EXTRA_TOTE_TIME", 1.0))
+        robot_service_time = 0.0
+        # ------------------------------
+
         if str(mode).upper() == "FLIP":
             if not ordered_hits:
                 return {"valid": False}
             target_tote_ids = list(ordered_hits)
             noise_tote_ids: List[int] = []
             sort_layer_range = None
+
+            # ✅ 新增：FLIP 模式的时间计算 (按个累加，深层加罚)
+            for tid in ordered_hits:
+                layer_idx = int(stack.get_tote_layer(tid))
+                is_deep = 1 if layer_idx < top_layer_idx else 0
+                robot_service_time += (t_shift + is_deep * t_lift)
+
         else:
             if not ordered_hits:
                 return {"valid": False}
@@ -5660,6 +5722,11 @@ class TRAOptimizer:
                 return {"valid": False}
             noise_tote_ids = [int(tid) for tid in target_tote_ids if int(tid) not in set(ordered_hits)]
             sort_layer_range = (int(lo), int(hi))
+
+            # ✅ 新增：SORT 模式的时间计算 (一次性动作)
+            has_lift = 1 if hi < top_layer_idx else 0
+            robot_service_time = t_shift + has_lift * t_lift
+
         summary = self._z_stack_summary(st, int(stack_id), exclude_task_ids)
         return {
             "valid": True,
@@ -5669,7 +5736,8 @@ class TRAOptimizer:
             "noise_tote_ids": list(noise_tote_ids),
             "sort_layer_range": sort_layer_range,
             "operation_mode": str(mode).upper(),
-            "station_service_time": float(len(noise_tote_ids)) * float(getattr(OFSConfig, "MOVE_EXTRA_TOTE_TIME", 1.0)),
+            "station_service_time": float(len(noise_tote_ids)) * t_move,
+            "robot_service_time": float(robot_service_time),  # ✅ 返回精确计算的机器人时间
             "demanded_qty": int(summary.get("demanded_qty", 0)),
             "available_qty": int(summary.get("available_qty", 0)),
             "demand_ratio": float(summary.get("demand_ratio", 0.0)),
@@ -5695,10 +5763,17 @@ class TRAOptimizer:
         lo = min(layers)
         hi = max(layers)
         target_tote_ids = [int(getattr(tote, "id", -1)) for tote in (getattr(stack, "totes", []) or [])[lo:hi + 1]]
+
         if set(target_tote_ids) != tote_set:
             return {"valid": False}
         if any(int(tid) in self._z_used_tote_ids(st, exclude_task_ids) for tid in target_tote_ids):
             return {"valid": False}
+            # ✅ 新增时间计算
+        top_layer_idx = len(getattr(stack, "totes", [])) - 1
+        has_lift = 1 if hi < top_layer_idx else 0
+        t_shift = float(getattr(OFSConfig, "PACKING_TIME", 1.0))
+        t_lift = float(getattr(OFSConfig, "LIFTING_TIME", 1.0))
+
         return {
             "valid": True,
             "target_stack_id": int(stack_id),
@@ -5707,12 +5782,13 @@ class TRAOptimizer:
             "noise_tote_ids": list(target_tote_ids),
             "sort_layer_range": (int(lo), int(hi)),
             "operation_mode": "SORT",
-            "station_service_time": float(len(target_tote_ids)) * float(getattr(OFSConfig, "MOVE_EXTRA_TOTE_TIME", 1.0)),
+            "station_service_time": float(len(target_tote_ids)) * float(
+                getattr(OFSConfig, "MOVE_EXTRA_TOTE_TIME", 1.0)),
+            "robot_service_time": float(t_shift + has_lift * t_lift),  # ✅ 新增
             "demanded_qty": 0,
             "available_qty": 0,
             "demand_ratio": 0.0,
         }
-
     def _z_build_stack_plan_for_task(
         self,
         st: Any,
@@ -5742,7 +5818,8 @@ class TRAOptimizer:
         task.noise_tote_ids = list(int(x) for x in (plan.get("noise_tote_ids", []) or []))
         task.sort_layer_range = copy.deepcopy(plan.get("sort_layer_range", None))
         task.station_service_time = float(plan.get("station_service_time", 0.0))
-
+        if "robot_service_time" in plan:
+            task.robot_service_time = float(plan["robot_service_time"])
     def _z_active_hit_profile(self, stack_id: int) -> Tuple[float, float]:
         stack = self.problem.point_to_stack.get(int(stack_id)) if self.problem is not None else None
         if stack is None or not getattr(stack, "totes", None):
@@ -6219,7 +6296,7 @@ class TRAOptimizer:
             task.hit_tote_ids = [int(x) for x in task.target_tote_ids if int(x) in hit_set]
             task.noise_tote_ids = [int(x) for x in task.target_tote_ids if int(x) not in hit_set]
             task.station_service_time = max(float(getattr(task, "station_service_time", 0.0)), float(len(task.noise_tote_ids)) * float(getattr(OFSConfig, "MOVE_EXTRA_TOTE_TIME", 1.0)))
-            task.robot_service_time = max(float(getattr(task, "robot_service_time", 0.0)), float(len(task.target_tote_ids)) * 0.5)
+
         valid_subtask, subtask_info = self._validate_z_subtask_candidate(st)
         if not valid_subtask:
             return {
@@ -6931,7 +7008,9 @@ class TRAOptimizer:
             subtask_station_rank=subtask_station_rank,
             sp1_capacity_limits=dict(getattr(self.sp1, "order_capacity_limits", {}) or {}),
             sp1_incompatibility_pairs=sorted(list(getattr(self.sp1, "incompatibility_pairs", set()) or set())),
-            subtask_state=copy.deepcopy(getattr(self.problem, "subtask_list", []) or []) if lightweight else None,
+            # subtask_state=copy.deepcopy(getattr(self.problem, "subtask_list", []) or []) if lightweight else None,
+            subtask_state=self._fast_clone_subtasks(
+                getattr(self.problem, "subtask_list", []) or []) if lightweight else None,
             problem_state=None if lightweight else copy.deepcopy(self.problem),
             last_sp4_arrival_times=dict(self.last_sp4_arrival_times or {}),
             last_sp3_tote_selection={int(k): list(v) for k, v in (self.last_sp3_tote_selection or {}).items()},
@@ -6968,7 +7047,8 @@ class TRAOptimizer:
             return
 
         if snap.subtask_state is not None:
-            self.problem.subtask_list = copy.deepcopy(snap.subtask_state)
+            # self.problem.subtask_list = copy.deepcopy(snap.subtask_state)
+            self.problem.subtask_list = self._fast_clone_subtasks(snap.subtask_state)
             self.problem.subtask_num = len(getattr(self.problem, "subtask_list", []) or [])
             self._rebuild_problem_task_list()
             self._sync_task_assignments_from_subtasks()

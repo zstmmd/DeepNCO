@@ -189,6 +189,38 @@ def _descriptor_from_plan(opt, subtask: ResourceSubtask, plan: Dict[str, object]
     )
 
 
+def _is_joint_sort_strategy(strategy: str) -> bool:
+    return str(strategy) == "z_repair_joint_sort_colocated_flip"
+
+
+def _sort_plan_within_capacity(plan: Dict[str, object]) -> bool:
+    if str(plan.get("operation_mode", "")).upper() != "SORT":
+        return True
+    capacity = max(1, int(getattr(OFSConfig, "ROBOT_CAPACITY", 8)))
+    return len(list(plan.get("target_tote_ids", []) or [])) <= int(capacity)
+
+
+def _joint_sort_seed_hit_map(removed_window: Sequence[ZTaskDescriptor]) -> Dict[int, List[int]]:
+    stack_to_rows: Dict[int, List[ZTaskDescriptor]] = defaultdict(list)
+    for descriptor in removed_window or ():
+        if str(getattr(descriptor, "mode", "")).upper() != "FLIP":
+            continue
+        stack_to_rows[int(getattr(descriptor, "stack_id", -1))].append(descriptor)
+    seed_hits: Dict[int, List[int]] = {}
+    for stack_id, rows in stack_to_rows.items():
+        if int(stack_id) < 0 or len(rows) < 2:
+            continue
+        dedup: List[int] = []
+        for row in rows:
+            for tote_id in (getattr(row, "hit_tote_ids", ()) or ()):
+                tid = int(tote_id)
+                if tid >= 0 and tid not in dedup:
+                    dedup.append(tid)
+        if dedup:
+            seed_hits[int(stack_id)] = list(dedup)
+    return seed_hits
+
+
 def validate_z_assignment(
     opt,
     config: ResourceConfig,
@@ -261,6 +293,7 @@ def _rebuild_window(
     seed_stack_ids: Sequence[int],
     strategy: str,
     allow_fallback: bool,
+    removed_window: Optional[Sequence[ZTaskDescriptor]] = None,
     external_used_totes: Optional[Set[int]] = None,
     rng=None,
 ) -> Tuple[bool, List[ZTaskDescriptor], Dict[str, object]]:
@@ -280,9 +313,52 @@ def _rebuild_window(
         for tote_id in (descriptor.target_tote_ids or ())
         if int(tote_id) >= 0
     }
+    joint_seed_hits = _joint_sort_seed_hit_map(removed_window or []) if _is_joint_sort_strategy(str(strategy)) else {}
 
     while any(int(qty) > 0 for qty in remaining.values()):
         candidate_rows = []
+        if joint_seed_hits:
+            for stack_id, seed_hits in joint_seed_hits.items():
+                hit_ids = [
+                    int(tote_id)
+                    for tote_id in (seed_hits or [])
+                    if int(tote_id) not in blocked_totes and int(tote_id) not in local_used_totes
+                ]
+                if not hit_ids:
+                    continue
+                dummy_task = Task(
+                    task_id=-1,
+                    sub_task_id=int(subtask.subtask_id),
+                    target_stack_id=int(stack_id),
+                    target_station_id=int(subtask.station_id),
+                    operation_mode="SORT",
+                )
+                plan = opt._z_build_plan_from_hits(temp_subtask, dummy_task, int(stack_id), hit_ids, "SORT", {-1})
+                if not bool(plan.get("valid", False)) or not _sort_plan_within_capacity(plan):
+                    continue
+                target_ids = [int(x) for x in (plan.get("target_tote_ids", []) or [])]
+                if any(int(tid) in blocked_totes or int(tid) in local_used_totes for tid in target_ids):
+                    continue
+                coverage_gain = int(_coverage_gain(opt, remaining, list(plan.get("hit_tote_ids", []) or [])))
+                if coverage_gain <= 0:
+                    continue
+                guard_reason = _guard_reason(opt, config, subtask, plan)
+                if guard_reason and not bool(fallback_used):
+                    continue
+                detour = float(opt._z_best_insertion_detour(int(stack_id)))
+                target_len = len(list(plan.get("target_tote_ids", []) or []))
+                noise_len = len(list(plan.get("noise_tote_ids", []) or []))
+                score = (
+                    -2.0,
+                    -float(coverage_gain),
+                    float(detour),
+                    float(noise_len),
+                    float(target_len),
+                    int(stack_id),
+                    "SORT",
+                )
+                candidate_rows.append({"score": score, "plan": plan, "coverage_gain": coverage_gain})
+
         for stack_id in candidate_stack_ids:
             dummy_task = Task(
                 task_id=-1,
@@ -302,9 +378,13 @@ def _rebuild_window(
             modes = ["FLIP", "SORT"]
             if str(strategy) == "z_repair_sort_range_shrink_first":
                 modes = ["SORT", "FLIP"]
+            elif _is_joint_sort_strategy(str(strategy)) and int(stack_id) in set(int(x) for x in joint_seed_hits.keys()):
+                modes = ["SORT", "FLIP"]
             for mode in modes:
                 plan = opt._z_build_plan_from_hits(temp_subtask, dummy_task, int(stack_id), hit_ids, str(mode).upper(), {-1})
                 if not bool(plan.get("valid", False)):
+                    continue
+                if not _sort_plan_within_capacity(plan):
                     continue
                 target_ids = [int(x) for x in (plan.get("target_tote_ids", []) or [])]
                 if any(int(tid) in blocked_totes or int(tid) in local_used_totes for tid in target_ids):
@@ -319,6 +399,8 @@ def _rebuild_window(
                 target_len = len(list(plan.get("target_tote_ids", []) or []))
                 noise_len = len(list(plan.get("noise_tote_ids", []) or []))
                 same_stack_bonus = 0.0 if int(stack_id) in set(int(x) for x in seed_stack_ids) else 1.0
+                if _is_joint_sort_strategy(str(strategy)) and int(stack_id) in set(int(x) for x in joint_seed_hits.keys()):
+                    same_stack_bonus -= 0.5
                 score = (
                     -float(coverage_gain),
                     float(same_stack_bonus),
@@ -681,7 +763,11 @@ def plan_z_candidate(opt, config: ResourceConfig, destroy_name: str, repair_name
             if int(stack_id) not in target_stack_ids:
                 target_stack_ids.append(int(stack_id))
         removed_modes = [str(descriptor.mode).upper() for descriptor in (window_ctx.get("removed_window", []) or [])]
-        mode_summary.append("SORT" if str(repair_name) == "z_repair_sort_range_shrink_first" else (removed_modes[0] if removed_modes else "FLIP"))
+        mode_summary.append(
+            "SORT"
+            if str(repair_name) in {"z_repair_sort_range_shrink_first", "z_repair_joint_sort_colocated_flip"}
+            else (removed_modes[0] if removed_modes else "FLIP")
+        )
     return {
         "success": True,
         "destroy_ctx": destroy_ctx,
@@ -737,6 +823,8 @@ def _repair_window(opt, config: ResourceConfig, ctx: Dict[str, object], strategy
     windows = list(ctx.get("windows", []) or [])
     if not windows and int(ctx.get("subtask_id", -1)) >= 0:
         windows = [ctx]
+    if _is_joint_sort_strategy(str(strategy)) and len(windows) != 1:
+        return {"success": False, "reason": "joint_sort_requires_single_subtask_window", "fallback_used": False}
     affected_subtasks: Set[int] = set()
     fallback_used = False
     original_assignments = {
@@ -759,6 +847,7 @@ def _repair_window(opt, config: ResourceConfig, ctx: Dict[str, object], strategy
             seed_stack_ids=list(window_ctx.get("seed_stack_ids", []) or []),
             strategy=str(strategy),
             allow_fallback=bool(allow_fallback),
+            removed_window=list(window_ctx.get("removed_window", []) or []),
             external_used_totes=external_used,
             rng=rng,
         )
@@ -794,6 +883,10 @@ def z_repair_mode_toggle_contextual(opt, config: ResourceConfig, ctx: Dict[str, 
     return _repair_window(opt, config, ctx, "z_repair_mode_toggle_contextual", allow_fallback=False, rng=rng)
 
 
+def z_repair_joint_sort_colocated_flip(opt, config: ResourceConfig, ctx: Dict[str, object], rng) -> Dict[str, object]:
+    return _repair_window(opt, config, ctx, "z_repair_joint_sort_colocated_flip", allow_fallback=False, rng=rng)
+
+
 def z_repair_greedy_fallback(opt, config: ResourceConfig, ctx: Dict[str, object], rng) -> Dict[str, object]:
     return _repair_window(opt, config, ctx, "z_repair_greedy_fallback", allow_fallback=True, rng=rng)
 
@@ -810,6 +903,7 @@ Z_REPAIR_OPERATORS = {
     "z_repair_bounded_detour_window": z_repair_bounded_detour_window,
     "z_repair_sort_range_shrink_first": z_repair_sort_range_shrink_first,
     "z_repair_mode_toggle_contextual": z_repair_mode_toggle_contextual,
+    "z_repair_joint_sort_colocated_flip": z_repair_joint_sort_colocated_flip,
 }
 
 Z_FALLBACK_OPERATOR = "z_repair_greedy_fallback"

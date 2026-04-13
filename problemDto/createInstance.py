@@ -29,6 +29,8 @@ class CreateOFSProblem:
         np.random.seed(seed)
 
         configs = {
+            "TEST": {"map_size": (2, 4), "resources": (2, 2, 100), "data": (1, 10), "bom_complexity": (10, 1), "exact_bom_sku_count": 10},
+            "GUROBI-S1": {"map_size": (2, 4), "resources": (2, 2, 30), "data": (1, 10), "bom_complexity": (10, 1), "exact_bom_sku_count": 10},
             "SMALL": {"map_size": (4, 4), "resources": (2, 2, 200), "data": (2, 60), "bom_complexity": (20, 5)},
             "SMALL2": {"map_size": (4, 4), "resources": (3, 2, 200), "data": (3, 60), "bom_complexity": (25, 5)},
             "SMALL_ZRICH": {"map_size": (4, 4), "resources": (2, 2, 200), "data": (2, 60), "bom_complexity": (20, 5)},
@@ -53,6 +55,7 @@ class CreateOFSProblem:
         rob_n, st_n, tote_n = cfg["resources"]
         ord_n, sku_n = cfg["data"]
         bom_types, bom_qty = cfg["bom_complexity"]
+        exact_bom_sku_count = int(cfg.get("exact_bom_sku_count", 0))
 
         print(f">>> 生成 [{scale}] 规模实例 | Seed: {seed}")
         print(f"    Map: {map_L}x{map_W} blocks | Robots: {rob_n} | Stations: {st_n}")
@@ -69,6 +72,7 @@ class CreateOFSProblem:
             workstation_rows=3,
             bom_config=(bom_types, bom_qty),
             imbalance_profile=imbalance_profile,
+            exact_bom_sku_count=exact_bom_sku_count,
         )
         problem.scale_name = scale_upper
         problem.generator_profile = imbalance_profile or "default"
@@ -85,7 +89,8 @@ class CreateOFSProblem:
             station_num: int,
             workstation_rows: int,
             bom_config: Tuple[int, int] = (10, 5),
-            imbalance_profile: str = None
+            imbalance_profile: str = None,
+            exact_bom_sku_count: int = 0,
     ) -> OFSProblemDTO:
         """
         构造并返回一个 OFSProblemDTO 实例。
@@ -137,6 +142,14 @@ class CreateOFSProblem:
             orders = CreateOFSProblem._generate_zrich_orders(max_sku_types, max_sku_qty, order_num, skus_list_obj, zrich_profile)
         else:
             orders = CreateOFSProblem._generate_orders(max_sku_types, max_sku_qty, order_num, skus_list_obj, imbalance_profile)
+        if int(exact_bom_sku_count) > 0:
+            if int(order_num) != 1:
+                raise ValueError("exact_bom_sku_count is intended for single-BOM test cases.")
+            exact_count = min(int(exact_bom_sku_count), int(len(skus_list_obj)))
+            exact_order = orders[0]
+            exact_order.order_product_id_list = [int(sku.id) for sku in skus_list_obj[:exact_count]]
+            exact_order.order_skus_number = int(exact_count)
+            exact_order.status = "pending"
         ofs_problem_dto.order_list = orders
         ofs_problem_dto.id_to_order = {order.order_id: order for order in orders}
 

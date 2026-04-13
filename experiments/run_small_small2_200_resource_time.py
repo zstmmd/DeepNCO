@@ -16,13 +16,14 @@ from Gurobi.tra import TRAOptimizer, TRARunConfig
 
 
 DEFAULT_ALL_CASES = [
-     "SMALL",
-    "SMALL2",
-    "SMALL_ZRICH",
-    "SMALL2_ZRICH",
-    "SMALL3",
-    "SMALL_UNEVEN",
-    "SMALL2_UNEVEN",
+    "Gurobi-s1"
+    #  "SMALL",
+    # "SMALL2",
+    # "SMALL_ZRICH",
+    # "SMALL2_ZRICH",
+    # "SMALL3",
+    # "SMALL_UNEVEN",
+    # "SMALL2_UNEVEN",
 ]
 
 
@@ -172,6 +173,7 @@ def _build_cfg(args, scale: str, seed: int, run_log_dir: str) -> TRARunConfig:
         write_iteration_logs=bool(args.write_iteration_logs),
         enable_sp1_feedback_analysis=False,
         log_dir=run_log_dir,
+        xz_evaluator_mode="classic_soft",
         search_scheme="resource_time_alns",
         resource_real_eval_period=int(args.resource_real_eval_period),
     )
@@ -337,7 +339,7 @@ def parse_args():
 def main():
     args = parse_args()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    batch_root = _ensure_dir(os.path.join(ROOT_DIR, "result", f"resource_time_alns_all_scales_batch_{timestamp}"))
+    batch_root = _ensure_dir(os.path.join(ROOT_DIR, "result", f"tra_alns_{timestamp}"))
 
     all_rows: List[Dict[str, Any]] = []
     total_jobs = max(1, int(args.runs)) * max(1, len(args.cases))
