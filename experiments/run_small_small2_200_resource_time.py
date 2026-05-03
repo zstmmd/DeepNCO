@@ -359,7 +359,7 @@ def parse_args():
     parser.add_argument("--epsilon", type=float, default=0.05, help="TRA epsilon")
     parser.add_argument("--bom-arrival-window-sec", type=float, default=60.0, help="BOM arrival window hard constraint; disable with <= 0")
     parser.add_argument("--disable-order-time-windows", action="store_true", help="Disable order time windows in TRA objective")
-    parser.add_argument("--kitting-span-penalty-weight", type=float, default=1000.0, help="Soft penalty weight for kitting span overruns")
+    parser.add_argument("--kitting-span-penalty-weight", type=float, default=5.0, help="Soft penalty weight for kitting span overruns")
     parser.add_argument("--deadline-penalty-weight", type=float, default=1000.0, help="Soft penalty weight for deadline overruns")
     parser.add_argument("--sp2-time-limit-sec", type=float, default=10.0, help="SP2 time limit")
     parser.add_argument("--sp4-lkh-time-limit-seconds", type=int, default=5, help="SP4 LKH time limit")

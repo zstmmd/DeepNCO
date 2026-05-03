@@ -106,7 +106,7 @@ class GlobalXYZUConfig:
     warm_start_use_sp4: bool = True
     enable_sp4_fallback: bool = False
     enable_order_time_windows: bool = False
-    kitting_span_penalty_weight: float = 1000.0
+    kitting_span_penalty_weight: float = 5.0
     deadline_penalty_weight: float = 1000.0
     release_time_hard: bool = True
     gurobi_method: Optional[int] = None
@@ -527,10 +527,25 @@ class GlobalXYZUSolver:
             else:
                 diagnostics["time_verify_mismatch"] = False
         runtime_sec = float(time.perf_counter() - start_clock)
+        result_objective = float(diagnostics.get("model_objective", float("nan")))
+        if not math.isfinite(result_objective):
+            result_objective = float(
+                true_global_makespan
+                + float(getattr(cfg, "kitting_span_penalty_weight", 5.0) or 0.0)
+                * float(
+                    diagnostics.get(
+                        "total_span_overrun",
+                        diagnostics.get("warm_start_total_span_overrun", 0.0),
+                    )
+                    or 0.0
+                )
+            )
+            diagnostics["model_objective"] = float(result_objective)
+            diagnostics["objective_value"] = float(result_objective)
         return self._build_result(
             problem=problem,
             status=status,
-            objective=float(true_global_makespan),
+            objective=float(result_objective),
             gap=gap,
             runtime_sec=runtime_sec,
             diagnostics=diagnostics,
@@ -3499,7 +3514,7 @@ class GlobalXYZUSolver:
                 order_obj = getattr(prepared["id_to_order"], "get", lambda *_: None)(int(order_id))
                 lst_sec = float(getattr(order_obj, "lst_sec", 0.0) or 0.0)
                 span_limit_sec = float(getattr(order_obj, "kitting_span_limit_sec", 0.0) or 0.0)
-                effective_span_limit = float(cls._effective_order_span_limit_sec(order_obj, cfg))
+                effective_span_limit = float(self._effective_order_span_limit_sec(order_obj, cfg))
                 model.addConstr(order_arrival_lb[int(order_id)] <= order_arrival_ub[int(order_id)], name=f"OrderArrivalBounds_{int(order_id)}")
                 if float(effective_span_limit) > 0.0:
                     model.addConstr(
@@ -4316,6 +4331,9 @@ class GlobalXYZUSolver:
         # 目标：主目标 makespan；次目标为总路线时间；再用极小槽位数惩罚减少无谓拆分。
         objective = gp.LinExpr()
         objective += cmax
+        span_weight = float(getattr(cfg, "kitting_span_penalty_weight", 5.0) or 0.0)
+        if order_span_overrun is not None and span_weight > 0.0:
+            objective += span_weight * gp.quicksum(order_span_overrun[int(order_id)] for order_id in order_ids)
         objective += 0.005 * gp.quicksum(a[int(slot.slot_id)] for slot in slots)
         if integrate_u_route and route_arc is not None:
             objective += 0.001 * gp.quicksum(
@@ -4369,6 +4387,7 @@ class GlobalXYZUSolver:
                 "enable_anchor_first_order_robot": bool(getattr(cfg, "enable_anchor_first_order_robot", False)),
                 "enable_selected_workload_lbs": bool(getattr(cfg, "enable_selected_workload_lbs", True)),
                 "enable_route_arrival_slot_linear": bool(getattr(cfg, "enable_route_arrival_slot_linear", False)),
+                "kitting_span_penalty_weight": float(span_weight),
                 "uz_lb_cut_count": int(uz_lb_cut_count),
                 "sku_cover_cut_count": int(sku_cover_cut_count),
                 "slot_min_arrival_lb_count": int(slot_min_arrival_lb_count),
@@ -5032,7 +5051,7 @@ class GlobalXYZUSolver:
             diagnostics["warm_start_u_skipped_reason"] = "integrated_u_disabled_or_no_route_rows"
         diagnostics["warm_start_model_cmax"] = float(model_cmax)
         diagnostics["warm_start_route_end_max"] = float(route_end_max)
-        span_weight = float(getattr(cfg, "kitting_span_penalty_weight", 1000.0) or 0.0)
+        span_weight = float(getattr(cfg, "kitting_span_penalty_weight", 5.0) or 0.0)
         deadline_weight = float(getattr(cfg, "deadline_penalty_weight", 1000.0) or 0.0)
         tw_penalty = (
             span_weight * float(diagnostics.get("warm_start_total_span_overrun", 0.0) or 0.0)
@@ -5061,7 +5080,7 @@ class GlobalXYZUSolver:
             )
         diagnostics["warm_start_tie_break_slot"] = float(tie_break_slot)
         diagnostics["warm_start_tie_break_route"] = float(tie_break_route)
-        diagnostics["warm_start_estimated_objective"] = float(model_cmax + tie_break_slot + tie_break_route)
+        diagnostics["warm_start_estimated_objective"] = float(model_cmax + tw_penalty + tie_break_slot + tie_break_route)
         if not bool(diagnostics.get("warm_start_u_applied", False)):
             diagnostics["warm_start_time_window_violation_source"] = "u_injection_failed"
         elif float(tw_penalty) > 1e-9:
@@ -5086,6 +5105,7 @@ class GlobalXYZUSolver:
         start = payload["start"]
         finish = payload["finish"]
         cmax = payload["cmax"]
+        cfg = payload.get("cfg", GlobalXYZUConfig())
 
         work_units: List[WorkUnitSpec] = prepared["work_units"]
         slots: List[SlotSpec] = prepared["slots"]

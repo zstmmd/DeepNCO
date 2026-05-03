@@ -523,6 +523,107 @@ def _write_warm_start_export(result_root: str, solver: Any, scale: str, seed: in
     return out_dir
 
 
+def _write_gurobi_solution_export(result_root: str, problem: Any, result: Any, scale: str, seed: int) -> str:
+    out_dir = os.path.join(result_root, "gurobi_solution_export")
+    os.makedirs(out_dir, exist_ok=True)
+
+    all_tasks: List[Any] = []
+    for st in getattr(problem, "subtask_list", []) or []:
+        all_tasks.extend(getattr(st, "execution_tasks", []) or [])
+    all_tasks.sort(key=lambda t: (int(getattr(t, "target_station_id", -1)), float(getattr(t, "start_process_time", 0.0)), int(getattr(t, "task_id", -1))))
+
+    coverage = _compute_solution_coverage(problem)
+    objective_value = float(getattr(result, "objective", 0.0) or 0.0)
+    model_cmax = float(getattr(result, "diagnostics", {}).get("model_cmax", getattr(problem, "global_makespan", 0.0)) or 0.0)
+    global_makespan = float(getattr(problem, "global_makespan", 0.0) or 0.0)
+    order_time_windows = list(getattr(result, "diagnostics", {}).get("order_time_windows", []) or [])
+    summary = {
+        "best_iter": -1,
+        "best_z": float(objective_value),
+        "model_objective": float(objective_value),
+        "model_cmax": float(model_cmax),
+        "global_makespan": float(global_makespan),
+        "total_span_overrun": float(getattr(result, "diagnostics", {}).get("total_span_overrun", 0.0) or 0.0),
+        "total_deadline_overrun": float(getattr(result, "diagnostics", {}).get("total_deadline_overrun", 0.0) or 0.0),
+        "scale": str(scale),
+        "seed": int(seed),
+        "status": str(getattr(result, "status", "")),
+        "sp1": {"subtask_count": int(len(getattr(problem, "subtask_list", []) or []))},
+        "sp2": {"station_count": int(len(getattr(problem, "station_list", []) or []))},
+        "sp3": {"task_count": int(len(all_tasks))},
+        "sp4": {"robot_count": int(len(getattr(problem, "robot_list", []) or []))},
+        "coverage": coverage,
+        "order_time_windows": order_time_windows,
+    }
+    with open(os.path.join(out_dir, "best_solution_objectives.json"), "w", encoding="utf-8") as f:
+        json.dump(_normalize_jsonable(summary), f, ensure_ascii=False, indent=2)
+    with open(os.path.join(out_dir, "best_solution_objectives.txt"), "w", encoding="utf-8") as f:
+        f.write(f"status={summary['status']}\n")
+        f.write(f"model_objective={summary['model_objective']:.6f}\n")
+        f.write(f"model_cmax={summary['model_cmax']:.6f}\n")
+        f.write(f"global_makespan={summary['global_makespan']:.6f}\n")
+        f.write(f"total_span_overrun={summary['total_span_overrun']:.6f}\n")
+        f.write(f"total_deadline_overrun={summary['total_deadline_overrun']:.6f}\n")
+        f.write(f"sp1_subtask_count={summary['sp1']['subtask_count']}\n")
+        f.write(f"sp3_task_count={summary['sp3']['task_count']}\n")
+        f.write(f"sp4_robot_count={summary['sp4']['robot_count']}\n")
+        f.write(f"coverage_ok={summary['coverage']['coverage_ok']}\n")
+
+    dump_path = os.path.join(out_dir, "best_solution_full_dump.txt")
+    with open(dump_path, "w", encoding="utf-8") as f:
+        f.write("[Gurobi Best Solution Dump]\n")
+        f.write(f"seed={int(seed)}\n")
+        f.write(f"status={summary['status']}\n")
+        f.write(f"model_objective={summary['model_objective']:.6f}\n")
+        f.write(f"model_cmax={summary['model_cmax']:.6f}\n")
+        f.write(f"global_makespan={summary['global_makespan']:.6f}\n")
+        f.write(f"total_span_overrun={summary['total_span_overrun']:.6f}\n")
+        f.write(f"total_deadline_overrun={summary['total_deadline_overrun']:.6f}\n")
+        f.write("\n[SP1 Decisions]\n")
+        for st in sorted(getattr(problem, "subtask_list", []) or [], key=lambda x: int(getattr(x, "id", -1))):
+            sku_ids = [int(getattr(s, "id", -1)) for s in (getattr(st, "sku_list", []) or [])]
+            f.write(f"subtask_id={int(getattr(st, 'id', -1))}, order_id={int(getattr(getattr(st, 'parent_order', None), 'order_id', -1))}, sku_units={len(sku_ids)}, sku_list={sku_ids}\n")
+        f.write("\n[SP2 Decisions]\n")
+        for st in sorted(getattr(problem, "subtask_list", []) or [], key=lambda x: (int(getattr(x, "assigned_station_id", -1)), int(getattr(x, "station_sequence_rank", -1)), int(getattr(x, "id", -1)))):
+            f.write(f"subtask_id={int(getattr(st, 'id', -1))}, station_id={int(getattr(st, 'assigned_station_id', -1))}, rank={int(getattr(st, 'station_sequence_rank', -1))}\n")
+        f.write("\n[SP3 Decisions]\n")
+        for t in sorted(all_tasks, key=lambda x: int(getattr(x, "task_id", -1))):
+            f.write(
+                f"task_id={int(getattr(t, 'task_id', -1))}, subtask_id={int(getattr(t, 'sub_task_id', -1))}, stack_id={int(getattr(t, 'target_stack_id', -1))}, "
+                f"station_id={int(getattr(t, 'target_station_id', -1))}, mode={getattr(t, 'operation_mode', '')}, "
+                f"target_totes={list(getattr(t, 'target_tote_ids', []) or [])}, hit_totes={list(getattr(t, 'hit_tote_ids', []) or [])}, "
+                f"noise_totes={list(getattr(t, 'noise_tote_ids', []) or [])}, sort_range={getattr(t, 'sort_layer_range', None)}, "
+                f"robot_service_time={float(getattr(t, 'robot_service_time', 0.0) or 0.0):.6f}, station_service_time={float(getattr(t, 'station_service_time', 0.0) or 0.0):.6f}\n"
+            )
+        f.write("\n[SP4 Decisions]\n")
+        for t in sorted(all_tasks, key=lambda x: int(getattr(x, "task_id", -1))):
+            f.write(
+                f"task_id={int(getattr(t, 'task_id', -1))}, robot_id={int(getattr(t, 'robot_id', -1))}, trip_id={int(getattr(t, 'trip_id', 0))}, "
+                f"arrival_stack={float(getattr(t, 'arrival_time_at_stack', 0.0) or 0.0):.6f}, arrival_station={float(getattr(t, 'arrival_time_at_station', 0.0) or 0.0):.6f}, "
+                f"start_process={float(getattr(t, 'start_process_time', 0.0) or 0.0):.6f}, end_process={float(getattr(t, 'end_process_time', 0.0) or 0.0):.6f}\n"
+            )
+
+    verification_result = _verify_makespan_breakdown(problem, out_dir)
+    audit = _build_solution_audit(problem, best_z=float(global_makespan), verification_result=verification_result)
+    audit["model_objective"] = float(objective_value)
+    audit["model_cmax"] = float(model_cmax)
+    audit["total_span_overrun"] = float(summary["total_span_overrun"])
+    audit["total_deadline_overrun"] = float(summary["total_deadline_overrun"])
+    audit["order_time_windows"] = order_time_windows
+    with open(os.path.join(out_dir, "best_solution_audit.json"), "w", encoding="utf-8") as f:
+        json.dump(_normalize_jsonable(audit), f, ensure_ascii=False, indent=2)
+    with open(os.path.join(out_dir, "best_solution_audit.txt"), "w", encoding="utf-8") as f:
+        f.write("[Gurobi Best Solution Audit]\n")
+        f.write(f"coverage_ok={bool(audit.get('coverage_ok', False))}\n")
+        f.write(f"makespan_consistent={bool(audit.get('makespan_consistent', False))}\n")
+        f.write(f"model_objective={float(audit.get('model_objective', 0.0) or 0.0):.6f}\n")
+        f.write(f"model_cmax={float(audit.get('model_cmax', 0.0) or 0.0):.6f}\n")
+        f.write(f"total_span_overrun={float(audit.get('total_span_overrun', 0.0) or 0.0):.6f}\n")
+        f.write(f"total_deadline_overrun={float(audit.get('total_deadline_overrun', 0.0) or 0.0):.6f}\n")
+        f.write(f"has_unreasonable_solution={bool(audit.get('has_unreasonable_solution', False))}\n")
+    return out_dir
+
+
 def _write_result_files(problem: Any, result: Any, scale: str, seed: int, cfg: GlobalXYZUConfig) -> str:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     result_root = os.path.join(ROOT_DIR, "result", f"gurobi_{str(scale).lower()}_{timestamp}")
@@ -626,6 +727,7 @@ def _write_result_files(problem: Any, result: Any, scale: str, seed: int, cfg: G
             f.write(f"robot_id={robot_id}\n")
             for row in list(rows or []):
                 f.write(f"  {row}\n")
+    _write_gurobi_solution_export(result_root=result_root, problem=problem, result=result, scale=scale, seed=seed)
     return result_root
 
 
@@ -650,7 +752,7 @@ def main() -> None:
     parser.add_argument("--u-route-lkh", action="store_true", help="Use non-MIP routing in the U stage when SP4 is available.")
     parser.add_argument("--bom-arrival-window-sec", type=float, default=60.0)
     parser.add_argument("--disable-order-time-windows", action="store_true")
-    parser.add_argument("--kitting-span-penalty-weight", type=float, default=1000.0)
+    parser.add_argument("--kitting-span-penalty-weight", type=float, default=5.0)
     parser.add_argument("--deadline-penalty-weight", type=float, default=1000.0)
     parser.add_argument("--enable-uz-lb-cuts", action="store_true", help="Enable U/Z workload lower-bound probe cuts.")
     parser.add_argument("--enable-sku-cover-cuts", action="store_true", help="Deprecated no-op: SKU/tote cover cuts are enabled by default.")

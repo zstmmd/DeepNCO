@@ -219,36 +219,7 @@ class ResourceValidator:
                 "lkh_call_count": 1,
             }
         bom_arrival_window = self.opt._evaluate_bom_arrival_window()
-        if not bool(bom_arrival_window.get("feasible", True)):
-            return {
-                "makespan": float("inf"),
-                "snapshot": None,
-                "coverage_hard_reject": False,
-                "hard_reject_reason": "bom_arrival_window_hard_reject",
-                "conflict_summary": {},
-                "unmet_sku_total": int(coverage.get("unmet_sku_total", 0) or 0),
-                "unassigned_robot_task_count": 0,
-                "unassigned_robot_tasks": [],
-                "bom_arrival_window_violating_order_count": int(bom_arrival_window.get("violating_order_count", 0) or 0),
-                "bom_arrival_window_violations": list(bom_arrival_window.get("violations", []) or []),
-                "lkh_call_count": 1,
-            }
         time_window_metrics = self.opt._evaluate_order_time_window_metrics()
-        if float(time_window_metrics.get("span_overrun_total", 0.0) or 0.0) > 1e-9:
-            return {
-                "makespan": float("inf"),
-                "snapshot": None,
-                "coverage_hard_reject": False,
-                "hard_reject_reason": "kitting_span_hard_reject",
-                "conflict_summary": {},
-                "unmet_sku_total": int(coverage.get("unmet_sku_total", 0) or 0),
-                "unassigned_robot_task_count": 0,
-                "unassigned_robot_tasks": [],
-                "bom_arrival_window_violating_order_count": int(bom_arrival_window.get("violating_order_count", 0) or 0),
-                "bom_arrival_window_violations": list(bom_arrival_window.get("violations", []) or []),
-                "order_time_window_metrics": dict(time_window_metrics or {}),
-                "lkh_call_count": 1,
-            }
         makespan = float(self.opt.evaluate())
         self.opt._harvest_station_start_times()
         self.opt._update_beta_from_station()

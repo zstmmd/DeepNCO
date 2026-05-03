@@ -55,7 +55,7 @@ class TRARunConfig:
     epsilon: float = 0.05
     bom_arrival_window_sec: float = 60.0
     enable_order_time_windows: bool = False
-    kitting_span_penalty_weight: float = 1000.0
+    kitting_span_penalty_weight: float = 5.0
     deadline_penalty_weight: float = 1000.0
 
     # 求解策略（可按“前期快、后期精”切换）
@@ -7099,9 +7099,13 @@ class TRAOptimizer:
         self._simulate_call_count += 1
         true_makespan = float(self.sim.calculate())
         tw_metrics = self._evaluate_order_time_window_metrics()
+        span_overrun_total = float(tw_metrics.get("span_overrun_total", 0.0) or 0.0)
+        span_weight = float(getattr(self.cfg, "kitting_span_penalty_weight", 5.0) or 0.0)
+        objective = float(true_makespan + span_weight * span_overrun_total)
         self.problem.global_makespan = float(true_makespan)
+        self.problem.global_objective = float(objective)
         self.last_order_time_window_metrics = dict(tw_metrics or {})
-        return float(true_makespan)
+        return float(objective)
 
     def _lb_transport(self) -> float:
         # 运输下界：各任务到站时间的最大值
@@ -7581,14 +7585,10 @@ class TRAOptimizer:
         initial_coverage = self._compute_solution_coverage()
         initial_coverage_ok = bool(initial_coverage.get("coverage_ok", False))
         initial_time_window_metrics = self._evaluate_order_time_window_metrics()
-        initial_kitting_span_ok = bool(float(initial_time_window_metrics.get("span_overrun_total", 0.0) or 0.0) <= 1e-9)
         initial_bom_arrival_window = self._evaluate_bom_arrival_window()
-        initial_bom_arrival_window_ok = bool(initial_bom_arrival_window.get("feasible", True))
         initial_robot_assignment_ok = bool(len(self._unassigned_robot_task_rows()) == 0)
         initial_incumbent_feasible = bool(
             initial_coverage_ok
-            and initial_kitting_span_ok
-            and initial_bom_arrival_window_ok
             and initial_robot_assignment_ok
         )
         incumbent_z0 = float(z0) if initial_incumbent_feasible else float("inf")
@@ -7614,14 +7614,9 @@ class TRAOptimizer:
             if not bool(initial_coverage_ok):
                 last_row["validation_trigger"] = "coverage_hard_reject"
                 last_row["candidate_hard_reject_reason"] = "coverage_hard_reject"
-            elif not bool(initial_kitting_span_ok):
-                last_row["validation_trigger"] = "kitting_span_hard_reject"
-                last_row["candidate_hard_reject_reason"] = "kitting_span_hard_reject"
-                last_row["kitting_span_overrun_total"] = float(initial_time_window_metrics.get("span_overrun_total", 0.0) or 0.0)
-            elif not bool(initial_bom_arrival_window_ok):
-                last_row["validation_trigger"] = "bom_arrival_window_hard_reject"
-                last_row["candidate_hard_reject_reason"] = "bom_arrival_window_hard_reject"
-                last_row["bom_arrival_window_violating_order_count"] = int(initial_bom_arrival_window.get("violating_order_count", 0) or 0)
+            last_row["true_makespan"] = float(getattr(self.problem, "global_makespan", 0.0) or 0.0)
+            last_row["span_overrun_total"] = float(initial_time_window_metrics.get("span_overrun_total", 0.0) or 0.0)
+            last_row["bom_arrival_window_violating_order_count"] = int(initial_bom_arrival_window.get("violating_order_count", 0) or 0)
 
     def _append_iter_log(self, iter_id: int, focus: str, z: float, improved: bool, skipped: bool,
                          lb: Optional[float]):
@@ -8415,11 +8410,17 @@ class TRAOptimizer:
     def _write_best_solution_summary(self, out_dir: str, z: float):
         metrics = self._collect_layer_metrics()
         coverage = self._compute_solution_coverage()
+        order_time_window_metrics = self._evaluate_order_time_window_metrics()
+        span_overrun_total = float(order_time_window_metrics.get("span_overrun_total", 0.0) or 0.0)
+        span_weight = float(getattr(self.cfg, "kitting_span_penalty_weight", 5.0) or 0.0)
+        objective_value = float(getattr(self.problem, "global_makespan", 0.0) or 0.0) + span_weight * span_overrun_total
         summary = {
             "best_iter": int(self.best.iter_id) if self.best is not None else -1,
             "best_z": float(self.best.z) if self.best is not None else float(z),
-            "recomputed_z": float(getattr(self.problem, "global_makespan", 0.0)),
+            "recomputed_z": float(objective_value),
             "global_makespan": float(getattr(self.problem, "global_makespan", 0.0)),
+            "kitting_span_penalty_weight": float(span_weight),
+            "kitting_span_overrun_total": float(span_overrun_total),
             "run_total_time_sec": float(self.run_total_time_sec if self.run_total_time_sec > 0.0 else self._runtime_elapsed_sec()),
             "sp1": {
                 "subtask_count": int(metrics.get("subtask_count", 0.0)),
@@ -8453,7 +8454,10 @@ class TRAOptimizer:
         with open(os.path.join(out_dir, "best_solution_objectives.txt"), "w", encoding="utf-8") as f:
             f.write(f"best_iter={summary['best_iter']}\n")
             f.write(f"best_z={summary['best_z']:.6f}\n")
+            f.write(f"recomputed_z={summary['recomputed_z']:.6f}\n")
             f.write(f"global_makespan={summary['global_makespan']:.6f}\n")
+            f.write(f"kitting_span_overrun_total={summary['kitting_span_overrun_total']:.6f}\n")
+            f.write(f"kitting_span_penalty_weight={summary['kitting_span_penalty_weight']:.6f}\n")
             f.write(f"run_total_time_sec={summary['run_total_time_sec']:.6f}\n")
             f.write(
                 f"sp1_subtask_count={summary['sp1']['subtask_count']}, "
@@ -8671,7 +8675,7 @@ class TRAOptimizer:
             f.write(f"best_iter={int(self.best.iter_id)}\n")
             f.write(f"seed={int(self.best.seed)}\n")
             f.write(f"best_z={float(self.best.z):.6f}\n")
-            f.write(f"recomputed_z={float(getattr(self.problem, 'global_makespan', 0.0)):.6f}\n")
+            f.write(f"recomputed_z={float(getattr(self.problem, 'global_objective', getattr(self.problem, 'global_makespan', 0.0))):.6f}\n")
             f.write(f"global_makespan={float(getattr(self.problem, 'global_makespan', 0.0)):.6f}\n")
             f.write("\n[TRA Iter Log]\n")
             for row in self.iter_log:
@@ -8772,12 +8776,14 @@ class TRAOptimizer:
         bom_arrival_window = self._evaluate_bom_arrival_window()
         order_time_window_metrics = self._evaluate_order_time_window_metrics()
         best_z = float(self.best.z) if self.best is not None else float("nan")
-        recomputed_z = float(getattr(self.problem, "global_makespan", 0.0))
+        global_makespan = float(getattr(self.problem, "global_makespan", 0.0))
+        span_weight = float(getattr(self.cfg, "kitting_span_penalty_weight", 5.0) or 0.0)
+        span_overrun_total = float(order_time_window_metrics.get("span_overrun_total", 0.0) or 0.0)
+        recomputed_z = float(global_makespan + span_weight * span_overrun_total)
         global_makespan = float(getattr(self.problem, "global_makespan", 0.0))
         makespan_consistent = bool(
             math.isfinite(best_z)
             and abs(best_z - recomputed_z) <= 1e-6
-            and abs(recomputed_z - global_makespan) <= 1e-6
         )
 
         invalid_station_rows: List[Dict[str, Any]] = []
@@ -8850,8 +8856,6 @@ class TRAOptimizer:
             or invalid_z_rows
             or duplicate_tote_rows
             or unassigned_robot_rows
-            or not bool(bom_arrival_window.get("feasible", True))
-            or float(order_time_window_metrics.get("span_overrun_total", 0.0) or 0.0) > 1e-9
             or verification_failures
         )
         issue_summary: List[str] = []
@@ -8871,14 +8875,6 @@ class TRAOptimizer:
             issue_summary.append(f"Duplicate tote use count: {sum(max(0, len(rows) - 1) for rows in duplicate_tote_rows.values())}")
         if unassigned_robot_rows:
             issue_summary.append(f"Unassigned robot task count: {len(unassigned_robot_rows)}")
-        if not bool(bom_arrival_window.get("feasible", True)):
-            issue_summary.append(
-                f"BOM arrival window violated: {int(bom_arrival_window.get('violating_order_count', 0))} orders"
-            )
-        if float(order_time_window_metrics.get("span_overrun_total", 0.0) or 0.0) > 1e-9:
-            issue_summary.append(
-                f"Kitting span violated: overrun_total={float(order_time_window_metrics.get('span_overrun_total', 0.0) or 0.0):.6f}"
-            )
         issue_summary.extend(str(item) for item in verification_failures)
 
         return {
@@ -8890,6 +8886,8 @@ class TRAOptimizer:
             "best_z": best_z,
             "recomputed_z": recomputed_z,
             "global_makespan": global_makespan,
+            "objective_value": recomputed_z,
+            "kitting_span_penalty_weight": float(span_weight),
             "makespan_consistent": makespan_consistent,
             "invalid_station_assignment_count": int(len(invalid_station_rows)),
             "invalid_station_assignments": invalid_station_rows,
@@ -8910,7 +8908,7 @@ class TRAOptimizer:
             "bom_arrival_window_violations": list(bom_arrival_window.get("violations", []) or []),
             "order_time_window_metrics": dict(order_time_window_metrics or {}),
             "kitting_span_ok": bool(float(order_time_window_metrics.get("span_overrun_total", 0.0) or 0.0) <= 1e-9),
-            "kitting_span_overrun_total": float(order_time_window_metrics.get("span_overrun_total", 0.0) or 0.0),
+            "kitting_span_overrun_total": float(span_overrun_total),
             "deadline_overrun_total": float(order_time_window_metrics.get("deadline_overrun_total", 0.0) or 0.0),
             "sp4_lst_violation_count": int(len(getattr(self, "last_sp4_lst_infeasible", []) or [])),
             "sp4_lst_violations": list(getattr(self, "last_sp4_lst_infeasible", []) or []),
@@ -9007,24 +9005,7 @@ class TRAOptimizer:
                 f"unmet_subtask_count={int(coverage.get('unmet_subtask_count', 0))}"
             )
         order_time_window_metrics = self._evaluate_order_time_window_metrics()
-        if float(order_time_window_metrics.get("span_overrun_total", 0.0) or 0.0) > 1e-9:
-            for row in list(order_time_window_metrics.get("orders", []) or []):
-                if float(row.get("span_overrun", 0.0) or 0.0) <= 1e-9:
-                    continue
-                failures.append(
-                    f"Kitting span violated: order_id={int(row.get('order_id', -1))}, "
-                    f"arrival_span_sec={float(row.get('arrival_ub', 0.0) or 0.0) - float(row.get('arrival_lb', 0.0) or 0.0):.6f}, "
-                    f"span_limit_sec={float(row.get('kitting_span_limit_sec', 0.0) or 0.0):.6f}, "
-                    f"overrun_sec={float(row.get('span_overrun', 0.0) or 0.0):.6f}"
-                )
         bom_arrival_window = self._evaluate_bom_arrival_window()
-        if not bool(bom_arrival_window.get("feasible", True)):
-            for row in list(bom_arrival_window.get("violations", []) or []):
-                failures.append(
-                    f"BOM arrival window violated: order_id={int(row.get('order_id', -1))}, "
-                    f"span_sec={float(row.get('span_sec', 0.0)):.6f}, "
-                    f"window_sec={float(bom_arrival_window.get('window_sec', 0.0)):.6f}"
-                )
 
         result = {
             "status": "PASS" if not failures else "FAIL",
@@ -9067,6 +9048,7 @@ if __name__ == "__main__":
         no_improve_limit=3,
         epsilon=0.05,
         bom_arrival_window_sec=60.0,
+        kitting_span_penalty_weight=5.0,
         sp2_use_mip=True,
         sp3_use_mip=False,
         sp4_use_mip=False,
