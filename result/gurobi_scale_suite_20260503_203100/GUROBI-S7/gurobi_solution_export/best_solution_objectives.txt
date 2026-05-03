@@ -1,0 +1,10 @@
+status=OPTIMAL
+model_objective=249.090000
+model_cmax=248.000000
+global_makespan=248.000000
+total_span_overrun=0.000000
+total_deadline_overrun=553.324882
+sp1_subtask_count=10
+sp3_task_count=16
+sp4_robot_count=5
+coverage_ok=True
