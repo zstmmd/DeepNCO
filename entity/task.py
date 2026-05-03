@@ -49,6 +49,10 @@ class Task:
 
     #预计到达工作站的时间 (用于软耦合时间窗检查)
     arrival_time_at_station: float = 0.0
+    order_anchor_start_sec: float = 0.0
+    order_kitting_span_limit_sec: float = 0.0
+    order_time_window_lb_sec: float = 0.0
+    order_time_window_ub_sec: float = 0.0
 
     sku_pick_count: int = 0
     # 开始捡货/处理时间 (取决于 Station 的空闲时间，FCFS 逻辑)

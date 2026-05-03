@@ -29,6 +29,25 @@ def _normalize_jsonable(value: Any) -> Any:
     return str(value)
 
 
+def _format_diag_for_console(key: str, value: Any, full_diag: bool = False) -> str:
+    if full_diag:
+        return str(value)
+    if isinstance(value, dict):
+        size = len(value)
+        if size > 20:
+            return f"<dict size={size}>"
+        return str(value)
+    if isinstance(value, (list, tuple, set)):
+        size = len(value)
+        if size > 20:
+            return f"<{type(value).__name__} size={size}>"
+        return str(value)
+    text = str(value)
+    if len(text) > 500:
+        return f"<text length={len(text)}>"
+    return text
+
+
 def _task_rows(problem: Any) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     for task in getattr(problem, "task_list", []) or []:
@@ -68,6 +87,23 @@ def _subtask_rows(problem: Any) -> List[Dict[str, Any]]:
                     int(getattr(task, "task_id", -1))
                     for task in (getattr(st, "execution_tasks", []) or [])
                 ],
+            }
+        )
+    return rows
+
+
+def _order_rows(problem: Any) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    for order in getattr(problem, "order_list", []) or []:
+        rows.append(
+            {
+                "order_id": int(getattr(order, "order_id", -1)),
+                "est_sec": float(getattr(order, "est_sec", 0.0) or 0.0),
+                "kitting_span_limit_sec": float(getattr(order, "kitting_span_limit_sec", 0.0) or 0.0),
+                "lst_sec": float(getattr(order, "lst_sec", 0.0) or 0.0),
+                "total_qty": int(getattr(order, "total_qty", 0) or 0),
+                "unique_sku_count": int(getattr(order, "unique_sku_count", 0) or 0),
+                "deadline_buffer_sec": float(getattr(order, "deadline_buffer_sec", 0.0) or 0.0),
             }
         )
     return rows
@@ -504,10 +540,14 @@ def _write_result_files(problem: Any, result: Any, scale: str, seed: int, cfg: G
         "subtask_count": int(result.subtask_count),
         "task_count": int(result.task_count),
         "global_makespan": float(getattr(problem, "global_makespan", 0.0) or 0.0),
+        "true_global_makespan": float(result.diagnostics.get("true_global_makespan", getattr(problem, "global_makespan", 0.0)) or 0.0),
+        "total_span_overrun": float(result.diagnostics.get("total_span_overrun", 0.0) or 0.0),
+        "total_deadline_overrun": float(result.diagnostics.get("total_deadline_overrun", 0.0) or 0.0),
         "station_schedule": result.station_schedule,
         "robot_routes": result.robot_routes,
         "diagnostics": result.diagnostics,
         "config": _normalize_jsonable(cfg.__dict__),
+        "orders": _order_rows(problem),
         "subtasks": _subtask_rows(problem),
         "tasks": _task_rows(problem),
     }
@@ -523,9 +563,15 @@ def _write_result_files(problem: Any, result: Any, scale: str, seed: int, cfg: G
         f.write(f"status={result.status}\n")
         f.write(f"objective={float(result.objective):.6f}\n")
         f.write(f"global_makespan={float(getattr(problem, 'global_makespan', 0.0) or 0.0):.6f}\n")
+        f.write(f"true_global_makespan={float(result.diagnostics.get('true_global_makespan', getattr(problem, 'global_makespan', 0.0)) or 0.0):.6f}\n")
+        f.write(f"total_span_overrun={float(result.diagnostics.get('total_span_overrun', 0.0) or 0.0):.6f}\n")
+        f.write(f"total_deadline_overrun={float(result.diagnostics.get('total_deadline_overrun', 0.0) or 0.0):.6f}\n")
         f.write(f"runtime_sec={float(result.runtime_sec):.6f}\n")
         f.write(f"gurobi_solve_time_sec={float(result.diagnostics.get('gurobi_solve_time_sec', 0.0) or 0.0):.6f}\n")
         f.write(f"gurobi_runtime_sec={float(result.diagnostics.get('gurobi_runtime_sec', 0.0) or 0.0):.6f}\n")
+        f.write(f"model_best_bound={float(result.diagnostics.get('model_best_bound', 0.0) or 0.0):.6f}\n")
+        f.write(f"model_gap={float(result.diagnostics.get('model_gap', 0.0) or 0.0):.6f}\n")
+        f.write(f"model_node_count={float(result.diagnostics.get('model_node_count', 0.0) or 0.0):.6f}\n")
         f.write(f"slot_time_ub={float(result.diagnostics.get('slot_time_ub', 0.0) or 0.0):.6f}\n")
         f.write(f"route_big_m={float(result.diagnostics.get('route_big_m', 0.0) or 0.0):.6f}\n")
         f.write(f"warm_makespan={float(result.diagnostics.get('warm_makespan', 0.0) or 0.0):.6f}\n")
@@ -533,9 +579,23 @@ def _write_result_files(problem: Any, result: Any, scale: str, seed: int, cfg: G
         f.write(f"route_big_m_source={result.diagnostics.get('route_big_m_source', '')}\n")
         f.write(f"subtask_count={int(result.subtask_count)}\n")
         f.write(f"task_count={int(result.task_count)}\n")
-        f.write(f"station_schedule={result.station_schedule}\n")
+        f.write(f"model_var_count_total={int(result.diagnostics.get('model_var_count_total', 0) or 0)}\n")
+        f.write(f"model_constr_count_total={int(result.diagnostics.get('model_constr_count_total', 0) or 0)}\n")
+        f.write(f"model_linear_constr_count_total={int(result.diagnostics.get('model_linear_constr_count_total', 0) or 0)}\n")
+        f.write(f"model_general_constr_count_total={int(result.diagnostics.get('model_general_constr_count_total', 0) or 0)}\n")
+        f.write(f"route_lazy_constraint={bool(result.diagnostics.get('route_lazy_constraint', False))}\n")
+        f.write(f"route_lazy_level={int(result.diagnostics.get('route_lazy_level', 0) or 0)}\n")
+        f.write(f"route_lazy_time_count={int(result.diagnostics.get('route_lazy_time_count', 0) or 0)}\n")
+        f.write(f"route_lazy_load_count={int(result.diagnostics.get('route_lazy_load_count', 0) or 0)}\n")
+        f.write(f"warm_start_total_span_overrun={float(result.diagnostics.get('warm_start_total_span_overrun', 0.0) or 0.0):.6f}\n")
+        f.write(f"warm_start_total_deadline_overrun={float(result.diagnostics.get('warm_start_total_deadline_overrun', 0.0) or 0.0):.6f}\n")
+        f.write(f"warm_start_time_window_penalty={float(result.diagnostics.get('warm_start_time_window_penalty', 0.0) or 0.0):.6f}\n")
+        f.write(f"warm_start_estimated_objective={float(result.diagnostics.get('warm_start_estimated_objective', 0.0) or 0.0):.6f}\n")
+        f.write("model_var_count_by_type_json=" + str(result.diagnostics.get("model_var_count_by_type_json", "{}")) + "\n")
+        f.write("model_constr_count_by_type_json=" + str(result.diagnostics.get("model_constr_count_by_type_json", "{}")) + "\n")
+        # f.write(f"station_schedule={result.station_schedule}\n")
         f.write(f"robot_ids={sorted(result.robot_routes.keys())}\n")
-        f.write(f"result_root={result_root}\n")
+        # f.write(f"result_root={result_root}\n")
 
     warm_diag_payload = {
         "warm_start_route_steps": result.diagnostics.get("warm_start_route_steps", {}),
@@ -559,8 +619,8 @@ def _write_result_files(problem: Any, result: Any, scale: str, seed: int, cfg: G
         for row in list(result.diagnostics.get("warm_start_time_violations", []) or []):
             f.write(f"- {row}\n")
         f.write("slot_times:\n")
-        for row in list(result.diagnostics.get("warm_start_slot_times", []) or []):
-            f.write(f"- {row}\n")
+        # for row in list(result.diagnostics.get("warm_start_slot_times", []) or []):
+        #     f.write(f"- {row}\n")
         f.write("route_steps:\n")
         for robot_id, rows in dict(result.diagnostics.get("warm_start_route_steps", {}) or {}).items():
             f.write(f"robot_id={robot_id}\n")
@@ -571,9 +631,9 @@ def _write_result_files(problem: Any, result: Any, scale: str, seed: int, cfg: G
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the standalone Global XYZU solver.")
-    parser.add_argument("--scale", type=str, default="Gurobi-s1")
+    parser.add_argument("--scale", type=str, default="gurobi-s3")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--time-limit", type=float, default=2000.0)
+    parser.add_argument("--time-limit", type=float, default=3600.0)
     parser.add_argument("--mip-gap", type=float, default=0.01)
     parser.add_argument("--candidate-stack-topk", type=int, default=3)
     parser.add_argument("--max-rank", type=int, default=0)
@@ -589,6 +649,39 @@ def main() -> None:
     parser.add_argument("--max-candidate-stacks-per-order", type=int, default=24)
     parser.add_argument("--u-route-lkh", action="store_true", help="Use non-MIP routing in the U stage when SP4 is available.")
     parser.add_argument("--bom-arrival-window-sec", type=float, default=60.0)
+    parser.add_argument("--disable-order-time-windows", action="store_true")
+    parser.add_argument("--kitting-span-penalty-weight", type=float, default=1000.0)
+    parser.add_argument("--deadline-penalty-weight", type=float, default=1000.0)
+    parser.add_argument("--enable-uz-lb-cuts", action="store_true", help="Enable U/Z workload lower-bound probe cuts.")
+    parser.add_argument("--enable-sku-cover-cuts", action="store_true", help="Deprecated no-op: SKU/tote cover cuts are enabled by default.")
+    parser.add_argument("--disable-sku-cover-cuts", action="store_true", help="Disable SKU/tote cover valid inequalities.")
+    parser.add_argument("--enable-slot-min-arrival-lb", action="store_true", help="Enable slot intrinsic-arrival lower-bound cuts.")
+    parser.add_argument("--enable-route-incident-travel-lb", action="store_true", help="Enable route incident travel lower-bound cuts.")
+    parser.add_argument("--enable-route-pair-service-travel-lb", action="store_true", help="Enable safe route pair service/travel lower-bound cuts.")
+    parser.add_argument("--enable-route-slot-stack-count-lb", action="store_true", help="Deprecated no-op: slot stack-count capacity cover cuts are enabled by default.")
+    parser.add_argument("--disable-route-slot-stack-count-lb", action="store_true", help="Disable slot stack-count capacity cover lower-bound cuts.")
+    parser.add_argument("--enable-route-finish-cmax-lb", action="store_true", help="Enable cmax lower bound from robot route finish times.")
+    parser.add_argument("--enable-global-arrival-workload-lb", action="store_true", help="Deprecated no-op: global arrival workload lower-bound cut is enabled by default.")
+    parser.add_argument("--disable-global-arrival-workload-lb", action="store_true", help="Disable global arrival plus station workload lower-bound cut.")
+    parser.add_argument("--disable-route-time-window-arc-prune", action="store_true", help="Disable safe U-layer time-window arc pruning.")
+    parser.add_argument("--disable-route-load-interval-arc-prune", action="store_true", help="Disable safe U-layer load-interval arc pruning.")
+    parser.add_argument("--enable-route-directional-arc-prune", action="store_true", help="Enable safe delivery-to-pickup directional arc pruning.")
+    parser.add_argument("--enable-route-service-sec-cuts", action="store_true", help="Enable service-node 2-cycle subtour elimination cuts.")
+    parser.add_argument("--enable-tight-slot-upper-bound", action="store_true", help="Deprecated no-op: tight slot upper bound is enabled by default.")
+    parser.add_argument("--disable-tight-slot-upper-bound", action="store_true", help="Disable warm/capacity tight slot upper bound.")
+    parser.add_argument("--slot-slack-per-order", type=int, default=1)
+    parser.add_argument("--enable-warm-candidate-stack-prune", action="store_true", help="Deprecated no-op: warm candidate stack pruning is enabled by default.")
+    parser.add_argument("--disable-warm-candidate-stack-prune", action="store_true", help="Disable warm-stack candidate pruning.")
+    parser.add_argument("--candidate-station-topk-per-stack", type=int, default=2)
+    parser.add_argument("--route-pickup-neighbor-limit", type=int, default=5)
+    parser.add_argument("--disable-scale-adaptive-candidate-prune", action="store_true", help="Disable GUROBI-S6+ adaptive candidate compression.")
+    parser.add_argument("--disable-resource-lex-symmetry", action="store_true", help="Disable safe same-coordinate resource lex symmetry constraints.")
+    parser.add_argument("--enable-anchor-first-order-robot", action="store_true", help="Experimental: fix warm first pickup to its warm robot.")
+    parser.add_argument("--disable-selected-workload-lbs", action="store_true", help="Disable selected route/station workload lower bounds.")
+    parser.add_argument("--enable-route-arrival-slot-linear", action="store_true", help="Re-enable redundant linear Big-M route-arrival binding.")
+    parser.add_argument("--enable-warm-prune-bound-repair", action="store_true", help="Enable experimental pre-arc warm upper-bound repair for route pruning.")
+    parser.add_argument("--disable-warm-start-route-repair", action="store_true", help="Disable warm-start route list-scheduling repair before MIP start injection.")
+    parser.add_argument("--full-diag", action="store_true", help="Print full diagnostics payload (may be very large).")
     args = parser.parse_args()
 
     problem = CreateOFSProblem.generate_problem_by_scale(args.scale, seed=args.seed)
@@ -596,6 +689,7 @@ def main() -> None:
         time_limit_sec=float(args.time_limit),
         mip_gap=float(args.mip_gap),
         candidate_stack_topk=int(args.candidate_stack_topk),
+        slot_slack_per_order=int(args.slot_slack_per_order),
         max_rank=int(args.max_rank),
         enable_warm_start=not bool(args.disable_warm_start),
         write_lp=bool(args.write_lp),
@@ -603,11 +697,37 @@ def main() -> None:
         max_candidate_stacks_per_order=int(args.max_candidate_stacks_per_order),
         u_route_use_mip=not bool(args.u_route_lkh),
         integrate_u_route=not bool(args.disable_integrated_u_route),
-        route_arc_prune=False,
+        route_arc_prune=not bool(args.disable_route_arc_prune),
         u_same_slot_same_robot=not bool(args.allow_multi_robot_slot),
         bom_arrival_window_sec=float(args.bom_arrival_window_sec),
         warm_start_use_sp4=(not bool(args.disable_warm_start_sp4)) or bool(args.warm_start_sp4),
         enable_sp4_fallback=bool(args.enable_sp4_fallback),
+        enable_order_time_windows=not bool(args.disable_order_time_windows),
+        kitting_span_penalty_weight=float(args.kitting_span_penalty_weight),
+        deadline_penalty_weight=float(args.deadline_penalty_weight),
+        enable_uz_lb_cuts=bool(args.enable_uz_lb_cuts),
+        enable_sku_cover_cuts=not bool(args.disable_sku_cover_cuts),
+        enable_slot_min_arrival_lb=bool(args.enable_slot_min_arrival_lb),
+        enable_route_incident_travel_lb=bool(args.enable_route_incident_travel_lb),
+        enable_route_pair_service_travel_lb=bool(args.enable_route_pair_service_travel_lb),
+        enable_route_slot_stack_count_lb=not bool(args.disable_route_slot_stack_count_lb),
+        enable_route_finish_cmax_lb=bool(args.enable_route_finish_cmax_lb),
+        enable_global_arrival_workload_lb=not bool(args.disable_global_arrival_workload_lb),
+        enable_route_time_window_arc_prune=not bool(args.disable_route_time_window_arc_prune),
+        enable_route_load_interval_arc_prune=not bool(args.disable_route_load_interval_arc_prune),
+        enable_route_directional_arc_prune=bool(args.enable_route_directional_arc_prune),
+        enable_route_service_sec_cuts=bool(args.enable_route_service_sec_cuts),
+        enable_tight_slot_upper_bound=not bool(args.disable_tight_slot_upper_bound),
+        enable_warm_candidate_stack_prune=not bool(args.disable_warm_candidate_stack_prune),
+        candidate_station_topk_per_stack=int(args.candidate_station_topk_per_stack),
+        route_pickup_neighbor_limit=int(args.route_pickup_neighbor_limit),
+        enable_scale_adaptive_candidate_prune=not bool(args.disable_scale_adaptive_candidate_prune),
+        enable_resource_lex_symmetry=not bool(args.disable_resource_lex_symmetry),
+        enable_anchor_first_order_robot=bool(args.enable_anchor_first_order_robot),
+        enable_selected_workload_lbs=not bool(args.disable_selected_workload_lbs),
+        enable_route_arrival_slot_linear=bool(args.enable_route_arrival_slot_linear),
+        enable_warm_prune_bound_repair=bool(args.enable_warm_prune_bound_repair),
+        enable_warm_start_route_repair=not bool(args.disable_warm_start_route_repair),
     )
     solver = GlobalXYZUSolver()
     result = solver.solve(problem, cfg=cfg)
@@ -618,16 +738,21 @@ def main() -> None:
     print(f"status={result.status}")
     print(f"objective={result.objective:.6f}")
     print(f"gap={result.gap}")
+    print(f"model_best_bound={float(result.diagnostics.get('model_best_bound', 0.0) or 0.0):.6f}")
+    print(f"model_gap={float(result.diagnostics.get('model_gap', 0.0) or 0.0):.6f}")
+    print(f"model_node_count={float(result.diagnostics.get('model_node_count', 0.0) or 0.0):.6f}")
     print(f"runtime_sec={result.runtime_sec:.6f}")
     print(f"gurobi_solve_time_sec={float(result.diagnostics.get('gurobi_solve_time_sec', 0.0)):.6f}")
     print(f"gurobi_runtime_sec={float(result.diagnostics.get('gurobi_runtime_sec', 0.0)):.6f}")
     print(f"model_cmax={float(result.diagnostics.get('model_cmax', 0.0) or 0.0):.6f}")
     print(f"validated_global_makespan={float(result.diagnostics.get('validated_global_makespan', result.objective) or result.objective):.6f}")
+    print(f"total_span_overrun={float(result.diagnostics.get('total_span_overrun', 0.0) or 0.0):.6f}")
+    print(f"total_deadline_overrun={float(result.diagnostics.get('total_deadline_overrun', 0.0) or 0.0):.6f}")
     if 'time_verify_cmax_diff' in result.diagnostics:
         print(f"time_verify_cmax_diff={float(result.diagnostics.get('time_verify_cmax_diff', 0.0) or 0.0):.6f}")
     print("=== Time Bounds ===")
-    print(f"slot_time_ub={float(result.diagnostics.get('slot_time_ub', 0.0) or 0.0):.6f}")
-    print(f"route_big_m={float(result.diagnostics.get('route_big_m', 0.0) or 0.0):.6f}")
+    # print(f"slot_time_ub={float(result.diagnostics.get('slot_time_ub', 0.0) or 0.0):.6f}")
+    # print(f"route_big_m={float(result.diagnostics.get('route_big_m', 0.0) or 0.0):.6f}")
     print(f"route_node_time_ub_max={float(result.diagnostics.get('route_node_time_ub_max', 0.0) or 0.0):.6f}")
     print(f"route_arc_time_m_max={float(result.diagnostics.get('route_arc_time_m_max', 0.0) or 0.0):.6f}")
     print(f"warm_makespan={float(result.diagnostics.get('warm_makespan', 0.0) or 0.0):.6f}")
@@ -636,18 +761,52 @@ def main() -> None:
     print(f"bom_arrival_window_sec={float(cfg.bom_arrival_window_sec):.6f}")
     print(f"subtask_count={result.subtask_count}")
     print(f"task_count={result.task_count}")
+    print(f"model_var_count_total={int(result.diagnostics.get('model_var_count_total', 0) or 0)}")
+    print(f"model_constr_count_total={int(result.diagnostics.get('model_constr_count_total', 0) or 0)}")
+    print(f"model_linear_constr_count_total={int(result.diagnostics.get('model_linear_constr_count_total', 0) or 0)}")
+    print(f"model_general_constr_count_total={int(result.diagnostics.get('model_general_constr_count_total', 0) or 0)}")
+    print(f"route_lazy_constraint={bool(result.diagnostics.get('route_lazy_constraint', False))}")
+    print(f"route_lazy_level={int(result.diagnostics.get('route_lazy_level', 0) or 0)}")
+    print(f"route_lazy_time_count={int(result.diagnostics.get('route_lazy_time_count', 0) or 0)}")
+    print(f"route_lazy_load_count={int(result.diagnostics.get('route_lazy_load_count', 0) or 0)}")
+    print(f"warm_start_total_span_overrun={float(result.diagnostics.get('warm_start_total_span_overrun', 0.0) or 0.0):.6f}")
+    print(f"warm_start_total_deadline_overrun={float(result.diagnostics.get('warm_start_total_deadline_overrun', 0.0) or 0.0):.6f}")
+    print(f"warm_start_time_window_penalty={float(result.diagnostics.get('warm_start_time_window_penalty', 0.0) or 0.0):.6f}")
+    print(f"warm_start_estimated_objective={float(result.diagnostics.get('warm_start_estimated_objective', 0.0) or 0.0):.6f}")
+    print("model_var_count_by_type_json=" + str(result.diagnostics.get("model_var_count_by_type_json", "{}")))
+    print("model_constr_count_by_type_json=" + str(result.diagnostics.get("model_constr_count_by_type_json", "{}")))
     print(f"station_schedule={result.station_schedule}")
     print(f"robot_ids={sorted(result.robot_routes.keys())}")
-    print(f"result_root={result_root}")
-    if warm_start_root:
-        print(f"warm_start_root={warm_start_root}")
+    # print(f"result_root={result_root}")
+    # if warm_start_root:
+    #     print(f"warm_start_root={warm_start_root}")
     print("=== Warm Start Injection ===")
     print(f"warm_start_model_cmax={float(result.diagnostics.get('warm_start_model_cmax', 0.0) or 0.0):.6f}")
     print(f"warm_start_route_end_max={float(result.diagnostics.get('warm_start_route_end_max', 0.0) or 0.0):.6f}")
     print(f"warm_start_route_end_gap={float(result.diagnostics.get('warm_start_route_end_gap', 0.0) or 0.0):.6f}")
     print(f"warm_start_time_violations={len(list(result.diagnostics.get('warm_start_time_violations', []) or []))}")
+    warm_tw_rows = [
+        row
+        for row in list(result.diagnostics.get("warm_start_order_time_windows", []) or [])
+        if bool(row.get("has_violation", False))
+    ]
+    print(f"warm_start_order_time_window_violation_count={len(warm_tw_rows)}")
+    for row in warm_tw_rows:
+        print(
+            "warm_start_order_violation="
+            f"order_id={int(row.get('order_id', -1))},"
+            f"arrival_lb={float(row.get('arrival_lb', 0.0) or 0.0):.6f},"
+            f"arrival_ub={float(row.get('arrival_ub', 0.0) or 0.0):.6f},"
+            f"span_limit={float(row.get('kitting_span_limit_sec', 0.0) or 0.0):.6f},"
+            f"lst={float(row.get('lst_sec', 0.0) or 0.0):.6f},"
+            f"span_overrun={float(row.get('span_overrun', 0.0) or 0.0):.6f},"
+            f"deadline_overrun={float(row.get('deadline_overrun', 0.0) or 0.0):.6f}"
+        )
+    if not bool(args.full_diag):
+        print("diag.note=use --full-diag to print complete diagnostics (large dictionaries are summarized by default)")
     for key in sorted(result.diagnostics.keys()):
-        print(f"diag.{key}={result.diagnostics[key]}")
+        value = _format_diag_for_console(key=key, value=result.diagnostics[key], full_diag=bool(args.full_diag))
+        print(f"diag.{key}={value}")
 
 
 if __name__ == "__main__":

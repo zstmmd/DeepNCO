@@ -3,5 +3,8 @@
     "python.defaultInterpreterPath": "D:\\anaconda\\envs\\deepnco_ml_312\\python.exe",
     "python.terminal.activateEnvironment": true,
     "python-envs.defaultEnvManager": "ms-python.python:conda",
-    "python-envs.defaultPackageManager": "ms-python.python:conda"
+    "python-envs.defaultPackageManager": "ms-python.python:conda",
+    "chat.tools.terminal.autoApprove": {
+        "where.exe": true
+    }
 }

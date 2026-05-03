@@ -142,6 +142,7 @@ class ResourceConfig:
     capacity_limits: Dict[int, int]
     next_subtask_id: int
     next_task_id: int
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
     def clone(self) -> "ResourceConfig":
         return copy.deepcopy(self)
@@ -163,6 +164,7 @@ class ResourceConfig:
             capacity_limits=self.capacity_limits,
             next_subtask_id=int(self.next_subtask_id),
             next_task_id=int(self.next_task_id),
+            metadata=copy.deepcopy(self.metadata),
         )
 
     def rebuild_indices(self) -> "ResourceConfig":

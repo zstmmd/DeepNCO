@@ -24,7 +24,7 @@ from config.ofs_config import OFSConfig
 from Gurobi.sp1 import SP1_BOM_Splitter
 from Gurobi.sp2 import SP2LayerContext, SP2LocalSolveResult, SP2_Station_Assigner
 from Gurobi.sp3 import SP3_Bin_Hitter
-from Gurobi.sp4 import SP4_Robot_Router
+from Gurobi.sp4 import SP4_Robot_Router, SP4RoutingInfeasibleError
 from Gurobi.layer_surrogate import (
     CandidatePrediction,
     F1EvalResult,
@@ -53,6 +53,10 @@ class TRARunConfig:
     max_iters: int = 50
     no_improve_limit: int = 3
     epsilon: float = 0.05
+    bom_arrival_window_sec: float = 60.0
+    enable_order_time_windows: bool = False
+    kitting_span_penalty_weight: float = 1000.0
+    deadline_penalty_weight: float = 1000.0
 
     # 求解策略（可按“前期快、后期精”切换）
     sp2_use_mip: bool = True
@@ -60,6 +64,13 @@ class TRARunConfig:
     sp4_use_mip: bool = False
     sp2_time_limit_sec: float = 15.0
     sp4_lkh_time_limit_seconds: int = 120
+    sp4_first_solution_strategies: Tuple[str, ...] = ("PATH_CHEAPEST_ARC", "SAVINGS", "PARALLEL_CHEAPEST_INSERTION")
+    sp4_first_solution_slice_seconds: int = 10
+    sp4_enable_guided_local_search: bool = True
+    sp4_same_subtask_vehicle_mode: str = "conditional"
+    sp4_same_subtask_vehicle_threshold: int = 2
+    sp4_enable_greedy_fallback: bool = True
+    sp4_raise_on_no_solution: bool = True
 
     # “先启发式、后精确”切换（满足同一组约束：只改变求解策略/时间上限）
     switch_to_exact_iter: int = 999999  # 迭代号达到后，开启更精确策略
@@ -159,6 +170,7 @@ class TRARunConfig:
     resource_empty_candidate_reward: float = -2.0
     resource_empty_candidate_layer_cooldown: int = 3
     resource_stop_if_best_z_no_change_rounds: int = 50
+    resource_stop_if_validated_best_no_change_rounds: int = 50
     resource_cache_hit_stagnation_increment: float = 0.2
     resource_empty_candidate_stagnation_increment: float = 0.0
     resource_layer_fail_threshold: int = 3
@@ -306,6 +318,23 @@ class TRARunConfig:
     y_incremental_route_subtask_cap: int = 4
     y_incremental_route_trip_cap: int = 3
     y_route_sim_cache_size: int = 16
+    resource_y_heat_grid_size: float = 4.0
+    resource_y_heat_penalty_weight: float = 0.75
+    resource_y_time_bucket_sec: float = 20.0
+    resource_y_window_overlap_weight: float = 0.60
+    resource_y_nearby_robot_budget_weight: float = 0.80
+    resource_y_conflict_station_penalty: float = 12.0
+    resource_y_conflict_time_bucket_penalty: float = 8.0
+    resource_y_conflict_heat_bonus: float = 4.0
+    resource_y_triangle_projected_finish_weight: float = 0.35
+    resource_y_triangle_arrival_weight: float = 1.0
+    resource_y_starvation_bonus: float = 8.0
+    resource_y_wave1_enable: bool = True
+    resource_y_wave1_sort_penalty: float = 8.0
+    resource_y_wave1_pick_weight: float = 0.75
+    resource_y_first_batch_station_penalty: float = 40.0
+    resource_y_first_batch_robot_penalty: float = 18.0
+    resource_y_first_batch_starvation_bonus: float = 6.0
     enable_triggered_zu_budget: bool = True
     z_trigger_station_load_std: float = 1.5
     z_trigger_noise_ratio: float = 0.12
@@ -351,6 +380,27 @@ class TRARunConfig:
     z_wait_overflow_hard_cap: float = 240.0
     z_route_tail_soft_cap: float = 90.0
     z_route_tail_hard_cap: float = 120.0
+    resource_z_sequence_feasibility_cap: float = 180.0
+    resource_z_mode_switch_penalty: float = 8.0
+    resource_z_contention_time_bucket_sec: float = 20.0
+    resource_z_stack_contention_penalty: float = 6.0
+    resource_z_tote_contention_penalty: float = 9.0
+    resource_z_choke_point_penalty: float = 4.0
+    resource_z_route_feasibility_penalty: float = 0.10
+    resource_z_conflict_stack_penalty: float = 15.0
+    resource_z_conflict_tote_penalty: float = 18.0
+    resource_z_conflict_time_bucket_penalty: float = 10.0
+    resource_z_queue_wait_threshold_sec: float = 5.0
+    resource_z_queue_wait_multiplier: float = 0.10
+    resource_z_queue_noise_weight: float = 1.0
+    resource_z_queue_multistack_weight: float = 0.8
+    resource_z_queue_sort_weight: float = 0.6
+    resource_z_queue_station_service_weight: float = 0.15
+    resource_conflict_local_reentry_enabled: bool = True
+    resource_conflict_time_bucket_sec: float = 20.0
+    resource_enable_joint_colocated_sort_postprocess: bool = True
+    resource_joint_colocated_sort_on_accepted_only: bool = True
+    resource_joint_colocated_sort_max_groups_per_candidate: int = 1
     z_operator_subtask_ban_after_failures: int = 2
     z_operator_failure_decay_rounds: int = 4
     z_route_pressure_weight: float = 1.0
@@ -585,6 +635,7 @@ class TRAOptimizer:
 
         # --- 旋转过程中用于“反馈耦合”的缓存 ---
         self.last_sp4_arrival_times: Dict[int, float] = {}
+        self.last_sp4_lst_infeasible: List[Dict[str, Any]] = []
         self.last_sp3_tote_selection: Dict[int, List[int]] = {}
         self.last_sp3_sorting_costs: Dict[int, float] = {}
         self.last_sp2_local_result: Optional[SP2LocalSolveResult] = None
@@ -722,6 +773,7 @@ class TRAOptimizer:
         self.dirty_b = False
         self.dirty_r = False
         self.last_sp2_local_result = None
+        self.last_sp4_lst_infeasible = []
         self.cached_eval: Optional[float] = None
         self.cached_metrics: Dict[str, float] = {}
         self.surrogate_stats: Dict[str, float] = {
@@ -1068,6 +1120,38 @@ class TRAOptimizer:
                 task.target_station_id = station_id
                 task.station_sequence_rank = rank
 
+    def _unassigned_robot_task_rows(self) -> List[Dict[str, int]]:
+        rows: List[Dict[str, int]] = []
+        for st in getattr(self.problem, "subtask_list", []) or []:
+            for task in getattr(st, "execution_tasks", []) or []:
+                if int(getattr(task, "robot_id", -1)) < 0:
+                    rows.append({
+                        "task_id": int(getattr(task, "task_id", -1)),
+                        "subtask_id": int(getattr(task, "sub_task_id", getattr(st, "id", -1))),
+                    })
+        return rows
+
+    def _apply_sp4_robot_assignments(self, robot_assign: Dict[int, int]) -> bool:
+        st_map = {int(getattr(st, "id", -1)): st for st in getattr(self.problem, "subtask_list", []) or []}
+        valid_assign = {int(st_id): int(robot_id) for st_id, robot_id in (robot_assign or {}).items() if int(st_id) in st_map and int(robot_id) >= 0}
+        task_subtask_ids = {
+            int(getattr(st, "id", -1))
+            for st in st_map.values()
+            if getattr(st, "execution_tasks", None)
+        }
+        if not task_subtask_ids.issubset(set(valid_assign.keys())):
+            return False
+        for st in st_map.values():
+            st.assigned_robot_id = -1
+            for task in getattr(st, "execution_tasks", []) or []:
+                task.robot_id = -1
+        for st_id, robot_id in valid_assign.items():
+            st = st_map[int(st_id)]
+            st.assigned_robot_id = int(robot_id)
+            for task in getattr(st, "execution_tasks", []) or []:
+                task.robot_id = int(robot_id)
+        return len(self._unassigned_robot_task_rows()) == 0
+
     def _rebuild_problem_task_list(self):
         all_tasks: List[Any] = []
         for st in getattr(self.problem, "subtask_list", []) or []:
@@ -1145,6 +1229,10 @@ class TRAOptimizer:
             if not trigger:
                 continue
             validation_trigger_counts[trigger] = int(validation_trigger_counts.get(trigger, 0)) + 1
+        joint_postprocess_stats = {
+            str(k): float(v)
+            for k, v in (getattr(self, "joint_colocated_sort_postprocess_stats", {}) or {}).items()
+        }
         return {
             "search_scheme": "resource_time_alns",
             "result_root": self._ensure_log_dir(),
@@ -1165,10 +1253,12 @@ class TRAOptimizer:
             "candidate_hard_reject_count": int(sum(1 for row in iter_rows if str(row.get("candidate_hard_reject_reason", "")).strip())),
             "empty_candidate_penalized_count": int(sum(1 for row in iter_rows if bool(row.get("empty_candidate_penalized", False)))),
             "coverage_hard_reject_count": int(getattr(self, "coverage_hard_reject_count", sum(1 for row in iter_rows if bool(row.get("coverage_hard_reject", False))))),
+            "kitting_span_hard_reject_count": int(sum(1 for row in iter_rows if str(row.get("candidate_hard_reject_reason", "") or "") == "kitting_span_hard_reject")),
             "exact_eval_cache_hit_count": int(max((int(row.get("exact_eval_cache_hit_count", 0) or 0) for row in iter_rows), default=0)),
             "x_failure_decapitation_count": int(getattr(self, "x_failure_decapitation_count", 0)),
             "stop_reason": str(getattr(self, "stop_reason", "") or ""),
             "resource_real_eval_period": int(getattr(self.cfg, "resource_real_eval_period", 8)),
+            "joint_colocated_sort_postprocess_stats": joint_postprocess_stats,
             "validation_trigger_counts": dict(sorted(validation_trigger_counts.items())),
             "operator_stats": copy.deepcopy(getattr(self, "operator_stats", {}) or {}),
             "timing_breakdown": self._timing_breakdown_payload(),
@@ -3254,6 +3344,187 @@ class TRAOptimizer:
             arrival_by_subtask[sid] = max(arrival_by_subtask.get(sid, 0.0), float(getattr(task, "arrival_time_at_station", 0.0)))
         return {int(k): float(v) for k, v in arrival_by_subtask.items()}
 
+    def _order_arrival_stats_from_tasks(
+        self,
+        arrival_by_subtask: Optional[Dict[int, float]] = None,
+    ) -> Dict[int, Dict[str, Any]]:
+        if arrival_by_subtask is None:
+            arrival_by_subtask = self._subtask_arrival_from_tasks()
+        rows: Dict[int, Dict[str, Any]] = {}
+        for order in getattr(self.problem, "order_list", []) or []:
+            order_id = int(getattr(order, "order_id", -1))
+            subtask_arrivals: List[float] = []
+            subtask_rows: List[Dict[str, Any]] = []
+            for st in getattr(self.problem, "subtask_list", []) or []:
+                if int(getattr(getattr(st, "parent_order", None), "order_id", -1)) != order_id:
+                    continue
+                subtask_id = int(getattr(st, "id", -1))
+                arrival = arrival_by_subtask.get(subtask_id, None)
+                if arrival is not None:
+                    subtask_arrivals.append(float(arrival))
+                subtask_rows.append({"subtask_id": subtask_id, "arrival": None if arrival is None else float(arrival)})
+            arrival_lb = float(min(subtask_arrivals)) if subtask_arrivals else 0.0
+            arrival_ub = float(max(subtask_arrivals)) if subtask_arrivals else 0.0
+            rows[order_id] = {
+                "order_id": order_id,
+                "arrival_lb": arrival_lb,
+                "arrival_ub": arrival_ub,
+                "subtasks": subtask_rows,
+            }
+        return rows
+
+    def _order_completion_stats_from_tasks(self) -> Dict[int, float]:
+        completion_by_order: Dict[int, float] = defaultdict(float)
+        for st in getattr(self.problem, "subtask_list", []) or []:
+            order_id = int(getattr(getattr(st, "parent_order", None), "order_id", -1))
+            for task in getattr(st, "execution_tasks", []) or []:
+                completion_by_order[order_id] = max(
+                    float(completion_by_order.get(order_id, 0.0) or 0.0),
+                    float(getattr(task, "end_process_time", 0.0) or 0.0),
+                )
+        return {int(k): float(v) for k, v in completion_by_order.items()}
+
+    def _evaluate_order_time_window_metrics(self) -> Dict[str, Any]:
+        result: Dict[str, Any] = {
+            "enabled": True,
+            "span_overrun_total": 0.0,
+            "deadline_overrun_total": 0.0,
+            "orders": [],
+        }
+        if self.problem is None:
+            return result
+        arrival_stats = self._order_arrival_stats_from_tasks()
+        rows: List[Dict[str, Any]] = []
+        for order in getattr(self.problem, "order_list", []) or []:
+            order_id = int(getattr(order, "order_id", -1))
+            lst_sec = float(getattr(order, "lst_sec", 0.0) or 0.0)
+            span_limit = float(getattr(order, "kitting_span_limit_sec", 0.0) or 0.0)
+            effective_span_limit = float(self._effective_bom_arrival_window_for_order(order))
+            arrival_row = dict(arrival_stats.get(order_id, {}) or {})
+            arrival_lb = float(arrival_row.get("arrival_lb", 0.0) or 0.0)
+            arrival_ub = float(arrival_row.get("arrival_ub", 0.0) or 0.0)
+            order_subtasks = [
+                st for st in (getattr(self.problem, "subtask_list", []) or [])
+                if int(getattr(getattr(st, "parent_order", None), "order_id", -1)) == order_id
+            ]
+            start_rows = [
+                float(getattr(st, "estimated_process_start_time", 0.0) or 0.0)
+                for st in order_subtasks
+            ]
+            start_proxy_lb = float(min(start_rows)) if start_rows else 0.0
+            start_proxy_ub = float(max(start_rows)) if start_rows else 0.0
+            start_proxy_span = float(max(0.0, start_proxy_ub - start_proxy_lb)) if start_rows else 0.0
+            anchor_candidates = [
+                float(getattr(st, "order_anchor_start_sec", 0.0) or 0.0)
+                for st in order_subtasks
+                if float(getattr(st, "order_time_window_ub_sec", 0.0) or 0.0) > 0.0
+            ]
+            order_anchor_start_sec = float(anchor_candidates[0]) if anchor_candidates else float(start_proxy_lb)
+            order_time_window_lb_sec = float(order_anchor_start_sec)
+            order_time_window_ub_sec = float(order_anchor_start_sec + effective_span_limit) if effective_span_limit > 0.0 else float(order_anchor_start_sec)
+            span_overrun = max(0.0, arrival_ub - arrival_lb - effective_span_limit) if arrival_ub > 0.0 else 0.0
+            deadline_overrun = max(0.0, arrival_ub - lst_sec) if arrival_ub > 0.0 else 0.0
+            rows.append(
+                {
+                    "order_id": order_id,
+                    "lst_sec": lst_sec,
+                    "kitting_span_limit_sec": span_limit,
+                    "effective_window_sec": float(effective_span_limit),
+                    "order_anchor_start_sec": float(order_anchor_start_sec),
+                    "order_time_window_lb_sec": float(order_time_window_lb_sec),
+                    "order_time_window_ub_sec": float(order_time_window_ub_sec),
+                    "start_proxy_lb_sec": float(start_proxy_lb),
+                    "start_proxy_ub_sec": float(start_proxy_ub),
+                    "start_proxy_span_sec": float(start_proxy_span),
+                    "arrival_lb": arrival_lb,
+                    "arrival_ub": arrival_ub,
+                    "span_overrun": span_overrun,
+                    "deadline_overrun": deadline_overrun,
+                    "subtasks": list(arrival_row.get("subtasks", []) or []),
+                }
+            )
+        result["orders"] = rows
+        result["span_overrun_total"] = float(sum(float(row.get("span_overrun", 0.0) or 0.0) for row in rows))
+        result["deadline_overrun_total"] = float(sum(float(row.get("deadline_overrun", 0.0) or 0.0) for row in rows))
+        return result
+
+    def _effective_bom_arrival_window_for_order(self, order: Any) -> float:
+        base_window_sec = float(getattr(self.cfg, "bom_arrival_window_sec", 0.0) or 0.0)
+        unique_sku_count = int(getattr(order, "unique_sku_count", 0) or 0)
+        return float(OFSConfig.effective_bom_arrival_window_sec(base_window_sec, unique_sku_count))
+
+    def _evaluate_bom_arrival_window(
+        self,
+        arrival_by_subtask: Optional[Dict[int, float]] = None,
+    ) -> Dict[str, Any]:
+        window_sec = float(getattr(self.cfg, "bom_arrival_window_sec", 0.0) or 0.0)
+        result: Dict[str, Any] = {
+            "enabled": bool(window_sec > 0.0),
+            "window_sec": float(window_sec),
+            "feasible": True,
+            "violating_order_count": 0,
+            "violations": [],
+            "orders": [],
+        }
+        if self.problem is None or window_sec <= 0.0:
+            return result
+
+        if arrival_by_subtask is None:
+            arrival_by_subtask = self._subtask_arrival_from_tasks()
+        arrival_by_subtask = {int(k): float(v) for k, v in (arrival_by_subtask or {}).items()}
+
+        order_by_id: Dict[int, Any] = {
+            int(getattr(order, "order_id", -1)): order
+            for order in (getattr(self.problem, "order_list", []) or [])
+        }
+        by_order: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+        for st in getattr(self.problem, "subtask_list", []) or []:
+            subtask_id = int(getattr(st, "id", -1))
+            order_id = int(getattr(getattr(st, "parent_order", None), "order_id", -1))
+            arrival = arrival_by_subtask.get(subtask_id, None)
+            by_order[order_id].append(
+                {
+                    "subtask_id": int(subtask_id),
+                    "has_arrival": bool(arrival is not None),
+                    "arrival": None if arrival is None else float(arrival),
+                }
+            )
+
+        violations: List[Dict[str, Any]] = []
+        order_rows: List[Dict[str, Any]] = []
+        for order_id, rows in sorted(by_order.items(), key=lambda item: int(item[0])):
+            order_obj = order_by_id.get(int(order_id))
+            unique_sku_count = int(getattr(order_obj, "unique_sku_count", 0) or 0)
+            effective_window_sec = float(self._effective_bom_arrival_window_for_order(order_obj))
+            available = [row for row in rows if row.get("has_arrival", False)]
+            arrivals = [float(row["arrival"]) for row in available if row.get("arrival") is not None]
+            span_sec = float(max(arrivals) - min(arrivals)) if len(arrivals) >= 2 else 0.0
+            order_row = {
+                "order_id": int(order_id),
+                "unique_sku_count": int(unique_sku_count),
+                "effective_window_sec": float(effective_window_sec),
+                "subtask_count": int(len(rows)),
+                "arrived_subtask_count": int(len(available)),
+                "span_sec": float(span_sec),
+                "feasible": bool(span_sec <= effective_window_sec + 1e-9),
+                "subtasks": [
+                    {
+                        "subtask_id": int(row["subtask_id"]),
+                        "arrival": row["arrival"],
+                    }
+                    for row in sorted(rows, key=lambda item: int(item["subtask_id"]))
+                ],
+            }
+            order_rows.append(order_row)
+            if len(arrivals) >= 2 and span_sec > effective_window_sec + 1e-9:
+                violations.append(order_row)
+
+        result["orders"] = order_rows
+        result["violations"] = violations
+        result["violating_order_count"] = int(len(violations))
+        result["feasible"] = bool(len(violations) == 0)
+        return result
+
     def _normalize_task_sequences(self):
         grouped: Dict[Tuple[int, int], List[Any]] = defaultdict(list)
         for task in self._collect_all_tasks():
@@ -5025,25 +5296,97 @@ class TRAOptimizer:
             ),
         }
 
-    def _run_sp4_augmented(self, mu_override: Optional[float] = None):
+    def _run_sp4_augmented(
+        self,
+        mu_override: Optional[float] = None,
+        allow_greedy_fallback: Optional[bool] = None,
+        raise_on_failure: bool = False,
+    ):
+        hard_latest_by_task = self._build_sp4_hard_latest_by_task()
         soft_windows: Dict[int, float] = {}
         for st in getattr(self.problem, "subtask_list", []) or []:
             latest = float(getattr(st, "estimated_process_start_time", self._estimate_subtask_start(st)))
             for task in getattr(st, "execution_tasks", []) or []:
                 soft_windows[int(getattr(task, "task_id", -1))] = latest
+        for task_id, latest in self._build_sp4_order_window_latest_by_task().items():
+            if int(task_id) in soft_windows:
+                soft_windows[int(task_id)] = float(min(float(soft_windows[int(task_id)]), float(latest)))
+            else:
+                soft_windows[int(task_id)] = float(latest)
         mu = float(mu_override if mu_override is not None else max(0.0, self.cfg.mu_value))
-        arrival_times, robot_assign = self.sp4.solve(
-            self.problem.subtask_list,
-            use_mip=self.cfg.sp4_use_mip,
-            lkh_time_limit_seconds=self.cfg.sp4_lkh_time_limit_seconds if not self.cfg.sp4_use_mip else None,
-            soft_time_windows=soft_windows if soft_windows else None,
-            mu=mu,
-        )
+        soft_time_windows_payload: Optional[Dict[str, Dict[int, float]]] = None
+        if soft_windows:
+            soft_time_windows_payload = {}
+            if soft_windows:
+                soft_time_windows_payload["latest_by_task"] = dict(soft_windows)
+        try:
+            arrival_times, robot_assign = self.sp4.solve(
+                self.problem.subtask_list,
+                use_mip=self.cfg.sp4_use_mip,
+                lkh_time_limit_seconds=self.cfg.sp4_lkh_time_limit_seconds if not self.cfg.sp4_use_mip else None,
+                soft_time_windows=soft_time_windows_payload,
+                mu=mu,
+                first_solution_strategies=list(getattr(self.cfg, "sp4_first_solution_strategies", ()) or ()),
+                first_solution_slice_seconds=int(getattr(self.cfg, "sp4_first_solution_slice_seconds", 10)),
+                enable_guided_local_search=bool(getattr(self.cfg, "sp4_enable_guided_local_search", True)),
+                same_subtask_vehicle_mode=str(getattr(self.cfg, "sp4_same_subtask_vehicle_mode", "strict")),
+                same_subtask_vehicle_threshold=int(getattr(self.cfg, "sp4_same_subtask_vehicle_threshold", 2)),
+                enable_greedy_fallback=bool(getattr(self.cfg, "sp4_enable_greedy_fallback", False)) if allow_greedy_fallback is None else bool(allow_greedy_fallback),
+                raise_on_no_solution=bool(getattr(self.cfg, "sp4_raise_on_no_solution", True)) or bool(raise_on_failure),
+            )
+        except SP4RoutingInfeasibleError:
+            self.last_sp4_arrival_times = {}
+            if bool(raise_on_failure):
+                raise
+            arrival_times, robot_assign = {}, {}
         self.last_sp4_arrival_times = {int(k): float(v) for k, v in (arrival_times or {}).items()}
-        st_map = {st.id: st for st in self.problem.subtask_list}
-        for st_id, robot_id in (robot_assign or {}).items():
-            if st_id in st_map:
-                st_map[st_id].assigned_robot_id = int(robot_id)
+        self.last_sp4_lst_infeasible = self._collect_sp4_lst_violations(hard_latest_by_task)
+        self._apply_sp4_robot_assignments(robot_assign or {})
+
+    def _build_sp4_hard_latest_by_task(self) -> Dict[int, float]:
+        hard_latest_by_task: Dict[int, float] = {}
+        for st in getattr(self.problem, "subtask_list", []) or []:
+            order = getattr(st, "parent_order", None)
+            lst_sec = float(getattr(st, "lst_sec", getattr(order, "lst_sec", 0.0)) or 0.0)
+            if lst_sec <= 0.0:
+                continue
+            for task in getattr(st, "execution_tasks", []) or []:
+                task_id = int(getattr(task, "task_id", -1))
+                if task_id < 0:
+                    continue
+                if task_id in hard_latest_by_task:
+                    hard_latest_by_task[task_id] = min(float(hard_latest_by_task[task_id]), lst_sec)
+                else:
+                    hard_latest_by_task[task_id] = float(lst_sec)
+        return hard_latest_by_task
+
+    def _collect_sp4_lst_violations(self, hard_latest_by_task: Dict[int, float]) -> List[Dict[str, Any]]:
+        violations: List[Dict[str, Any]] = []
+        if not hard_latest_by_task:
+            return violations
+        for st in getattr(self.problem, "subtask_list", []) or []:
+            order = getattr(st, "parent_order", None)
+            order_id = int(getattr(order, "order_id", -1)) if order is not None else -1
+            for task in getattr(st, "execution_tasks", []) or []:
+                task_id = int(getattr(task, "task_id", -1))
+                if task_id not in hard_latest_by_task:
+                    continue
+                latest = float(hard_latest_by_task[task_id])
+                arrival = float(getattr(task, "arrival_time_at_station", 0.0) or 0.0)
+                overrun = float(arrival - latest)
+                if overrun > 1e-6:
+                    violations.append(
+                        {
+                            "order_id": int(order_id),
+                            "subtask_id": int(getattr(st, "id", -1)),
+                            "task_id": int(task_id),
+                            "arrival_time_at_station": float(arrival),
+                            "lst_sec": float(latest),
+                            "overrun_sec": float(overrun),
+                        }
+                    )
+        violations.sort(key=lambda row: (-float(row.get("overrun_sec", 0.0)), int(row.get("task_id", -1))))
+        return violations
 
     def _u_route_state_to_plan(self, state: Dict[int, Dict[str, int]]) -> Dict[int, List[List[int]]]:
         grouped: Dict[int, Dict[int, List[Tuple[int, int]]]] = defaultdict(lambda: defaultdict(list))
@@ -6754,7 +7097,11 @@ class TRAOptimizer:
     # ----------------------------
     def evaluate(self) -> float:
         self._simulate_call_count += 1
-        return self.sim.calculate()
+        true_makespan = float(self.sim.calculate())
+        tw_metrics = self._evaluate_order_time_window_metrics()
+        self.problem.global_makespan = float(true_makespan)
+        self.last_order_time_window_metrics = dict(tw_metrics or {})
+        return float(true_makespan)
 
     def _lb_transport(self) -> float:
         # 运输下界：各任务到站时间的最大值
@@ -7129,27 +7476,68 @@ class TRAOptimizer:
         self.last_sp3_tote_selection = {int(k): list(v) for k, v in tote_selection.items()}
         self.last_sp3_sorting_costs = {int(k): float(v) for k, v in sorting_costs.items()}
 
-    def _run_sp4(self):
-        # soft time windows
+    def _build_sp4_order_window_latest_by_task(self) -> Dict[int, float]:
+        latest_by_task: Dict[int, float] = {}
+        for st in getattr(self.problem, "subtask_list", []) or []:
+            station_latest = float(getattr(st, "estimated_process_start_time", self._estimate_subtask_start(st)))
+            order_latest = float(getattr(st, "order_time_window_ub_sec", 0.0) or 0.0)
+            latest = float(min(station_latest, order_latest)) if order_latest > 0.0 else float(station_latest)
+            for task in getattr(st, "execution_tasks", []) or []:
+                task_id = int(getattr(task, "task_id", -1))
+                if task_id < 0:
+                    continue
+                latest_by_task[task_id] = float(min(latest, float(getattr(task, "order_time_window_ub_sec", latest) or latest)))
+        return latest_by_task
+
+    def _run_sp4(
+        self,
+        allow_greedy_fallback: Optional[bool] = None,
+        raise_on_failure: bool = False,
+    ):
+        # soft + hard time windows
+        hard_latest_by_task = self._build_sp4_hard_latest_by_task()
+        order_window_latest_by_task = self._build_sp4_order_window_latest_by_task()
         soft_windows = None
         mu = 0.0
         if self.cfg.enable_soft_mu and self.last_station_start_times:
-            soft_windows = dict(self.last_station_start_times)
+            soft_windows = {"latest_by_task": dict(self.last_station_start_times)}
             mu = float(self.cfg.mu_value)
-        arrival_times, robot_assign = self.sp4.solve(
-            self.problem.subtask_list,
-            use_mip=self.cfg.sp4_use_mip,
-            lkh_time_limit_seconds=self.cfg.sp4_lkh_time_limit_seconds if not self.cfg.sp4_use_mip else None,
-            soft_time_windows=soft_windows,
-            mu=mu,
-        )
+        if order_window_latest_by_task:
+            if soft_windows is None:
+                soft_windows = {"latest_by_task": dict(order_window_latest_by_task)}
+            else:
+                merged_latest = dict(soft_windows.get("latest_by_task", {}) or {})
+                for task_id, latest in order_window_latest_by_task.items():
+                    if int(task_id) in merged_latest:
+                        merged_latest[int(task_id)] = float(min(float(merged_latest[int(task_id)]), float(latest)))
+                    else:
+                        merged_latest[int(task_id)] = float(latest)
+                soft_windows["latest_by_task"] = merged_latest
+        try:
+            arrival_times, robot_assign = self.sp4.solve(
+                self.problem.subtask_list,
+                use_mip=self.cfg.sp4_use_mip,
+                lkh_time_limit_seconds=self.cfg.sp4_lkh_time_limit_seconds if not self.cfg.sp4_use_mip else None,
+                soft_time_windows=soft_windows,
+                mu=mu,
+                first_solution_strategies=list(getattr(self.cfg, "sp4_first_solution_strategies", ()) or ()),
+                first_solution_slice_seconds=int(getattr(self.cfg, "sp4_first_solution_slice_seconds", 10)),
+                enable_guided_local_search=bool(getattr(self.cfg, "sp4_enable_guided_local_search", True)),
+                same_subtask_vehicle_mode=str(getattr(self.cfg, "sp4_same_subtask_vehicle_mode", "strict")),
+                same_subtask_vehicle_threshold=int(getattr(self.cfg, "sp4_same_subtask_vehicle_threshold", 2)),
+                enable_greedy_fallback=bool(getattr(self.cfg, "sp4_enable_greedy_fallback", False)) if allow_greedy_fallback is None else bool(allow_greedy_fallback),
+                raise_on_no_solution=bool(getattr(self.cfg, "sp4_raise_on_no_solution", True)) or bool(raise_on_failure),
+            )
+        except SP4RoutingInfeasibleError:
+            self.last_sp4_arrival_times = {}
+            if bool(raise_on_failure):
+                raise
+            arrival_times, robot_assign = {}, {}
         self.last_sp4_arrival_times = {int(k): float(v) for k, v in (arrival_times or {}).items()}
+        self.last_sp4_lst_infeasible = self._collect_sp4_lst_violations(hard_latest_by_task)
 
         # 回填 subtask 的 assigned_robot_id，供日志/仿真输出使用
-        st_map = {st.id: st for st in self.problem.subtask_list}
-        for st_id, robot_id in (robot_assign or {}).items():
-            if st_id in st_map:
-                st_map[st_id].assigned_robot_id = int(robot_id)
+        self._apply_sp4_robot_assignments(robot_assign or {})
 
     # ----------------------------
     # 主入口
@@ -7192,7 +7580,18 @@ class TRAOptimizer:
         self.initial_makespan_raw = float(z0)
         initial_coverage = self._compute_solution_coverage()
         initial_coverage_ok = bool(initial_coverage.get("coverage_ok", False))
-        incumbent_z0 = float(z0) if bool(initial_coverage_ok) else float("inf")
+        initial_time_window_metrics = self._evaluate_order_time_window_metrics()
+        initial_kitting_span_ok = bool(float(initial_time_window_metrics.get("span_overrun_total", 0.0) or 0.0) <= 1e-9)
+        initial_bom_arrival_window = self._evaluate_bom_arrival_window()
+        initial_bom_arrival_window_ok = bool(initial_bom_arrival_window.get("feasible", True))
+        initial_robot_assignment_ok = bool(len(self._unassigned_robot_task_rows()) == 0)
+        initial_incumbent_feasible = bool(
+            initial_coverage_ok
+            and initial_kitting_span_ok
+            and initial_bom_arrival_window_ok
+            and initial_robot_assignment_ok
+        )
+        incumbent_z0 = float(z0) if initial_incumbent_feasible else float("inf")
         # harvest soft-coupling caches
         self._harvest_station_start_times()
         self._update_beta_from_station()
@@ -7202,7 +7601,27 @@ class TRAOptimizer:
         self.work_z = float(z0)
         init_resource_time_runtime_state(self, z0)
         self._refresh_runtime_cache(z0)
-        self._append_iter_log(0, focus="init", z=incumbent_z0, improved=bool(initial_coverage_ok), skipped=False, lb=None)
+        self._append_iter_log(
+            0,
+            focus="init",
+            z=incumbent_z0,
+            improved=bool(initial_incumbent_feasible),
+            skipped=False,
+            lb=None,
+        )
+        if self.iter_log:
+            last_row = self.iter_log[-1]
+            if not bool(initial_coverage_ok):
+                last_row["validation_trigger"] = "coverage_hard_reject"
+                last_row["candidate_hard_reject_reason"] = "coverage_hard_reject"
+            elif not bool(initial_kitting_span_ok):
+                last_row["validation_trigger"] = "kitting_span_hard_reject"
+                last_row["candidate_hard_reject_reason"] = "kitting_span_hard_reject"
+                last_row["kitting_span_overrun_total"] = float(initial_time_window_metrics.get("span_overrun_total", 0.0) or 0.0)
+            elif not bool(initial_bom_arrival_window_ok):
+                last_row["validation_trigger"] = "bom_arrival_window_hard_reject"
+                last_row["candidate_hard_reject_reason"] = "bom_arrival_window_hard_reject"
+                last_row["bom_arrival_window_violating_order_count"] = int(initial_bom_arrival_window.get("violating_order_count", 0) or 0)
 
     def _append_iter_log(self, iter_id: int, focus: str, z: float, improved: bool, skipped: bool,
                          lb: Optional[float]):
@@ -7792,7 +8211,7 @@ class TRAOptimizer:
         engine = ResourceTimeALNSEngine(self)
         z_final = float(engine.run())
         self.run_total_time_sec = float(self._runtime_elapsed_sec())
-        if self.best is not None:
+        if self.best is not None and math.isfinite(float(getattr(self.best, "z", float("inf")))):
             self.export_best()
         return float(z_final)
 
@@ -7999,7 +8418,7 @@ class TRAOptimizer:
         summary = {
             "best_iter": int(self.best.iter_id) if self.best is not None else -1,
             "best_z": float(self.best.z) if self.best is not None else float(z),
-            "recomputed_z": float(z),
+            "recomputed_z": float(getattr(self.problem, "global_makespan", 0.0)),
             "global_makespan": float(getattr(self.problem, "global_makespan", 0.0)),
             "run_total_time_sec": float(self.run_total_time_sec if self.run_total_time_sec > 0.0 else self._runtime_elapsed_sec()),
             "sp1": {
@@ -8115,10 +8534,11 @@ class TRAOptimizer:
             f.write(f"best_z={self.best.z:.3f}s @ iter={self.best.iter_id}\n\n")
             if scheme == "resource_time_alns":
                 f.write(f"stop_reason={str(run_stats.get('stop_reason', '') or '')}\n\n")
-                f.write(f"exact_eval_cache_hit_count={int(run_stats.get('exact_eval_cache_hit_count', 0))}\n")
-                f.write(f"empty_candidate_penalized_count={int(run_stats.get('empty_candidate_penalized_count', 0))}\n\n")
-                f.write(f"coverage_hard_reject_count={int(run_stats.get('coverage_hard_reject_count', 0))}\n")
-                f.write(f"x_failure_decapitation_count={int(run_stats.get('x_failure_decapitation_count', 0))}\n\n")
+            f.write(f"exact_eval_cache_hit_count={int(run_stats.get('exact_eval_cache_hit_count', 0))}\n")
+            f.write(f"empty_candidate_penalized_count={int(run_stats.get('empty_candidate_penalized_count', 0))}\n\n")
+            f.write(f"coverage_hard_reject_count={int(run_stats.get('coverage_hard_reject_count', 0))}\n")
+            f.write(f"kitting_span_hard_reject_count={int(run_stats.get('kitting_span_hard_reject_count', 0))}\n")
+            f.write(f"x_failure_decapitation_count={int(run_stats.get('x_failure_decapitation_count', 0))}\n\n")
             if scheme == "resource_time_alns":
                 f.write(
                     f"{'iter':>4} | {'focus':>4} | {'z':>10} | {'best':>10} | "
@@ -8251,7 +8671,7 @@ class TRAOptimizer:
             f.write(f"best_iter={int(self.best.iter_id)}\n")
             f.write(f"seed={int(self.best.seed)}\n")
             f.write(f"best_z={float(self.best.z):.6f}\n")
-            f.write(f"recomputed_z={float(z):.6f}\n")
+            f.write(f"recomputed_z={float(getattr(self.problem, 'global_makespan', 0.0)):.6f}\n")
             f.write(f"global_makespan={float(getattr(self.problem, 'global_makespan', 0.0)):.6f}\n")
             f.write("\n[TRA Iter Log]\n")
             for row in self.iter_log:
@@ -8349,8 +8769,10 @@ class TRAOptimizer:
 
     def _build_best_solution_audit(self, z: float, verification_result: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         coverage = self._compute_solution_coverage()
+        bom_arrival_window = self._evaluate_bom_arrival_window()
+        order_time_window_metrics = self._evaluate_order_time_window_metrics()
         best_z = float(self.best.z) if self.best is not None else float("nan")
-        recomputed_z = float(z)
+        recomputed_z = float(getattr(self.problem, "global_makespan", 0.0))
         global_makespan = float(getattr(self.problem, "global_makespan", 0.0))
         makespan_consistent = bool(
             math.isfinite(best_z)
@@ -8428,6 +8850,8 @@ class TRAOptimizer:
             or invalid_z_rows
             or duplicate_tote_rows
             or unassigned_robot_rows
+            or not bool(bom_arrival_window.get("feasible", True))
+            or float(order_time_window_metrics.get("span_overrun_total", 0.0) or 0.0) > 1e-9
             or verification_failures
         )
         issue_summary: List[str] = []
@@ -8447,6 +8871,14 @@ class TRAOptimizer:
             issue_summary.append(f"Duplicate tote use count: {sum(max(0, len(rows) - 1) for rows in duplicate_tote_rows.values())}")
         if unassigned_robot_rows:
             issue_summary.append(f"Unassigned robot task count: {len(unassigned_robot_rows)}")
+        if not bool(bom_arrival_window.get("feasible", True)):
+            issue_summary.append(
+                f"BOM arrival window violated: {int(bom_arrival_window.get('violating_order_count', 0))} orders"
+            )
+        if float(order_time_window_metrics.get("span_overrun_total", 0.0) or 0.0) > 1e-9:
+            issue_summary.append(
+                f"Kitting span violated: overrun_total={float(order_time_window_metrics.get('span_overrun_total', 0.0) or 0.0):.6f}"
+            )
         issue_summary.extend(str(item) for item in verification_failures)
 
         return {
@@ -8471,6 +8903,17 @@ class TRAOptimizer:
             "empty_robot_trip_count": 0,
             "unassigned_robot_task_count": int(len(unassigned_robot_rows)),
             "unassigned_robot_tasks": unassigned_robot_rows,
+            "bom_arrival_window_enabled": bool(bom_arrival_window.get("enabled", False)),
+            "bom_arrival_window_sec": float(bom_arrival_window.get("window_sec", 0.0)),
+            "bom_arrival_window_ok": bool(bom_arrival_window.get("feasible", True)),
+            "bom_arrival_window_violating_order_count": int(bom_arrival_window.get("violating_order_count", 0)),
+            "bom_arrival_window_violations": list(bom_arrival_window.get("violations", []) or []),
+            "order_time_window_metrics": dict(order_time_window_metrics or {}),
+            "kitting_span_ok": bool(float(order_time_window_metrics.get("span_overrun_total", 0.0) or 0.0) <= 1e-9),
+            "kitting_span_overrun_total": float(order_time_window_metrics.get("span_overrun_total", 0.0) or 0.0),
+            "deadline_overrun_total": float(order_time_window_metrics.get("deadline_overrun_total", 0.0) or 0.0),
+            "sp4_lst_violation_count": int(len(getattr(self, "last_sp4_lst_infeasible", []) or [])),
+            "sp4_lst_violations": list(getattr(self, "last_sp4_lst_infeasible", []) or []),
             "verification_failures": verification_failures,
             "has_unreasonable_solution": has_unreasonable_solution,
             "issues": issue_summary,
@@ -8495,6 +8938,10 @@ class TRAOptimizer:
             f.write(f"invalid_z_task_count={int(audit.get('invalid_z_task_count', 0))}\n")
             f.write(f"duplicate_tote_use_count={int(audit.get('duplicate_tote_use_count', 0))}\n")
             f.write(f"unassigned_robot_task_count={int(audit.get('unassigned_robot_task_count', 0))}\n")
+            f.write(f"bom_arrival_window_enabled={bool(audit.get('bom_arrival_window_enabled', False))}\n")
+            f.write(f"bom_arrival_window_sec={float(audit.get('bom_arrival_window_sec', 0.0)):.6f}\n")
+            f.write(f"bom_arrival_window_ok={bool(audit.get('bom_arrival_window_ok', True))}\n")
+            f.write(f"bom_arrival_window_violating_order_count={int(audit.get('bom_arrival_window_violating_order_count', 0))}\n")
             f.write(f"has_unreasonable_solution={bool(audit.get('has_unreasonable_solution', False))}\n")
             f.write(
                 "sku_hit_check="
@@ -8559,6 +9006,25 @@ class TRAOptimizer:
                 f"SKU coverage unmet: unmet_sku_total={int(coverage.get('unmet_sku_total', 0))}, "
                 f"unmet_subtask_count={int(coverage.get('unmet_subtask_count', 0))}"
             )
+        order_time_window_metrics = self._evaluate_order_time_window_metrics()
+        if float(order_time_window_metrics.get("span_overrun_total", 0.0) or 0.0) > 1e-9:
+            for row in list(order_time_window_metrics.get("orders", []) or []):
+                if float(row.get("span_overrun", 0.0) or 0.0) <= 1e-9:
+                    continue
+                failures.append(
+                    f"Kitting span violated: order_id={int(row.get('order_id', -1))}, "
+                    f"arrival_span_sec={float(row.get('arrival_ub', 0.0) or 0.0) - float(row.get('arrival_lb', 0.0) or 0.0):.6f}, "
+                    f"span_limit_sec={float(row.get('kitting_span_limit_sec', 0.0) or 0.0):.6f}, "
+                    f"overrun_sec={float(row.get('span_overrun', 0.0) or 0.0):.6f}"
+                )
+        bom_arrival_window = self._evaluate_bom_arrival_window()
+        if not bool(bom_arrival_window.get("feasible", True)):
+            for row in list(bom_arrival_window.get("violations", []) or []):
+                failures.append(
+                    f"BOM arrival window violated: order_id={int(row.get('order_id', -1))}, "
+                    f"span_sec={float(row.get('span_sec', 0.0)):.6f}, "
+                    f"window_sec={float(bom_arrival_window.get('window_sec', 0.0)):.6f}"
+                )
 
         result = {
             "status": "PASS" if not failures else "FAIL",
@@ -8566,6 +9032,8 @@ class TRAOptimizer:
             "max_task_end": max_end,
             "global_makespan": global_makespan,
             "coverage": coverage,
+            "order_time_window_metrics": order_time_window_metrics,
+            "bom_arrival_window": bom_arrival_window,
             "failures": failures,
             "station_task_rows": station_task_rows,
         }
@@ -8598,6 +9066,7 @@ if __name__ == "__main__":
         max_iters=6,
         no_improve_limit=3,
         epsilon=0.05,
+        bom_arrival_window_sec=60.0,
         sp2_use_mip=True,
         sp3_use_mip=False,
         sp4_use_mip=False,

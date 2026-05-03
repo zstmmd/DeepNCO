@@ -20,6 +20,32 @@ from problemDto.ofs_problem_dto import OFSProblemDTO
 
 class CreateOFSProblem:
     @staticmethod
+    def _time_window_rng(base_seed: int, order_id: int) -> random.Random:
+        mix = (int(base_seed) * 1000003 + int(order_id) * 9176 + 0x9E3779B9) & 0xFFFFFFFF
+        return random.Random(int(mix))
+
+    @staticmethod
+    def _assign_order_time_window(order: Order, base_seed: int = 0) -> None:
+        est_sec = 0
+        unique_sku_count = int(len(set(int(sku_id) for sku_id in (getattr(order, "order_product_id_list", []) or []))))
+        total_qty = int(len(getattr(order, "order_product_id_list", []) or []))
+        kitting_span_limit_sec = float(unique_sku_count * float(OFSConfig.ORDER_KITTING_SPAN_PER_UNIQUE_SKU_SEC))
+        rng = CreateOFSProblem._time_window_rng(base_seed=int(base_seed), order_id=int(getattr(order, "order_id", 0)))
+        deadline_buffer_sec = float(rng.randint(int(OFSConfig.ORDER_LST_BUFFER_MIN_SEC), int(OFSConfig.ORDER_LST_BUFFER_MAX_SEC)))
+        lst_sec = float(
+            float(OFSConfig.ORDER_LST_BASE_SEC)
+            + float(kitting_span_limit_sec)
+            + float(total_qty) * float(OFSConfig.ORDER_LST_PER_QTY_SEC)
+            + float(deadline_buffer_sec)
+        )
+        order.est_sec = float(est_sec)
+        order.kitting_span_limit_sec = float(kitting_span_limit_sec)
+        order.lst_sec = float(lst_sec)
+        order.total_qty = int(total_qty)
+        order.unique_sku_count = int(unique_sku_count)
+        order.deadline_buffer_sec = float(deadline_buffer_sec)
+
+    @staticmethod
     def generate_problem_by_scale(scale: str = "SMALL", seed: int = OFSConfig.RANDOM_SEED) -> OFSProblemDTO:
         """
         根据规模生成标准算例。
@@ -31,6 +57,15 @@ class CreateOFSProblem:
         configs = {
             "TEST": {"map_size": (2, 4), "resources": (2, 2, 100), "data": (1, 10), "bom_complexity": (10, 1), "exact_bom_sku_count": 10},
             "GUROBI-S1": {"map_size": (2, 4), "resources": (2, 2, 30), "data": (1, 10), "bom_complexity": (10, 1), "exact_bom_sku_count": 10},
+            "GUROBI-S2": {"map_size": (2, 4), "resources": (2, 2, 50), "data": (2, 15), "bom_complexity": (8, 1)},
+            "GUROBI-S3": {"map_size": (3, 4), "resources": (3, 3, 80), "data": (3, 20), "bom_complexity": (8, 1)},
+            "GUROBI-S4": {"map_size": (3, 4), "resources": (3, 3, 100), "data": (4, 25), "bom_complexity": (8, 1)},
+            "GUROBI-S5": {"map_size": (3, 5), "resources": (4, 4, 120), "data": (5, 30), "bom_complexity": (8, 1)},
+            "GUROBI-S6": {"map_size": (4, 5), "resources": (5, 4, 150), "data": (6, 40), "bom_complexity": (8, 1)},
+            "GUROBI-S7": {"map_size": (4, 6), "resources": (5, 5, 180), "data": (7, 45), "bom_complexity": (8, 1)},
+            "GUROBI-S8": {"map_size": (4, 6), "resources": (6, 6, 200), "data": (8, 50), "bom_complexity": (8, 1)},
+            "GUROBI-S9": {"map_size": (5, 6), "resources": (7, 6, 240), "data": (9, 60), "bom_complexity": (8, 1)},
+            "TINY3": {"map_size": (4, 4), "resources": (2, 2, 150), "data": (3, 30), "bom_complexity": (10, 1), "exact_disjoint_bom_sku_count": 10},
             "SMALL": {"map_size": (4, 4), "resources": (2, 2, 200), "data": (2, 60), "bom_complexity": (20, 5)},
             "SMALL2": {"map_size": (4, 4), "resources": (3, 2, 200), "data": (3, 60), "bom_complexity": (25, 5)},
             "SMALL_ZRICH": {"map_size": (4, 4), "resources": (2, 2, 200), "data": (2, 60), "bom_complexity": (20, 5)},
@@ -56,6 +91,7 @@ class CreateOFSProblem:
         ord_n, sku_n = cfg["data"]
         bom_types, bom_qty = cfg["bom_complexity"]
         exact_bom_sku_count = int(cfg.get("exact_bom_sku_count", 0))
+        exact_disjoint_bom_sku_count = int(cfg.get("exact_disjoint_bom_sku_count", 0))
 
         print(f">>> 生成 [{scale}] 规模实例 | Seed: {seed}")
         print(f"    Map: {map_L}x{map_W} blocks | Robots: {rob_n} | Stations: {st_n}")
@@ -73,6 +109,8 @@ class CreateOFSProblem:
             bom_config=(bom_types, bom_qty),
             imbalance_profile=imbalance_profile,
             exact_bom_sku_count=exact_bom_sku_count,
+            exact_disjoint_bom_sku_count=exact_disjoint_bom_sku_count,
+            base_seed=int(seed),
         )
         problem.scale_name = scale_upper
         problem.generator_profile = imbalance_profile or "default"
@@ -91,6 +129,8 @@ class CreateOFSProblem:
             bom_config: Tuple[int, int] = (10, 5),
             imbalance_profile: str = None,
             exact_bom_sku_count: int = 0,
+            exact_disjoint_bom_sku_count: int = 0,
+            base_seed: int = OFSConfig.RANDOM_SEED,
     ) -> OFSProblemDTO:
         """
         构造并返回一个 OFSProblemDTO 实例。
@@ -139,9 +179,9 @@ class CreateOFSProblem:
         zrich_profile: Dict[str, Any] = {}
         if imbalance_profile == "zrich":
             zrich_profile = CreateOFSProblem._build_exponential_sku_profile(skus_list_obj, skew_lambda=0.02)
-            orders = CreateOFSProblem._generate_zrich_orders(max_sku_types, max_sku_qty, order_num, skus_list_obj, zrich_profile)
+            orders = CreateOFSProblem._generate_zrich_orders(max_sku_types, max_sku_qty, order_num, skus_list_obj, zrich_profile, base_seed=int(base_seed))
         else:
-            orders = CreateOFSProblem._generate_orders(max_sku_types, max_sku_qty, order_num, skus_list_obj, imbalance_profile)
+            orders = CreateOFSProblem._generate_orders(max_sku_types, max_sku_qty, order_num, skus_list_obj, imbalance_profile, base_seed=int(base_seed))
         if int(exact_bom_sku_count) > 0:
             if int(order_num) != 1:
                 raise ValueError("exact_bom_sku_count is intended for single-BOM test cases.")
@@ -149,7 +189,19 @@ class CreateOFSProblem:
             exact_order = orders[0]
             exact_order.order_product_id_list = [int(sku.id) for sku in skus_list_obj[:exact_count]]
             exact_order.order_skus_number = int(exact_count)
+            CreateOFSProblem._assign_order_time_window(exact_order, base_seed=int(base_seed))
             exact_order.status = "pending"
+        if int(exact_disjoint_bom_sku_count) > 0:
+            exact_count = int(exact_disjoint_bom_sku_count)
+            if int(order_num) * exact_count > int(len(skus_list_obj)):
+                raise ValueError("exact_disjoint_bom_sku_count requires order_num * count <= skus_num.")
+            for order_idx, order in enumerate(orders):
+                start_idx = int(order_idx) * exact_count
+                order_skus = skus_list_obj[start_idx:start_idx + exact_count]
+                order.order_product_id_list = [int(sku.id) for sku in order_skus]
+                order.order_skus_number = int(exact_count)
+                CreateOFSProblem._assign_order_time_window(order, base_seed=int(base_seed))
+                order.status = "pending"
         ofs_problem_dto.order_list = orders
         ofs_problem_dto.id_to_order = {order.order_id: order for order in orders}
 
@@ -507,6 +559,7 @@ class CreateOFSProblem:
             num_orders: int,
             skus_list: List[SKUs],
             sku_profile: Dict[str, Any],
+            base_seed: int = OFSConfig.RANDOM_SEED,
     ) -> List[Order]:
         orders: List[Order] = []
         weight_by_id = dict(sku_profile.get("weights", {}) or {})
@@ -531,6 +584,7 @@ class CreateOFSProblem:
 
             order.order_product_id_list = order_product_id_list
             order.order_skus_number = total_qty
+            CreateOFSProblem._assign_order_time_window(order, base_seed=int(base_seed))
             order.status = "pending"
             orders.append(order)
         return orders
@@ -541,7 +595,8 @@ class CreateOFSProblem:
             max_quantity_per_sku: int,
             num_orders: int,
             skus_list: List[SKUs],
-            imbalance_profile: str = None
+            imbalance_profile: str = None,
+            base_seed: int = OFSConfig.RANDOM_SEED,
     ) -> List[Order]:
         """
         生成订单 (BOM)
@@ -592,6 +647,7 @@ class CreateOFSProblem:
 
             order.order_product_id_list = order_product_id_list
             order.order_skus_number = total_qty
+            CreateOFSProblem._assign_order_time_window(order, base_seed=int(base_seed))
             order.status = "pending"
             orders.append(order)
 

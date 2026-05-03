@@ -25,6 +25,7 @@ from .operators_z import (
     Z_DESTROY_OPERATORS,
     Z_FALLBACK_OPERATOR,
     Z_REPAIR_OPERATORS,
+    apply_joint_colocated_sort_postprocess,
     apply_exact_z_plan,
     plan_z_candidate,
 )
@@ -44,24 +45,43 @@ class ResourceTimeALNSEngine:
         self.scorer = ResourceSurrogateScorer(opt)
         self.current_config: ResourceConfig = build_initial_resource_config(opt)
         self.current_eval = self.scorer.evaluate(self.current_config)
+        initial_validation = self.validator.validate(self.current_config, 0)
+        initial_hard_reject_reason = str(initial_validation.get("hard_reject_reason", "") or "")
+        initial_validated_makespans: List[float] = []
+        if not initial_hard_reject_reason:
+            initial_makespan = float(initial_validation.get("makespan", float(getattr(opt.best, "z", float("inf")))))
+            initial_snapshot = initial_validation.get("snapshot", getattr(opt, "best", None))
+            self.best_validated = ValidatedIncumbent(
+                config=self.current_config.clone(),
+                makespan=float(initial_makespan),
+                iter_id=0,
+                snapshot=initial_snapshot,
+            )
+            initial_validated_makespans = [float(initial_makespan)]
+            if initial_snapshot is not None:
+                self.opt.best = initial_snapshot
+                self.opt.work = initial_snapshot
+                self.opt.work_z = float(initial_makespan)
+        else:
+            self.best_validated = ValidatedIncumbent(
+                config=self.current_config.clone(),
+                makespan=float("inf"),
+                iter_id=0,
+                snapshot=None,
+            )
         self.current_eval.metadata.update(
             {
                 "last_validation_iter": 0,
                 "last_validation_f_raw": float(self.current_eval.F_raw),
-                "recent_validated_makespans": [float(opt.best.z)] if getattr(opt, "best", None) is not None else [],
+                "recent_validated_makespans": list(initial_validated_makespans),
+                "initial_hard_reject_reason": str(initial_hard_reject_reason),
             }
-        )
-        self.best_validated = ValidatedIncumbent(
-            config=self.current_config.clone(),
-            makespan=float(getattr(opt.best, "z", float("inf"))),
-            iter_id=0,
-            snapshot=opt.best,
         )
         self.last_validated_config = self.current_config.clone()
         self.last_validated_signature = self.current_config.validation_signature()
         self.last_validation_iter = 0
         self.last_validation_f_raw = float(self.current_eval.F_raw)
-        self.recent_validated_makespans: List[float] = [float(getattr(opt.best, "z", 0.0) or 0.0)]
+        self.recent_validated_makespans: List[float] = list(initial_validated_makespans)
         self.temperature = float(getattr(self.cfg, "resource_sa_init_temp", max(1.0, 0.05 * float(self.current_eval.F_raw))))
         self.layer_ema_improve = {"X": 1.0, "Y": 1.0, "Z": 1.0}
         self.layer_stagnation = {"X": 0.0, "Y": 0.0, "Z": 0.0}
@@ -74,6 +94,7 @@ class ResourceTimeALNSEngine:
         self.last_selected_layer = ""
         self.no_improve_rounds = 0.0
         self.no_best_z_change_rounds = 0.0
+        self.validated_best_no_change_rounds = 0
         self.best_f_raw = float(self.current_eval.F_raw)
         self.consecutive_exact_cache_hit_count = 0
         self.adaptive_destroy_bonus = 0.0
@@ -87,7 +108,32 @@ class ResourceTimeALNSEngine:
         self.action_signature_seen = {layer: set() for layer in ["X", "Y", "Z"]}
         self.opt.candidate_iter_log = []
         self.opt.stop_reason = ""
+        self.joint_colocated_sort_postprocess_stats = {
+            "triggered": 0.0,
+            "candidate_groups": 0.0,
+            "submitted": 0.0,
+            "applied": 0.0,
+            "makespan_improvement": 0.0,
+            "rejected_capacity": 0.0,
+            "rejected_interval_illegal": 0.0,
+            "rejected_noise": 0.0,
+            "rejected_eval_not_better": 0.0,
+            "rejected_validation": 0.0,
+            "rejected_target_conflict": 0.0,
+        }
+        self.opt.joint_colocated_sort_postprocess_stats = self.joint_colocated_sort_postprocess_stats
         self._refresh_operator_stats_payload()
+
+    def _candidate_validation_trigger(self, iter_id: int, candidate_eval, candidate_signature, precomputed_validation) -> str:
+        if precomputed_validation is not None:
+            return "joint_colocated_sort_postprocess"
+        trigger = str(self._should_validate(iter_id, candidate_eval, candidate_signature) or "")
+        if trigger:
+            return trigger
+        # Every accepted exact candidate must clear a route-feasibility screen before
+        # it can become the current incumbent; otherwise unassigned SP4 tasks can slip
+        # through between periodic validations.
+        return "operator_route_precheck"
 
     def _init_operator_arms(self) -> Dict[str, Dict[str, Dict[str, OperatorArm]]]:
         return {
@@ -732,6 +778,148 @@ class ResourceTimeALNSEngine:
     def _counts_as_effective_iteration(self, candidate_pool_info: Dict[str, object]) -> bool:
         return bool(int(candidate_pool_info.get("generated_count", 0) or 0) > 0)
 
+    def _accumulate_joint_postprocess_stats(self, stats: Dict[str, float]) -> None:
+        for key, value in dict(stats or {}).items():
+            if str(key) not in self.joint_colocated_sort_postprocess_stats:
+                continue
+            self.joint_colocated_sort_postprocess_stats[str(key)] = float(
+                self.joint_colocated_sort_postprocess_stats.get(str(key), 0.0)
+            ) + float(value or 0.0)
+        self.opt.joint_colocated_sort_postprocess_stats = self.joint_colocated_sort_postprocess_stats
+
+    def _validate_candidate_config(self, config: ResourceConfig, iter_id: int) -> Dict[str, object]:
+        validation = dict(self.validator.validate(config, iter_id) or {})
+        validation["lkh_call_count"] = int(validation.get("lkh_call_count", 1) or 0)
+        return validation
+
+    def _attempt_constrained_reentry(
+        self,
+        iter_id: int,
+        previous_config: ResourceConfig,
+        previous_eval,
+        candidate_config: ResourceConfig,
+        validation: Dict[str, object],
+    ) -> Tuple[Optional[ResourceConfig], Optional[Dict[str, object]]]:
+        if not bool(getattr(self.cfg, "resource_conflict_local_reentry_enabled", True)):
+            return None, None
+        conflict_summary = dict(validation.get("conflict_summary", {}) or {})
+        affected_ids = {
+            int(x)
+            for x in (
+                conflict_summary.get("failed_subtask_ids", [])
+                or [row.get("subtask_id", -1) for row in (validation.get("unassigned_robot_tasks", []) or [])]
+            )
+            if int(x) >= 0 and int(x) in candidate_config.subtasks
+        }
+        if not affected_ids:
+            return None, None
+        repaired_config = candidate_config.clone()
+        repaired_config.metadata = dict(getattr(repaired_config, "metadata", {}) or {})
+        repaired_config.metadata["transient_conflict_constraints"] = dict(conflict_summary)
+        try:
+            repaired_config, _, _ = apply_projection_repair(
+                opt=self.opt,
+                previous_config=previous_config,
+                candidate_config=repaired_config,
+                previous_eval=previous_eval,
+                affected_subtask_ids=sorted(affected_ids),
+                iter_id=int(iter_id),
+                rng=self.rng,
+            )
+        except Exception:
+            return None, None
+        repaired_validation = self._validate_candidate_config(repaired_config, int(iter_id))
+        if str(repaired_validation.get("hard_reject_reason", "") or ""):
+            return None, repaired_validation
+        return repaired_config, repaired_validation
+
+    def _maybe_apply_joint_colocated_sort_postprocess(
+        self,
+        iter_id: int,
+        layer: str,
+        candidate_row: Optional[Dict[str, object]],
+    ) -> Tuple[Optional[Dict[str, object]], Optional[Dict[str, object]], Dict[str, float], float]:
+        empty_stats = dict(self.joint_colocated_sort_postprocess_stats)
+        for key in empty_stats:
+            empty_stats[key] = 0.0
+        if (
+            candidate_row is None
+            or str(layer).upper() != "Z"
+            or not bool(getattr(self.cfg, "resource_enable_joint_colocated_sort_postprocess", True))
+        ):
+            return candidate_row, None, empty_stats, 0.0
+        payload = candidate_row.get("candidate_payload", {}) or {}
+        candidate_config = payload.get("config", None)
+        if candidate_config is None:
+            return candidate_row, None, empty_stats, 0.0
+        max_groups = max(0, int(getattr(self.cfg, "resource_joint_colocated_sort_max_groups_per_candidate", 1)))
+        if max_groups <= 0:
+            return candidate_row, None, empty_stats, 0.0
+        t0 = time.perf_counter()
+        enhanced_config, stats = apply_joint_colocated_sort_postprocess(self.opt, candidate_config, max_groups=max_groups)
+        if int(stats.get("applied", 0) or 0) <= 0:
+            return candidate_row, None, stats, float(time.perf_counter() - t0)
+        baseline_validation = self._validate_candidate_config(candidate_config, int(iter_id))
+        enhanced_validation = self._validate_candidate_config(enhanced_config, int(iter_id))
+        validation_call_count = int(baseline_validation.get("lkh_call_count", 0)) + int(enhanced_validation.get("lkh_call_count", 0))
+        baseline_valid = not str(baseline_validation.get("hard_reject_reason", "") or "")
+        enhanced_valid = not str(enhanced_validation.get("hard_reject_reason", "") or "")
+        baseline_eval = candidate_row.get("candidate_eval")
+        enhanced_payload = dict(payload)
+        enhanced_payload["config"] = enhanced_config
+        enhanced_payload["affected_ids"] = set(
+            int(subtask_id)
+            for subtask_id in enhanced_config.subtasks.keys()
+            if enhanced_config.subtasks[int(subtask_id)].validation_signature()
+            != candidate_config.subtasks.get(int(subtask_id), enhanced_config.subtasks[int(subtask_id)]).validation_signature()
+        )
+        enhanced_eval = self.scorer.evaluate(
+            config=enhanced_config,
+            score_cache=enhanced_payload.get("score_cache", None),
+            affected_subtask_ids=enhanced_payload.get("affected_ids", set()),
+            fallback_penalty=0.15 if bool(enhanced_payload.get("fallback_used", False)) else 0.0,
+            iterations_since_last_validation=int(iter_id) - int(self.last_validation_iter),
+            distance_to_last_validated=config_distance(enhanced_config, self.last_validated_config),
+        )
+        enhanced_eval.metadata.update(
+            {
+                "last_validation_iter": int(self.last_validation_iter),
+                "last_validation_f_raw": float(self.last_validation_f_raw),
+                "recent_validated_makespans": list(self.recent_validated_makespans),
+            }
+        )
+        choose_enhanced = False
+        if enhanced_valid and not baseline_valid:
+            choose_enhanced = True
+        elif enhanced_valid and baseline_valid:
+            baseline_makespan = float(baseline_validation.get("makespan", float("inf")))
+            enhanced_makespan = float(enhanced_validation.get("makespan", float("inf")))
+            if float(enhanced_makespan) + 1e-9 < float(baseline_makespan):
+                choose_enhanced = True
+            elif abs(float(enhanced_makespan) - float(baseline_makespan)) <= 1e-9 and baseline_eval is not None:
+                choose_enhanced = float(enhanced_eval.F_cal) + 1e-9 < float(baseline_eval.F_cal)
+        if not choose_enhanced:
+            stats["rejected_eval_not_better"] = float(stats.get("rejected_eval_not_better", 0.0)) + 1.0
+            baseline_validation["validation_call_count"] = int(validation_call_count)
+            return candidate_row, baseline_validation, stats, float(time.perf_counter() - t0)
+        updated_row = dict(candidate_row)
+        updated_row["candidate_payload"] = enhanced_payload
+        updated_row["candidate_eval"] = enhanced_eval
+        updated_row["F_raw"] = float(enhanced_eval.F_raw)
+        updated_row["F_cal"] = float(enhanced_eval.F_cal)
+        updated_row["duplicate_tote_count"] = int(enhanced_eval.duplicate_tote_count)
+        updated_row["duplicate_tote_penalty"] = float(enhanced_eval.duplicate_tote_penalty)
+        updated_row["candidate_signature_tuple"] = enhanced_config.validation_signature()
+        updated_row["candidate_signature"] = self._candidate_signature_text(updated_row["candidate_signature_tuple"])
+        updated_row["joint_colocated_sort_postprocess_applied"] = True
+        if baseline_valid and enhanced_valid:
+            stats["makespan_improvement"] = float(stats.get("makespan_improvement", 0.0)) + max(
+                0.0,
+                float(baseline_validation.get("makespan", 0.0)) - float(enhanced_validation.get("makespan", 0.0)),
+            )
+        enhanced_validation["validation_call_count"] = int(validation_call_count)
+        return updated_row, enhanced_validation, stats, float(time.perf_counter() - t0)
+
     def run(self) -> float:
         if self.best_validated.snapshot is not None:
             self.opt.best = self.best_validated.snapshot
@@ -772,6 +960,21 @@ class ResourceTimeALNSEngine:
             coverage_hard_reject = False
             unmet_sku_total = 0
             stagnation_increment = 0.0
+            joint_postprocess_stats = {
+                "triggered": 0.0,
+                "candidate_groups": 0.0,
+                "submitted": 0.0,
+                "applied": 0.0,
+                "makespan_improvement": 0.0,
+                "rejected_capacity": 0.0,
+                "rejected_interval_illegal": 0.0,
+                "rejected_noise": 0.0,
+                "rejected_eval_not_better": 0.0,
+                "rejected_validation": 0.0,
+                "rejected_target_conflict": 0.0,
+            }
+            joint_postprocess_time_sec = 0.0
+            precomputed_validation = None
             candidate_pool_target_size = int(getattr(self.cfg, "resource_candidate_pool_size", 3))
             if str(layer) == "X":
                 candidate_pool_info = self._generate_x_candidate_pool(iter_id, effective_destroy_budget, candidate_pool_target_size)
@@ -806,18 +1009,39 @@ class ResourceTimeALNSEngine:
                     accepted, accept_prob, effective_sa_temperature = self._sa_accept(candidate_eval, layer)
                     x_temp_boost_used = bool(str(layer) == "X")
                 if accepted and not bool(coverage_hard_reject):
+                    selected_candidate, precomputed_validation, joint_postprocess_stats, joint_postprocess_time_sec = self._maybe_apply_joint_colocated_sort_postprocess(
+                        int(iter_id),
+                        str(layer),
+                        selected_candidate,
+                    )
+                    self._accumulate_joint_postprocess_stats(joint_postprocess_stats)
+                    if selected_candidate is not None:
+                        candidate_eval = selected_candidate["candidate_eval"]
+                        candidate_payload = selected_candidate["candidate_payload"]
+                        candidate_config = candidate_payload["config"]
+                        candidate_signature = candidate_payload["config"].validation_signature()
+                if accepted and not bool(coverage_hard_reject):
+                    pre_accept_config = self.current_config.clone()
+                    pre_accept_eval = self.current_eval
                     self.current_config = candidate_config
                     self.current_eval = candidate_eval
+                    if precomputed_validation is not None and precomputed_validation.get("snapshot", None) is not None:
+                        self.opt.restore_snapshot(precomputed_validation["snapshot"])
                     reward = 1.0 if bool(fallback_used) else 3.0
-                    validation_trigger = self._should_validate(iter_id, candidate_eval, candidate_signature)
+                    validation_trigger = self._candidate_validation_trigger(
+                        int(iter_id),
+                        candidate_eval,
+                        candidate_signature,
+                        precomputed_validation,
+                    )
                     if validation_trigger == "periodic_skip_same_config":
                         self.last_validation_iter = int(iter_id)
                     elif validation_trigger:
                         t_val0 = time.perf_counter()
-                        validation = self.validator.validate(self.current_config, iter_id)
-                        val_time = float(time.perf_counter() - t_val0)
+                        validation = precomputed_validation if precomputed_validation is not None else self.validator.validate(self.current_config, iter_id)
+                        val_time = float(time.perf_counter() - t_val0) + float(joint_postprocess_time_sec)
                         self.opt.layer_runtime_sec_by_name["U"] = float(self.opt.layer_runtime_sec_by_name.get("U", 0.0)) + val_time
-                        actual_lkh_calls = int(validation.get("lkh_call_count", 1) or 0)
+                        actual_lkh_calls = int(validation.get("validation_call_count", validation.get("lkh_call_count", 1)) or 0)
                         self.opt.global_eval_count = int(getattr(self.opt, "global_eval_count", 0)) + int(actual_lkh_calls)
                         self.lkh_call_count += int(actual_lkh_calls)
                         coverage_hard_reject = bool(validation.get("coverage_hard_reject", False))
@@ -826,21 +1050,42 @@ class ResourceTimeALNSEngine:
                         if str(validation_hard_reject_reason) == "coverage_hard_reject":
                             self.coverage_hard_reject_count += 1
                         if str(validation_hard_reject_reason):
-                            candidate_hard_reject_reason = str(validation_hard_reject_reason)
-                            reward = -6.0
-                            self.current_config = self.best_validated.config.clone()
-                            self.last_validated_config = self.best_validated.config.clone()
-                            self.last_validated_signature = self.best_validated.config.validation_signature()
-                            self.opt._clear_z_detour_cache()
-                            self.current_eval = self.scorer.evaluate(
-                                config=self.current_config,
-                                iterations_since_last_validation=0,
-                                distance_to_last_validated=0.0,
-                            )
-                            accepted = False
-                            validation_trigger = str(validation_hard_reject_reason)
-                            validated_makespan = float("inf")
-                        else:
+                            repaired_config = None
+                            repaired_validation = None
+                            if str(validation_hard_reject_reason) == "unassigned_robot_task_hard_reject":
+                                repaired_config, repaired_validation = self._attempt_constrained_reentry(
+                                    int(iter_id),
+                                    previous_config=pre_accept_config,
+                                    previous_eval=pre_accept_eval,
+                                    candidate_config=self.current_config,
+                                    validation=validation,
+                                )
+                            if repaired_config is not None and repaired_validation is not None:
+                                validation = dict(repaired_validation)
+                                validation_hard_reject_reason = str(validation.get("hard_reject_reason", "") or "")
+                                self.current_config = repaired_config
+                                self.current_eval = self.scorer.evaluate(
+                                    config=self.current_config,
+                                    iterations_since_last_validation=int(iter_id) - int(self.last_validation_iter),
+                                    distance_to_last_validated=config_distance(self.current_config, self.last_validated_config),
+                                )
+                                candidate_eval = self.current_eval
+                            if str(validation_hard_reject_reason):
+                                candidate_hard_reject_reason = str(validation_hard_reject_reason)
+                                reward = -6.0
+                                self.current_config = self.best_validated.config.clone()
+                                self.last_validated_config = self.best_validated.config.clone()
+                                self.last_validated_signature = self.best_validated.config.validation_signature()
+                                self.opt._clear_z_detour_cache()
+                                self.current_eval = self.scorer.evaluate(
+                                    config=self.current_config,
+                                    iterations_since_last_validation=0,
+                                    distance_to_last_validated=0.0,
+                                )
+                                accepted = False
+                                validation_trigger = str(validation_hard_reject_reason)
+                                validated_makespan = float("inf")
+                        if not str(validation_hard_reject_reason):
                             validated_makespan = float(validation["makespan"])
                             self.recent_validated_makespans.append(float(validated_makespan))
                             self.last_validation_iter = int(iter_id)
@@ -948,6 +1193,17 @@ class ResourceTimeALNSEngine:
                     "selected_candidate_rank": int(selected_candidate.get("candidate_rank", 0)) if selected_candidate is not None else 0,
                     "global_eval_triggered": bool(validation_trigger not in ("", "periodic_skip_same_config")),
                     "empty_candidate_penalized": bool(empty_candidate_penalized),
+                    "joint_colocated_sort_postprocess_triggered": float(joint_postprocess_stats.get("triggered", 0.0)),
+                    "joint_colocated_sort_postprocess_candidate_groups": float(joint_postprocess_stats.get("candidate_groups", 0.0)),
+                    "joint_colocated_sort_postprocess_submitted": float(joint_postprocess_stats.get("submitted", 0.0)),
+                    "joint_colocated_sort_postprocess_applied": float(joint_postprocess_stats.get("applied", 0.0)),
+                    "joint_colocated_sort_postprocess_makespan_gain": float(joint_postprocess_stats.get("makespan_improvement", 0.0)),
+                    "joint_colocated_sort_postprocess_rejected_capacity": float(joint_postprocess_stats.get("rejected_capacity", 0.0)),
+                    "joint_colocated_sort_postprocess_rejected_interval_illegal": float(joint_postprocess_stats.get("rejected_interval_illegal", 0.0)),
+                    "joint_colocated_sort_postprocess_rejected_noise": float(joint_postprocess_stats.get("rejected_noise", 0.0)),
+                    "joint_colocated_sort_postprocess_rejected_eval_not_better": float(joint_postprocess_stats.get("rejected_eval_not_better", 0.0)),
+                    "joint_colocated_sort_postprocess_rejected_validation": float(joint_postprocess_stats.get("rejected_validation", 0.0)),
+                    "joint_colocated_sort_postprocess_rejected_target_conflict": float(joint_postprocess_stats.get("rejected_target_conflict", 0.0)),
                     "layer_cooldown_remaining": int(layer_cooldown_remaining),
                     "used_exact_eval_cache": bool(used_exact_eval_cache),
                     "exact_eval_cache_hit_count": int(exact_eval_cache_hit_count),
@@ -959,6 +1215,7 @@ class ResourceTimeALNSEngine:
                     "consecutive_fail_count_x": int(self.consecutive_fail_count.get("X", 0)),
                     "x_layer_dynamic_multiplier": float(self.layer_dynamic_multiplier.get("X", 1.0)),
                     "x_failure_cooldown_remaining": int(x_failure_cooldown_remaining),
+                    "validated_best_no_change_rounds": int(self.validated_best_no_change_rounds),
                 },
             )
             self.opt.iter_log.append(row)
@@ -968,10 +1225,17 @@ class ResourceTimeALNSEngine:
             self._refresh_operator_stats_payload()
             if abs(float(self.best_validated.makespan) - float(best_z_before_iter)) > 1e-9:
                 self.no_best_z_change_rounds = 0.0
+                self.validated_best_no_change_rounds = 0
             else:
                 self.no_best_z_change_rounds = float(self.no_best_z_change_rounds) + float(stagnation_increment)
-            if float(self.no_best_z_change_rounds) >= float(getattr(self.cfg, "resource_stop_if_best_z_no_change_rounds", 50)):
-                self.opt.stop_reason = f"best_z_no_change_{int(getattr(self.cfg, 'resource_stop_if_best_z_no_change_rounds', 50))}"
+                self.validated_best_no_change_rounds = int(self.validated_best_no_change_rounds) + 1
+            hard_stop_rounds = int(getattr(
+                self.cfg,
+                "resource_stop_if_validated_best_no_change_rounds",
+                getattr(self.cfg, "resource_stop_if_best_z_no_change_rounds", 50),
+            ))
+            if int(hard_stop_rounds) > 0 and int(self.validated_best_no_change_rounds) >= int(hard_stop_rounds):
+                self.opt.stop_reason = f"validated_best_no_change_{int(hard_stop_rounds)}"
                 break
 
         self.opt.run_total_time_sec = float(self.opt._runtime_elapsed_sec())

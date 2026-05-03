@@ -478,6 +478,10 @@ class SP3_Bin_Hitter:
                             sort_layer_range=layer_range,
                             sku_pick_count=current_task_pick_count  # ✅ 传入计算结果
                         )
+                        new_task.order_anchor_start_sec = float(getattr(task, "order_anchor_start_sec", 0.0) or 0.0)
+                        new_task.order_kitting_span_limit_sec = float(getattr(task, "kitting_span_limit_sec", 0.0) or 0.0)
+                        new_task.order_time_window_lb_sec = float(getattr(task, "order_time_window_lb_sec", 0.0) or 0.0)
+                        new_task.order_time_window_ub_sec = float(getattr(task, "order_time_window_ub_sec", 0.0) or 0.0)
 
                         target_stack_obj = self.problem.point_to_stack.get(u)
                         if target_stack_obj:
@@ -684,6 +688,10 @@ class SP3_Bin_Hitter:
                             sort_layer_range=layer_range,
                             sku_pick_count=current_pick_count  # ✅ 传入计算结果
                         )
+                        new_task.order_anchor_start_sec = float(getattr(task, "order_anchor_start_sec", 0.0) or 0.0)
+                        new_task.order_kitting_span_limit_sec = float(getattr(task, "kitting_span_limit_sec", 0.0) or 0.0)
+                        new_task.order_time_window_lb_sec = float(getattr(task, "order_time_window_lb_sec", 0.0) or 0.0)
+                        new_task.order_time_window_ub_sec = float(getattr(task, "order_time_window_ub_sec", 0.0) or 0.0)
                         new_task.station_sequence_rank = task.station_sequence_rank
 
                         task.add_execution_detail(new_task, stack)

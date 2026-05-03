@@ -51,26 +51,126 @@ class SP2_Station_Assigner:
         self.robot_speed = OFSConfig.ROBOT_SPEED
         self.fixed_return_time = 15.0
         self.local_prox_rank_weight = 0.1
+        self.order_time_cluster_weight = float(getattr(OFSConfig, "SP2_ORDER_TIME_CLUSTER_WEIGHT", 25.0))
+
+    def _task_order_id(self, task: SubTask) -> int:
+        return int(getattr(getattr(task, "parent_order", None), "order_id", -1))
+
+    def _task_order_span_limit_sec(self, task: SubTask) -> float:
+        return float(getattr(task, "kitting_span_limit_sec", getattr(getattr(task, "parent_order", None), "kitting_span_limit_sec", 0.0)) or 0.0)
+
+    def _candidate_order_anchor(self, order_state: Dict[int, Dict[str, float]], task: SubTask, start: float) -> float:
+        order_id = self._task_order_id(task)
+        if order_id < 0:
+            return float(start)
+        state = dict(order_state.get(order_id, {}) or {})
+        if "anchor" in state:
+            return float(state["anchor"])
+        return float(start)
+
+    def _candidate_within_order_window(self, order_state: Dict[int, Dict[str, float]], task: SubTask, start: float) -> bool:
+        order_id = self._task_order_id(task)
+        span_limit = self._task_order_span_limit_sec(task)
+        if order_id < 0 or span_limit <= 0.0:
+            return True
+        anchor = self._candidate_order_anchor(order_state, task, start)
+        start_val = float(start)
+        return bool(start_val + 1e-9 >= anchor and start_val <= anchor + span_limit + 1e-9)
+
+    def _candidate_order_time_penalty(self, order_state: Dict[int, Dict[str, float]], task: SubTask, start: float) -> float:
+        order_id = self._task_order_id(task)
+        span_limit = self._task_order_span_limit_sec(task)
+        if order_id < 0 or span_limit <= 0.0:
+            return 0.0
+        anchor = self._candidate_order_anchor(order_state, task, start)
+        return float(abs(float(start) - anchor))
+
+    def _update_order_state_after_assignment(
+        self,
+        order_state: Dict[int, Dict[str, float]],
+        task: SubTask,
+        start: float,
+    ) -> None:
+        order_id = self._task_order_id(task)
+        if order_id < 0:
+            return
+        span_limit = self._task_order_span_limit_sec(task)
+        anchor = self._candidate_order_anchor(order_state, task, start)
+        start_val = float(start)
+        order_state[int(order_id)] = {
+            "anchor": float(anchor),
+            "lb": float(anchor),
+            "ub": float(anchor + span_limit) if span_limit > 0.0 else float(anchor),
+            "min_start": float(min(start_val, float(order_state.get(order_id, {}).get("min_start", start_val)))),
+            "max_start": float(max(start_val, float(order_state.get(order_id, {}).get("max_start", start_val)))),
+        }
+
+    def _apply_order_window_metadata(
+        self,
+        tasks: List[SubTask],
+        assignments: Dict[int, Tuple[int, int, float]],
+    ) -> None:
+        grouped: Dict[int, List[Tuple[SubTask, float]]] = defaultdict(list)
+        for task in tasks:
+            subtask_id = int(getattr(task, "id", -1))
+            if subtask_id not in assignments:
+                continue
+            order_id = self._task_order_id(task)
+            if order_id < 0:
+                continue
+            grouped[order_id].append((task, float(assignments[subtask_id][2])))
+        for _, rows in grouped.items():
+            rows.sort(key=lambda item: (item[1], int(getattr(item[0], "id", -1))))
+            anchor = float(rows[0][1]) if rows else 0.0
+            span_limit = self._task_order_span_limit_sec(rows[0][0]) if rows else 0.0
+            lb = float(anchor)
+            ub = float(anchor + span_limit) if span_limit > 0.0 else float(anchor)
+            for task, _ in rows:
+                task.order_anchor_start_sec = float(anchor)
+                task.order_time_window_lb_sec = float(lb)
+                task.order_time_window_ub_sec = float(ub)
 
     def solve_initial_heuristic(self):
         # #print("  >>> [SP2] Generating Initial Solution (Heuristic)...")
 
         station_makespan = {s.id: 0.0 for s in self.stations}
         station_counts = {s.id: 0 for s in self.stations}
+        assignments: Dict[int, Tuple[int, int, float]] = {}
+        order_state: Dict[int, Dict[str, float]] = {}
 
         for task in self.problem.subtask_list:
             proc_time = len(task.sku_list) * self.picking_time
-            best_station_id = min(station_makespan, key=station_makespan.get)
-
-            start_time = station_makespan[best_station_id]
-            rank = station_counts[best_station_id]
+            best_choice = None
+            for station_id in sorted(station_makespan.keys()):
+                start_time = float(station_makespan[station_id])
+                if not self._candidate_within_order_window(order_state, task, start_time):
+                    continue
+                rank = int(station_counts[station_id])
+                time_penalty = self._candidate_order_time_penalty(order_state, task, start_time)
+                candidate = (
+                    float(start_time + self.order_time_cluster_weight * time_penalty),
+                    float(start_time),
+                    int(rank),
+                    int(station_id),
+                )
+                if best_choice is None or candidate < best_choice:
+                    best_choice = candidate
+            if best_choice is None:
+                best_station_id = min(station_makespan, key=station_makespan.get)
+                start_time = float(station_makespan[best_station_id])
+                rank = int(station_counts[best_station_id])
+            else:
+                _, start_time, rank, best_station_id = best_choice
 
             task.assigned_station_id = best_station_id
             task.station_sequence_rank = rank
             task.estimated_process_start_time = start_time
+            assignments[int(getattr(task, "id", -1))] = (int(best_station_id), int(rank), float(start_time))
+            self._update_order_state_after_assignment(order_state, task, start_time)
 
             station_makespan[best_station_id] += proc_time
             station_counts[best_station_id] += 1
+        self._apply_order_window_metadata(list(self.problem.subtask_list or []), assignments)
 
         ##print(f"  >>> [SP2] Initial Heuristic Done. Max Makespan: {max(station_makespan.values()):.2f}")
 
@@ -326,6 +426,8 @@ class SP2_Station_Assigner:
                 task.assigned_station_id = int(station_id)
                 task.station_sequence_rank = int(rank)
                 task.estimated_process_start_time = float(start)
+        if apply_to_tasks:
+            self._apply_order_window_metadata(tasks, assignments)
 
         load_balance_penalty = max(normalized_loads.values()) - min(normalized_loads.values()) if normalized_loads else 0.0
         prox_penalty = float(prox_station_penalty) + self.local_prox_rank_weight * float(prox_rank_penalty)
@@ -362,6 +464,8 @@ class SP2_Station_Assigner:
         waiting_total = 0.0
         prox_station_total = 0.0
         prox_rank_total = 0.0
+        order_time_total = 0.0
+        order_state: Dict[int, Dict[str, float]] = {}
 
         ordered_tasks = sorted(
             tasks,
@@ -379,6 +483,8 @@ class SP2_Station_Assigner:
             for station_id in station_ids:
                 rank = len(station_sequences[station_id])
                 start = max(station_finish[station_id], arrival)
+                if not self._candidate_within_order_window(order_state, task, start):
+                    continue
                 finish = start + proc
 
                 candidate_loads = dict(station_loads)
@@ -391,6 +497,8 @@ class SP2_Station_Assigner:
                 wait_total = waiting_total + max(0.0, start - arrival)
                 prox_station = prox_station_total + self._local_anchor_station_penalty(task, station_id, context)
                 prox_rank = prox_rank_total + self._local_anchor_rank_penalty(task, rank, context)
+                order_time_penalty = self._candidate_order_time_penalty(order_state, task, start)
+                candidate_order_time_total = order_time_total + order_time_penalty
                 prox_penalty = prox_station + self.local_prox_rank_weight * prox_rank
                 objective = (
                     float(candidate_cmax)
@@ -398,6 +506,7 @@ class SP2_Station_Assigner:
                     + float(context.lambda_yu) * float(wait_total)
                     + float(context.lambda_yz) * float(load_gap)
                     + float(context.tau_y) * float(prox_penalty)
+                    + float(self.order_time_cluster_weight) * float(candidate_order_time_total)
                 )
                 candidate = (
                     float(objective),
@@ -411,9 +520,48 @@ class SP2_Station_Assigner:
                     float(wait_total),
                     float(prox_station),
                     float(prox_rank),
+                    float(candidate_order_time_total),
                 )
                 if best_choice is None or candidate < best_choice:
                     best_choice = candidate
+            if best_choice is None:
+                for station_id in station_ids:
+                    rank = len(station_sequences[station_id])
+                    start = max(station_finish[station_id], arrival)
+                    finish = start + proc
+                    candidate_loads = dict(station_loads)
+                    candidate_loads[station_id] += proc
+                    other_finishes = [station_finish[sid] for sid in station_ids if sid != station_id]
+                    candidate_cmax = max([finish] + other_finishes)
+                    load_gap = max(candidate_loads.values()) - min(candidate_loads.values()) if candidate_loads else 0.0
+                    station_pref_total = station_preference_total + self._local_station_preference(task, station_id, context)
+                    wait_total = waiting_total + max(0.0, start - arrival)
+                    prox_station = prox_station_total + self._local_anchor_station_penalty(task, station_id, context)
+                    prox_rank = prox_rank_total + self._local_anchor_rank_penalty(task, rank, context)
+                    prox_penalty = prox_station + self.local_prox_rank_weight * prox_rank
+                    objective = (
+                        float(candidate_cmax)
+                        + float(context.lambda_yx) * float(station_pref_total)
+                        + float(context.lambda_yu) * float(wait_total)
+                        + float(context.lambda_yz) * float(load_gap)
+                        + float(context.tau_y) * float(prox_penalty)
+                    )
+                    candidate = (
+                        float(objective),
+                        float(candidate_cmax),
+                        float(load_gap),
+                        float(start),
+                        int(station_id),
+                        int(rank),
+                        float(finish),
+                        float(station_pref_total),
+                        float(wait_total),
+                        float(prox_station),
+                        float(prox_rank),
+                        float(order_time_total),
+                    )
+                    if best_choice is None or candidate < best_choice:
+                        best_choice = candidate
 
             assert best_choice is not None
             (
@@ -428,11 +576,13 @@ class SP2_Station_Assigner:
                 waiting_total,
                 prox_station_total,
                 prox_rank_total,
+                order_time_total,
             ) = best_choice
             station_sequences[station_id].append(int(getattr(task, "id", -1)))
             station_finish[station_id] = float(finish)
             station_loads[station_id] += proc
             assignments[int(getattr(task, "id", -1))] = (int(station_id), int(rank), float(start))
+            self._update_order_state_after_assignment(order_state, task, start)
 
         return self._build_local_result(tasks, context, assignments, station_loads, apply_to_tasks=True)
 
@@ -560,6 +710,7 @@ class SP2_Station_Assigner:
         return self._build_local_result(tasks, context, assignments, station_loads, apply_to_tasks=True)
 
     def _apply_solution(self, tasks, y, t, K, P, S):
+        assignments: Dict[int, Tuple[int, int, float]] = {}
         for k in K:
             for s in S:
                 for p in P:
@@ -567,7 +718,13 @@ class SP2_Station_Assigner:
                         tasks[k].assigned_station_id = self.stations[s].id
                         tasks[k].station_sequence_rank = p
                         tasks[k].estimated_process_start_time = t[p, s].X
+                        assignments[int(getattr(tasks[k], "id", -1))] = (
+                            int(self.stations[s].id),
+                            int(p),
+                            float(t[p, s].X),
+                        )
                         break
+        self._apply_order_window_metadata(list(tasks or []), assignments)
 
 
 if __name__ == "__main__":

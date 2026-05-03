@@ -42,6 +42,17 @@ RESOURCE_TIME_ITER_COLUMNS = [
     "candidate_pool_best_f_raw",
     "candidate_pool_best_f_cal",
     "selected_candidate_rank",
+    "joint_colocated_sort_postprocess_triggered",
+    "joint_colocated_sort_postprocess_candidate_groups",
+    "joint_colocated_sort_postprocess_submitted",
+    "joint_colocated_sort_postprocess_applied",
+    "joint_colocated_sort_postprocess_makespan_gain",
+    "joint_colocated_sort_postprocess_rejected_capacity",
+    "joint_colocated_sort_postprocess_rejected_interval_illegal",
+    "joint_colocated_sort_postprocess_rejected_noise",
+    "joint_colocated_sort_postprocess_rejected_eval_not_better",
+    "joint_colocated_sort_postprocess_rejected_validation",
+    "joint_colocated_sort_postprocess_rejected_target_conflict",
     "empty_candidate_penalized",
     "layer_cooldown_remaining",
     "stagnation_increment",
@@ -212,4 +223,5 @@ def write_resource_time_best_runtime_txt(result_root: str, opt, run_stats: Dict[
         f.write(f"lkh_call_count={int(run_stats.get('lkh_call_count', 0))}\n")
         f.write(f"lkh_budget_consumed_by_rollback={int(run_stats.get('lkh_budget_consumed_by_rollback', 0))}\n")
         f.write(f"layer_runtime_sec_by_name={dict(run_stats.get('layer_runtime_sec_by_name', {}) or {})}\n")
+        f.write(f"joint_colocated_sort_postprocess_stats={dict(run_stats.get('joint_colocated_sort_postprocess_stats', {}) or {})}\n")
     return path

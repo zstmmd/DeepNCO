@@ -1,7 +1,7 @@
 import math
 import gurobipy as gp
 from gurobipy import GRB
-from typing import List, Dict, Tuple, Set, Optional
+from typing import Any, List, Dict, Tuple, Set, Optional
 from collections import defaultdict
 import os
 import sys
@@ -16,6 +16,12 @@ from entity.robot import Robot
 from entity.point import Point
 from problemDto.ofs_problem_dto import OFSProblemDTO
 from config.ofs_config import OFSConfig
+
+
+class SP4RoutingInfeasibleError(RuntimeError):
+    def __init__(self, summary: Dict[str, Any]):
+        self.summary = dict(summary or {})
+        super().__init__(str(self.summary.get("reason_code", "sp4_route_infeasible")))
 
 
 class SP4_Robot_Router:
@@ -35,10 +41,184 @@ class SP4_Robot_Router:
         self.t_shift = OFSConfig.PACKING_TIME
         self.t_lift = OFSConfig.LIFTING_TIME
         self.lkh_time_limit_seconds = 100
+        self.last_infeasible_reason: str = ""
+        self.last_conflict_summary: Dict[str, object] = {}
         # --- 初始化 Logger ---
         log_dir = os.path.join(ROOT_DIR, 'log')
         # 实例化 logger
         self.logger = SP4Logger(log_dir, filename="sp4_debug.txt")
+
+    def _set_conflict_summary(
+        self,
+        reason_code: str,
+        failed_task_ids: Optional[List[int]] = None,
+        failed_subtask_ids: Optional[List[int]] = None,
+        station_ids: Optional[List[int]] = None,
+        stack_ids: Optional[List[int]] = None,
+        time_bucket: Optional[int] = None,
+        resource_type: str = "robot_capacity",
+    ) -> None:
+        self.last_conflict_summary = {
+            "reason_code": str(reason_code),
+            "failed_task_ids": list(int(x) for x in (failed_task_ids or [])),
+            "failed_subtask_ids": list(int(x) for x in (failed_subtask_ids or [])),
+            "station_ids": list(int(x) for x in (station_ids or [])),
+            "stack_ids": list(int(x) for x in (stack_ids or [])),
+            "time_bucket": None if time_bucket is None else int(time_bucket),
+            "resource_type": str(resource_type),
+        }
+
+    @staticmethod
+    def _strategy_enum(strategy_name: str):
+        mapping = {
+            "PATH_CHEAPEST_ARC": routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC,
+            "SAVINGS": routing_enums_pb2.FirstSolutionStrategy.SAVINGS,
+            "PARALLEL_CHEAPEST_INSERTION": routing_enums_pb2.FirstSolutionStrategy.PARALLEL_CHEAPEST_INSERTION,
+        }
+        return mapping.get(str(strategy_name).upper())
+
+    def _should_enforce_same_subtask_vehicle(self, pickup_count: int, mode: str, threshold: int) -> bool:
+        normalized = str(mode or "strict").strip().lower()
+        if normalized == "relaxed":
+            return False
+        if normalized == "conditional":
+            return int(pickup_count) <= max(0, int(threshold))
+        return True
+
+    def _build_route_failure_summary(
+        self,
+        reason_code: str,
+        valid_tasks: List,
+        strategy_name: str,
+        time_limit_seconds: int,
+        routing_status: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        return {
+            "reason_code": str(reason_code),
+            "routing_status": None if routing_status is None else int(routing_status),
+            "failed_task_ids": [int(getattr(task, "task_id", -1)) for st in valid_tasks for task in (getattr(st, "execution_tasks", []) or []) if int(getattr(task, "task_id", -1)) >= 0],
+            "failed_subtask_ids": [int(getattr(st, "id", -1)) for st in valid_tasks if int(getattr(st, "id", -1)) >= 0],
+            "station_ids": sorted({int(getattr(st, "assigned_station_id", -1)) for st in valid_tasks if int(getattr(st, "assigned_station_id", -1)) >= 0}),
+            "stack_ids": sorted({int(getattr(task, "target_stack_id", -1)) for st in valid_tasks for task in (getattr(st, "execution_tasks", []) or []) if int(getattr(task, "target_stack_id", -1)) >= 0}),
+            "resource_type": "robot_capacity",
+            "strategy_name": str(strategy_name),
+            "time_limit_seconds": int(max(0, int(time_limit_seconds))),
+        }
+
+    def _raise_route_failure(
+        self,
+        reason_code: str,
+        valid_tasks: List,
+        strategy_name: str,
+        time_limit_seconds: int,
+        routing_status: Optional[int] = None,
+    ) -> None:
+        summary = self._build_route_failure_summary(
+            reason_code=reason_code,
+            valid_tasks=valid_tasks,
+            strategy_name=strategy_name,
+            time_limit_seconds=time_limit_seconds,
+            routing_status=routing_status,
+        )
+        self.last_infeasible_reason = f"{reason_code}:{strategy_name}:{int(max(0, int(time_limit_seconds)))}"
+        self._set_conflict_summary(
+            reason_code=str(summary.get("reason_code", reason_code)),
+            failed_task_ids=list(summary.get("failed_task_ids", []) or []),
+            failed_subtask_ids=list(summary.get("failed_subtask_ids", []) or []),
+            station_ids=list(summary.get("station_ids", []) or []),
+            stack_ids=list(summary.get("stack_ids", []) or []),
+            resource_type=str(summary.get("resource_type", "robot_capacity")),
+        )
+        raise SP4RoutingInfeasibleError(summary)
+
+    def _solve_with_search_parameters(
+        self,
+        routing,
+        strategy_name: str,
+        time_limit_seconds: int,
+        use_guided_local_search: bool,
+    ):
+        params = pywrapcp.DefaultRoutingSearchParameters()
+        strategy_enum = self._strategy_enum(strategy_name)
+        if strategy_enum is None:
+            raise ValueError(f"Unsupported first solution strategy: {strategy_name}")
+        params.first_solution_strategy = strategy_enum
+        params.local_search_metaheuristic = (
+            routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
+            if bool(use_guided_local_search)
+            else routing_enums_pb2.LocalSearchMetaheuristic.AUTOMATIC
+        )
+        params.time_limit.seconds = int(max(1, int(time_limit_seconds)))
+        return routing.SolveWithParameters(params)
+
+    def _greedy_fallback_route(
+        self,
+        valid_tasks: List,
+        same_subtask_vehicle_mode: str = "conditional",
+        same_subtask_vehicle_threshold: int = 2,
+    ) -> Tuple[Dict[int, float], Dict[int, int]]:
+        robot_states: Dict[int, Dict[str, float]] = {}
+        for robot in getattr(self.problem, "robot_list", []) or []:
+            start = getattr(robot, "start_point", None)
+            rid = int(getattr(robot, "id", -1))
+            if start is None or rid < 0:
+                continue
+            robot_states[int(rid)] = {"time": 0.0, "x": float(start.x), "y": float(start.y)}
+        if not robot_states:
+            self._raise_route_failure("sp4_greedy_no_robot", valid_tasks, "GREEDY_FALLBACK", 0)
+        ordered = []
+        for st in valid_tasks:
+            for task in getattr(st, "execution_tasks", []) or []:
+                rank = int(getattr(task, "station_sequence_rank", getattr(st, "station_sequence_rank", -1)))
+                ordered.append(
+                    (
+                        int(rank if rank >= 0 else 10**9),
+                        float(getattr(task, "estimated_process_start_time", 0.0) or 0.0),
+                        -int(getattr(task, "total_load_count", 0) or 0),
+                        int(getattr(task, "task_id", -1)),
+                        st,
+                        task,
+                    )
+                )
+        ordered.sort(key=lambda item: (item[0], item[1], item[2], item[3]))
+        subtask_fixed_robot: Dict[int, int] = {}
+        result_times: Dict[int, float] = {}
+        result_assign: Dict[int, int] = {}
+        for _, _, _, _, st, task in ordered:
+            station = self.problem.station_list[int(st.assigned_station_id)]
+            stack = self.problem.point_to_stack[int(task.target_stack_id)]
+            pickup_count = len(list(getattr(st, "execution_tasks", []) or []))
+            forced_robot = None
+            if self._should_enforce_same_subtask_vehicle(pickup_count, same_subtask_vehicle_mode, same_subtask_vehicle_threshold):
+                forced_robot = subtask_fixed_robot.get(int(st.id))
+            candidate_robot_ids = [int(forced_robot)] if forced_robot is not None else sorted(robot_states.keys())
+            best_choice = None
+            for rid in candidate_robot_ids:
+                state = robot_states.get(int(rid))
+                if not state:
+                    continue
+                to_stack = (abs(float(state["x"]) - float(stack.store_point.x)) + abs(float(state["y"]) - float(stack.store_point.y))) / self.robot_speed
+                arrival_stack = float(state["time"] + to_stack)
+                to_station = (abs(float(stack.store_point.x) - float(station.point.x)) + abs(float(stack.store_point.y) - float(station.point.y))) / self.robot_speed
+                arrival_station = float(arrival_stack + float(getattr(task, "robot_service_time", 0.0) or 0.0) + to_station)
+                candidate = (arrival_station, arrival_stack, int(rid))
+                if best_choice is None or candidate < best_choice:
+                    best_choice = candidate
+            if best_choice is None:
+                self._raise_route_failure("sp4_greedy_assignment_failed", valid_tasks, "GREEDY_FALLBACK", 0)
+            arrival_station, arrival_stack, rid = best_choice
+            task.robot_id = int(rid)
+            task.arrival_time_at_stack = float(arrival_stack)
+            task.arrival_time_at_station = float(arrival_station)
+            stack_idx = getattr(getattr(stack, "store_point", None), "idx", None)
+            if stack_idx is not None:
+                result_times[int(stack_idx)] = float(arrival_stack)
+            result_assign[int(st.id)] = int(rid)
+            if int(st.id) not in subtask_fixed_robot:
+                subtask_fixed_robot[int(st.id)] = int(rid)
+            robot_states[int(rid)] = {"time": float(arrival_station), "x": float(station.point.x), "y": float(station.point.y)}
+        self.last_conflict_summary = {}
+        return result_times, result_assign
 
     def _extract_sequence(self, x, y, T, trip, nodes_map, N, R, depot_layer_nodes, robot_start_nodes,
                           stack_nodes_indices):
@@ -83,7 +263,50 @@ class SP4_Robot_Router:
                         print(f"    [{seq}] Stack {task_obj.target_stack_id} @ {time:.1f}s "
                               f"(SubTask {task_obj.sub_task_id}, Load={task_obj.total_load_count})")
 
-    def _solve_LKH(self, sub_tasks: List, soft_time_windows: Optional[Dict[int, float]] = None, mu: float = 0.0) -> Tuple[Dict[int, float], Dict[int, int]]:
+    @staticmethod
+    def _normalize_soft_time_windows(
+        soft_time_windows: Optional[Dict[int, float]],
+    ) -> Tuple[Dict[int, float], Dict[int, float], Dict[int, float]]:
+        earliest_by_task: Dict[int, float] = {}
+        latest_by_task: Dict[int, float] = {}
+        hard_latest_by_task: Dict[int, float] = {}
+        if not soft_time_windows:
+            return earliest_by_task, latest_by_task, hard_latest_by_task
+        if (
+            "latest_by_task" in soft_time_windows
+            or "earliest_by_task" in soft_time_windows
+            or "hard_latest_by_task" in soft_time_windows
+        ):
+            latest_by_task = {
+                int(task_id): float(value)
+                for task_id, value in dict(soft_time_windows.get("latest_by_task", {}) or {}).items()
+            }
+            earliest_by_task = {
+                int(task_id): float(value)
+                for task_id, value in dict(soft_time_windows.get("earliest_by_task", {}) or {}).items()
+            }
+            hard_latest_by_task = {
+                int(task_id): float(value)
+                for task_id, value in dict(soft_time_windows.get("hard_latest_by_task", {}) or {}).items()
+            }
+            return earliest_by_task, latest_by_task, hard_latest_by_task
+        latest_by_task = {
+            int(task_id): float(value)
+            for task_id, value in dict(soft_time_windows or {}).items()
+        }
+        return earliest_by_task, latest_by_task, hard_latest_by_task
+
+    def _solve_LKH(
+        self,
+        sub_tasks: List,
+        soft_time_windows: Optional[Dict[str, Dict[int, float]]] = None,
+        mu: float = 0.0,
+        first_solution_strategies: Optional[List[str]] = None,
+        first_solution_slice_seconds: int = 10,
+        enable_guided_local_search: bool = True,
+        same_subtask_vehicle_mode: str = "strict",
+        same_subtask_vehicle_threshold: int = 2,
+    ) -> Tuple[Dict[int, float], Dict[int, int]]:
         print(f"  >>> [SP4] Starting LKH-based Routing (OR-Tools)...")
         quiet_mode = os.environ.get("OFS_BATCH_SILENT", "0") == "1"
 
@@ -209,32 +432,38 @@ class SP4_Robot_Router:
         time_dimension.SetGlobalSpanCostCoefficient(100)
 
         # --- Soft upper bounds for deliveries (t_latest) ---
-        if soft_time_windows:
+        earliest_by_task, latest_by_task, hard_latest_by_task = self._normalize_soft_time_windows(soft_time_windows)
+        if earliest_by_task or latest_by_task or hard_latest_by_task:
             # Build task -> delivery index map (already below for logs; reconstruct here for safety)
             try:
-                # reconstruct mapping for this scope
-                num_tasks = len([t for st in valid_tasks for t in st.execution_tasks])
-                # We rebuild pair_map as in original code
-                # Note: nodes_info: [0]=Depot, [1..K]=Pickups, [K+1..2K]=Deliveries
-                # We'll map by scanning deliveries constructed above
-                # We replicate minimal part to map task_id -> delivery index in manager space
-                task_to_delivery_index = {}
-                offset = 0
-                # Rebuild deliveries list like above
-                deliveries_tmp = []
-                for st in valid_tasks:
-                    for task in st.execution_tasks:
-                        station_pt = self.problem.station_list[st.assigned_station_id].point
-                        deliveries_tmp.append((station_pt, task, 'delivery', st.id))
-                for idx, (_pt, task_obj, _nt, _sid) in enumerate(deliveries_tmp):
-                    d_node = num_tasks + idx + 1
-                    task_to_delivery_index[task_obj.task_id] = manager.NodeToIndex(d_node)
-                # apply soft UB
+                # apply earliest / soft latest / hard latest on delivery nodes
                 penalty = max(0, int(round(mu * 10)))
-                for tid, latest in soft_time_windows.items():
+                for tid, earliest in earliest_by_task.items():
+                    if tid in task_to_delivery_index:
+                        idx = task_to_delivery_index[tid]
+                        time_dimension.CumulVar(idx).SetMin(int(round(float(earliest) * 10)))
+                for tid, latest in latest_by_task.items():
                     if tid in task_to_delivery_index:
                         idx = task_to_delivery_index[tid]
                         time_dimension.SetCumulVarSoftUpperBound(idx, int(round(float(latest) * 10)), penalty)
+                for tid, hard_latest in hard_latest_by_task.items():
+                    if tid in task_to_delivery_index:
+                        idx = task_to_delivery_index[tid]
+                        time_dimension.CumulVar(idx).SetMax(int(round(float(hard_latest) * 10)))
+                for tid in set(earliest_by_task.keys()).intersection(set(hard_latest_by_task.keys())):
+                    if float(earliest_by_task[tid]) > float(hard_latest_by_task[tid]) + 1e-9:
+                        self.last_infeasible_reason = (
+                            f"sp4_hard_latest_conflict:task={int(tid)},"
+                            f"earliest={float(earliest_by_task[tid]):.6f},"
+                            f"hard_latest={float(hard_latest_by_task[tid]):.6f}"
+                        )
+                        self._set_conflict_summary(
+                            reason_code="sp4_hard_latest_conflict",
+                            failed_task_ids=[int(tid)],
+                            time_bucket=int(math.floor(float(hard_latest_by_task[tid]) / max(1.0, float(getattr(OFSConfig, "PACKING_TIME", 1.0))))),
+                            resource_type="station_entry",
+                        )
+                        return {}, {}
             except Exception:
                 pass
     
@@ -253,22 +482,41 @@ class SP4_Robot_Router:
 
         # 4.2 同 SubTask 同车约束
         for st_id, p_indices in subtask_groups.items():
-            if len(p_indices) > 1:
+            if len(p_indices) > 1 and self._should_enforce_same_subtask_vehicle(len(p_indices), same_subtask_vehicle_mode, same_subtask_vehicle_threshold):
                 base_index = manager.NodeToIndex(p_indices[0])
                 for other_p in p_indices[1:]:
                     other_index = manager.NodeToIndex(other_p)
                     solver.Add(routing.ActiveVar(base_index) == routing.ActiveVar(other_index))
                     solver.Add(routing.VehicleVar(base_index) == routing.VehicleVar(other_index))
 
-        search_parameters = pywrapcp.DefaultRoutingSearchParameters()
-        search_parameters.first_solution_strategy = (
-            routing_enums_pb2.FirstSolutionStrategy.PARALLEL_CHEAPEST_INSERTION)
-        search_parameters.local_search_metaheuristic = (routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH)
-        search_parameters.time_limit.seconds = int(self.lkh_time_limit_seconds)
         routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
         time_dimension.SetGlobalSpanCostCoefficient(10000)
-        # 9. 求解
-        solution = routing.SolveWithParameters(search_parameters)
+        strategy_names = [str(name).upper() for name in (first_solution_strategies or ["PARALLEL_CHEAPEST_INSERTION"]) if self._strategy_enum(str(name).upper()) is not None]
+        if not strategy_names:
+            strategy_names = ["PARALLEL_CHEAPEST_INSERTION"]
+        selected_strategy = str(strategy_names[-1])
+        selected_budget = int(max(1, int(self.lkh_time_limit_seconds)))
+        solution = None
+        for strategy_name in strategy_names:
+            selected_strategy = str(strategy_name)
+            selected_budget = int(max(1, int(first_solution_slice_seconds)))
+            solution = self._solve_with_search_parameters(
+                routing,
+                strategy_name=strategy_name,
+                time_limit_seconds=selected_budget,
+                use_guided_local_search=False,
+            )
+            if solution is not None:
+                break
+        if solution is None and bool(enable_guided_local_search):
+            selected_strategy = str(strategy_names[-1]) + "+GUIDED_LOCAL_SEARCH"
+            selected_budget = int(max(1, int(self.lkh_time_limit_seconds)))
+            solution = self._solve_with_search_parameters(
+                routing,
+                strategy_name=str(strategy_names[-1]),
+                time_limit_seconds=selected_budget,
+                use_guided_local_search=True,
+            )
         verbose_console = bool(getattr(self.problem, "runtime_verbose_sp4", False)) and not bool(quiet_mode)
 
 
@@ -282,7 +530,13 @@ class SP4_Robot_Router:
         if solution is None:
             if verbose_console:
                 print(f"  >>> [Diag] routing status={routing.status()}")
-            # 0=NOT_SOLVED, 1=SUCCESS, 2=PARTIAL_SUCCESS, 3=FAIL, 4=FAIL_TIMEOUT, 5=INVALID
+            self._raise_route_failure(
+                reason_code="sp4_lkh_infeasible",
+                valid_tasks=valid_tasks,
+                strategy_name=selected_strategy,
+                time_limit_seconds=selected_budget,
+                routing_status=int(routing.status()),
+            )
         result_times = {}
         result_assign = {}
 
@@ -379,18 +633,41 @@ class SP4_Robot_Router:
 
             if verbose_console:
                 print(f"  >>> [Log] Final results written to {result_log_path}")
+            assigned_task_ids = {int(getattr(task, "task_id", -1)) for st in valid_tasks for task in (getattr(st, "execution_tasks", []) or []) if int(getattr(task, "robot_id", -1)) >= 0}
+            expected_task_ids = {int(getattr(task, "task_id", -1)) for st in valid_tasks for task in (getattr(st, "execution_tasks", []) or []) if int(getattr(task, "task_id", -1)) >= 0}
+            if assigned_task_ids != expected_task_ids or len(result_assign) < len(valid_tasks):
+                self._raise_route_failure(
+                    reason_code="sp4_incomplete_assignment",
+                    valid_tasks=valid_tasks,
+                    strategy_name=selected_strategy,
+                    time_limit_seconds=selected_budget,
+                    routing_status=int(routing.status()),
+                )
+            self.last_conflict_summary = {}
             return result_times, result_assign
         else:
             print("  >>> [Error] LKH Engine Failed to find a solution (Infeasible).")
-            # 可能是容量限制太死，或者有些点根本无法到达
-            return {}, {}
+            self._raise_route_failure(
+                reason_code="sp4_lkh_no_solution",
+                valid_tasks=valid_tasks,
+                strategy_name=selected_strategy,
+                time_limit_seconds=selected_budget,
+                routing_status=int(routing.status()),
+            )
 
     def solve(self,
               sub_tasks: List[SubTask],
               use_mip: bool = True,
               lkh_time_limit_seconds: Optional[int] = None,
-              soft_time_windows: Optional[Dict[int, float]] = None,
-              mu: float = 0.0) -> Tuple[Dict[int, float], Dict[int, int]]:
+              soft_time_windows: Optional[Dict[str, Dict[int, float]]] = None,
+              mu: float = 0.0,
+              first_solution_strategies: Optional[List[str]] = None,
+              first_solution_slice_seconds: int = 10,
+              enable_guided_local_search: bool = True,
+              same_subtask_vehicle_mode: str = "strict",
+              same_subtask_vehicle_threshold: int = 2,
+              enable_greedy_fallback: bool = False,
+              raise_on_no_solution: bool = False) -> Tuple[Dict[int, float], Dict[int, int]]:
         """
         执行求解
 
@@ -401,13 +678,35 @@ class SP4_Robot_Router:
                  - subtask_robot_assignment: {subtask_id: robot_id}
         """
         print(f"  >>> [SP4] Starting Robot Routing (MIP={use_mip})...")
+        self.last_infeasible_reason = ""
+        self.last_conflict_summary = {}
 
         if use_mip:
             return self._solve_mip_pdp_v2(sub_tasks)
         else:
             if lkh_time_limit_seconds is not None:
                 self.lkh_time_limit_seconds = int(lkh_time_limit_seconds)
-            return self._solve_LKH(sub_tasks, soft_time_windows=soft_time_windows, mu=mu)
+            try:
+                return self._solve_LKH(
+                    sub_tasks,
+                    soft_time_windows=soft_time_windows,
+                    mu=mu,
+                    first_solution_strategies=first_solution_strategies,
+                    first_solution_slice_seconds=first_solution_slice_seconds,
+                    enable_guided_local_search=enable_guided_local_search,
+                    same_subtask_vehicle_mode=same_subtask_vehicle_mode,
+                    same_subtask_vehicle_threshold=same_subtask_vehicle_threshold,
+                )
+            except SP4RoutingInfeasibleError:
+                if bool(enable_greedy_fallback):
+                    return self._greedy_fallback_route(
+                        [st for st in sub_tasks if getattr(st, "execution_tasks", None)],
+                        same_subtask_vehicle_mode=same_subtask_vehicle_mode,
+                        same_subtask_vehicle_threshold=same_subtask_vehicle_threshold,
+                    )
+                if bool(raise_on_no_solution):
+                    raise
+                return {}, {}
 
     def _solve_mip_pdp_v2(self, sub_tasks: List[SubTask]) -> Tuple[Dict[int, float], Dict[int, int]]:
         r"""

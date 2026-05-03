@@ -1,13 +1,223 @@
 from __future__ import annotations
 
+import itertools
 import math
 from collections import defaultdict
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from config.ofs_config import OFSConfig
 
 from .state import ResourceConfig, ResourceSubtask
 from .utils import pick_ranked_candidate, pick_soft_greedy_min
+
+
+def _validated_snapshot(opt):
+    for candidate in [
+        getattr(opt, "work", None),
+        getattr(opt, "best", None),
+        getattr(getattr(opt, "best_validated", None), "snapshot", None),
+    ]:
+        if candidate is not None and getattr(candidate, "subtask_state", None) is not None:
+            return candidate
+    return None
+
+
+def _snapshot_subtasks(opt) -> List[object]:
+    snapshot = _validated_snapshot(opt)
+    if snapshot is None:
+        return []
+    return list(getattr(snapshot, "subtask_state", []) or [])
+
+
+def _snapshot_station_idle_heads(opt) -> Dict[int, Dict[str, float]]:
+    station_rows: Dict[int, List[Tuple[int, float, int]]] = defaultdict(list)
+    for subtask in _snapshot_subtasks(opt):
+        station_id = int(getattr(subtask, "assigned_station_id", -1))
+        rank = int(getattr(subtask, "station_sequence_rank", -1))
+        if station_id < 0:
+            continue
+        task_rows = list(getattr(subtask, "execution_tasks", []) or [])
+        if not task_rows:
+            continue
+        first_start = min(float(getattr(task, "start_process_time", 0.0) or 0.0) for task in task_rows)
+        station_rows[station_id].append((rank if rank >= 0 else 10**9, float(first_start), int(getattr(subtask, "id", -1))))
+    heads: Dict[int, Dict[str, float]] = {}
+    for station_id, rows in station_rows.items():
+        rows.sort(key=lambda item: (int(item[0]), float(item[1]), int(item[2])))
+        rank, first_start, subtask_id = rows[0]
+        heads[int(station_id)] = {
+            "initial_idle_time": float(first_start),
+            "subtask_id": int(subtask_id),
+            "rank": int(rank if rank < 10**9 else -1),
+        }
+    return heads
+
+
+def _snapshot_subtask_metrics(opt) -> Dict[int, Dict[str, object]]:
+    rows: Dict[int, Dict[str, object]] = {}
+    for subtask in _snapshot_subtasks(opt):
+        subtask_id = int(getattr(subtask, "id", -1))
+        task_rows = list(getattr(subtask, "execution_tasks", []) or [])
+        if subtask_id < 0 or not task_rows:
+            continue
+        robot_ids = sorted({int(getattr(task, "robot_id", -1)) for task in task_rows if int(getattr(task, "robot_id", -1)) >= 0})
+        assigned_robot_id = int(getattr(subtask, "assigned_robot_id", -1))
+        if assigned_robot_id < 0 and robot_ids:
+            assigned_robot_id = int(robot_ids[0])
+        arrival_station = min(float(getattr(task, "arrival_time_at_station", 0.0) or 0.0) for task in task_rows)
+        start_time = min(float(getattr(task, "start_process_time", 0.0) or 0.0) for task in task_rows)
+        completion_time = max(float(getattr(task, "end_process_time", 0.0) or 0.0) for task in task_rows)
+        first_stack_arrival = min(float(getattr(task, "arrival_time_at_stack", 0.0) or 0.0) for task in task_rows)
+        rows[int(subtask_id)] = {
+            "subtask_id": int(subtask_id),
+            "station_id": int(getattr(subtask, "assigned_station_id", -1)),
+            "station_rank": int(getattr(subtask, "station_sequence_rank", -1)),
+            "assigned_robot_id": int(assigned_robot_id),
+            "arrival_station": float(arrival_station),
+            "start_time": float(start_time),
+            "completion_time": float(completion_time),
+            "arrival_stack": float(first_stack_arrival),
+        }
+    return rows
+
+
+def _snapshot_robot_chains(opt) -> Dict[int, List[int]]:
+    per_robot: Dict[int, List[Tuple[float, float, int]]] = defaultdict(list)
+    for subtask in _snapshot_subtasks(opt):
+        subtask_id = int(getattr(subtask, "id", -1))
+        task_rows = list(getattr(subtask, "execution_tasks", []) or [])
+        if subtask_id < 0 or not task_rows:
+            continue
+        grouped: Dict[int, List[object]] = defaultdict(list)
+        for task in task_rows:
+            robot_id = int(getattr(task, "robot_id", -1))
+            if robot_id >= 0:
+                grouped[int(robot_id)].append(task)
+        for robot_id, rows in grouped.items():
+            per_robot[int(robot_id)].append(
+                (
+                    min(float(getattr(task, "arrival_time_at_stack", 0.0) or 0.0) for task in rows),
+                    min(float(getattr(task, "arrival_time_at_station", 0.0) or 0.0) for task in rows),
+                    int(subtask_id),
+                )
+            )
+    chains: Dict[int, List[int]] = {}
+    for robot_id, rows in per_robot.items():
+        rows.sort(key=lambda item: (float(item[0]), float(item[1]), int(item[2])))
+        ordered: List[int] = []
+        for _, _, subtask_id in rows:
+            if int(subtask_id) not in ordered:
+                ordered.append(int(subtask_id))
+        chains[int(robot_id)] = ordered
+    return chains
+
+
+def _snapshot_station_chains(opt) -> Dict[int, List[int]]:
+    station_rows: Dict[int, List[Tuple[int, float, float, int]]] = defaultdict(list)
+    for subtask_id, meta in _snapshot_subtask_metrics(opt).items():
+        station_id = int(meta.get("station_id", -1))
+        if station_id < 0:
+            continue
+        station_rows[int(station_id)].append(
+            (
+                int(meta.get("station_rank", -1) if int(meta.get("station_rank", -1)) >= 0 else 10**9),
+                float(meta.get("start_time", 0.0)),
+                float(meta.get("completion_time", 0.0)),
+                int(subtask_id),
+            )
+        )
+    chains: Dict[int, List[int]] = {}
+    for station_id, rows in station_rows.items():
+        rows.sort(key=lambda item: (int(item[0]), float(item[1]), float(item[2]), int(item[3])))
+        chains[int(station_id)] = [int(item[3]) for item in rows]
+    return chains
+
+
+def _robot_start_positions(opt) -> Dict[int, Tuple[float, float]]:
+    problem = getattr(opt, "problem", None)
+    rows: Dict[int, Tuple[float, float]] = {}
+    for robot in getattr(problem, "robot_list", []) or []:
+        point = getattr(robot, "start_point", None)
+        robot_id = int(getattr(robot, "id", -1))
+        if point is None or robot_id < 0:
+            continue
+        rows[int(robot_id)] = (float(point.x), float(point.y))
+    return rows
+
+
+def _snapshot_robot_frontier(opt) -> Dict[int, Dict[str, float]]:
+    metrics = _snapshot_subtask_metrics(opt)
+    chains = _snapshot_robot_chains(opt)
+    stations = list(getattr(getattr(opt, "problem", None), "station_list", []) or [])
+    frontiers: Dict[int, Dict[str, float]] = {}
+    start_positions = _robot_start_positions(opt)
+    for robot_id, xy in start_positions.items():
+        frontiers[int(robot_id)] = {
+            "available_time": 0.0,
+            "x": float(xy[0]),
+            "y": float(xy[1]),
+            "assigned_count": 0.0,
+        }
+    for robot_id, subtask_ids in chains.items():
+        if not subtask_ids:
+            continue
+        last_subtask_id = int(subtask_ids[-1])
+        meta = dict(metrics.get(int(last_subtask_id), {}) or {})
+        station_id = int(meta.get("station_id", -1))
+        if not (0 <= station_id < len(stations)):
+            continue
+        point = stations[int(station_id)].point
+        frontier = frontiers.setdefault(
+            int(robot_id),
+            {"available_time": 0.0, "x": float(point.x), "y": float(point.y), "assigned_count": 0.0},
+        )
+        frontier["available_time"] = float(meta.get("completion_time", 0.0))
+        frontier["x"] = float(point.x)
+        frontier["y"] = float(point.y)
+        frontier["assigned_count"] = float(len(list(subtask_ids)))
+    return frontiers
+
+
+def _rank_released_subtasks(
+    released_ids: Sequence[int],
+    priority_ids: Sequence[int],
+    metrics: Dict[int, Dict[str, object]],
+) -> List[int]:
+    priority_rank = {int(subtask_id): idx for idx, subtask_id in enumerate(int(x) for x in (priority_ids or []))}
+    rows = sorted(
+        {int(x) for x in (released_ids or []) if int(x) >= 0},
+        key=lambda subtask_id: (
+            int(priority_rank.get(int(subtask_id), 10**9)),
+            -float(metrics.get(int(subtask_id), {}).get("completion_time", 0.0)),
+            -float(metrics.get(int(subtask_id), {}).get("start_time", 0.0)),
+            int(subtask_id),
+        ),
+    )
+    return list(rows)
+
+
+def _finalize_release_ids(
+    config: ResourceConfig,
+    release_ids: Sequence[int],
+    degree: int,
+    priority_ids: Sequence[int],
+    preview: bool,
+    metrics: Optional[Dict[int, Dict[str, object]]] = None,
+    extra: Optional[Dict[str, object]] = None,
+) -> Dict[str, object]:
+    ordered_ids = _rank_released_subtasks(release_ids, priority_ids, dict(metrics or {}))
+    capped_ids = [int(subtask_id) for subtask_id in ordered_ids[: max(1, int(degree))] if int(subtask_id) in config.subtasks]
+    if not capped_ids:
+        return {"success": False}
+    rows = [config.subtasks[int(subtask_id)] for subtask_id in capped_ids if int(subtask_id) in config.subtasks]
+    released = _preview_release_rows(rows, len(rows)) if bool(preview) else _release_rows(rows, len(rows))
+    payload = {
+        "success": bool(released),
+        "released_subtasks": released,
+        "source_station_ids": sorted({int(station_id) for station_id, _ in released.values() if int(station_id) >= 0}),
+    }
+    payload.update(dict(extra or {}))
+    return payload
 
 
 def _station_count(opt) -> int:
@@ -43,6 +253,353 @@ def _arrival_proxy(opt, subtask: ResourceSubtask, station_id: int) -> float:
         station = problem.station_list[int(station_id)]
         rows.append(abs(float(stack.store_point.x) - float(station.point.x)) + abs(float(stack.store_point.y) - float(station.point.y)))
     return float(sum(rows) / max(1, len(rows))) if rows else 0.0
+
+
+def _manhattan_distance_xy(lhs: Tuple[float, float], rhs: Tuple[float, float]) -> float:
+    return float(abs(float(lhs[0]) - float(rhs[0])) + abs(float(lhs[1]) - float(rhs[1])))
+
+
+def _station_xy(opt, station_id: int) -> Optional[Tuple[float, float]]:
+    stations = list(getattr(getattr(opt, "problem", None), "station_list", []) or [])
+    if not (0 <= int(station_id) < len(stations)):
+        return None
+    point = stations[int(station_id)].point
+    return float(point.x), float(point.y)
+
+
+def _subtask_candidate_stack_ids(opt, config: ResourceConfig, subtask: ResourceSubtask) -> List[int]:
+    stack_ids: List[int] = []
+    for descriptor in subtask.z_tasks or []:
+        stack_id = int(getattr(descriptor, "stack_id", -1))
+        if stack_id >= 0 and int(stack_id) not in stack_ids:
+            stack_ids.append(int(stack_id))
+    for work_unit_id in subtask.work_unit_ids or ():
+        work_unit = config.work_units.get(str(work_unit_id))
+        if work_unit is None:
+            continue
+        for stack_id in getattr(opt, "_x_candidate_stack_ids_for_sku", lambda *_args, **_kwargs: [])(int(work_unit.sku_id)) or []:
+            if int(stack_id) >= 0 and int(stack_id) not in stack_ids:
+                stack_ids.append(int(stack_id))
+    return stack_ids
+
+
+def _robot_availability_proxy(opt, robot_frontier: Optional[Dict[int, Dict[str, float]]] = None) -> Dict[int, Dict[str, float]]:
+    frontier = dict(robot_frontier or {})
+    if frontier:
+        return frontier
+    return _snapshot_robot_frontier(opt)
+
+
+def _subtask_pick_count(config: ResourceConfig, subtask: ResourceSubtask) -> int:
+    pick_count = 0
+    for descriptor in subtask.z_tasks or []:
+        pick_count += max(0, int(getattr(descriptor, "sku_pick_count", 0) or 0))
+    if pick_count > 0:
+        return int(pick_count)
+    for work_unit_id in subtask.work_unit_ids or ():
+        work_unit = config.work_units.get(str(work_unit_id))
+        if work_unit is None:
+            continue
+        pick_count += max(0, int(getattr(work_unit, "units", 0) or 0))
+    return int(max(1, pick_count))
+
+
+def _subtask_heaviness_penalty(opt, config: ResourceConfig, subtask: ResourceSubtask) -> float:
+    has_sort = any(str(getattr(descriptor, "mode", "")).upper() == "SORT" for descriptor in (subtask.z_tasks or []))
+    sort_penalty = float(getattr(opt.cfg, "resource_y_wave1_sort_penalty", 8.0)) if has_sort else 0.0
+    pick_weight = float(getattr(opt.cfg, "resource_y_wave1_pick_weight", 0.75))
+    pick_penalty = max(0, _subtask_pick_count(config, subtask) - 1) * pick_weight
+    return float(sort_penalty + pick_penalty)
+
+
+def _robot_station_arrival_cost(
+    opt,
+    config: ResourceConfig,
+    subtask: ResourceSubtask,
+    station_id: int,
+    robot_id: int,
+    robot_frontier: Optional[Dict[int, Dict[str, float]]] = None,
+) -> float:
+    station_xy = _station_xy(opt, int(station_id))
+    frontier = _robot_availability_proxy(opt, robot_frontier)
+    robot_meta = dict(frontier.get(int(robot_id), {}) or {})
+    if station_xy is None or not robot_meta:
+        return float(_arrival_proxy(opt, subtask, int(station_id)))
+    candidate_stack_ids = _subtask_candidate_stack_ids(opt, config, subtask)
+    stack_points: List[Tuple[int, Tuple[float, float]]] = []
+    for stack_id in candidate_stack_ids:
+        xy = getattr(opt, "_stack_xy", lambda *_args, **_kwargs: None)(int(stack_id))
+        if xy is None:
+            stack = getattr(getattr(opt, "problem", None), "point_to_stack", {}).get(int(stack_id))
+            if stack is not None:
+                xy = (float(stack.store_point.x), float(stack.store_point.y))
+        if xy is None:
+            continue
+        stack_points.append((int(stack_id), (float(xy[0]), float(xy[1]))))
+    if not stack_points:
+        return float(_arrival_proxy(opt, subtask, int(station_id)))
+    robot_xy = (float(robot_meta.get("x", 0.0)), float(robot_meta.get("y", 0.0)))
+    ready = float(robot_meta.get("available_time", 0.0))
+    stack_leg = min(
+        _manhattan_distance_xy(robot_xy, stack_xy) + _manhattan_distance_xy(stack_xy, station_xy)
+        for _, stack_xy in stack_points
+    )
+    return float(ready + stack_leg)
+
+
+def _triangle_arrival_cost(
+    opt,
+    config: ResourceConfig,
+    subtask: ResourceSubtask,
+    station_id: int,
+    robot_frontier: Optional[Dict[int, Dict[str, float]]] = None,
+) -> Tuple[float, int]:
+    station_xy = _station_xy(opt, int(station_id))
+    if station_xy is None:
+        return float(_arrival_proxy(opt, subtask, int(station_id))), -1
+    candidate_stack_ids = _subtask_candidate_stack_ids(opt, config, subtask)
+    stack_points: List[Tuple[int, Tuple[float, float]]] = []
+    for stack_id in candidate_stack_ids:
+        xy = getattr(opt, "_stack_xy", lambda *_args, **_kwargs: None)(int(stack_id))
+        if xy is None:
+            stack = getattr(getattr(opt, "problem", None), "point_to_stack", {}).get(int(stack_id))
+            if stack is not None:
+                xy = (float(stack.store_point.x), float(stack.store_point.y))
+        if xy is None:
+            continue
+        stack_points.append((int(stack_id), (float(xy[0]), float(xy[1]))))
+    if not stack_points:
+        return float(_arrival_proxy(opt, subtask, int(station_id))), -1
+    frontier = _robot_availability_proxy(opt, robot_frontier)
+    if not frontier:
+        return float(_arrival_proxy(opt, subtask, int(station_id))), -1
+    best_cost = float("inf")
+    best_robot_id = -1
+    for robot_id, meta in frontier.items():
+        del meta
+        total = _robot_station_arrival_cost(opt, config, subtask, int(station_id), int(robot_id), robot_frontier=frontier)
+        if (float(total), int(robot_id)) < (float(best_cost), int(best_robot_id if best_robot_id >= 0 else 10**9)):
+            best_cost = float(total)
+            best_robot_id = int(robot_id)
+    if best_robot_id < 0:
+        return float(_arrival_proxy(opt, subtask, int(station_id))), -1
+    return float(best_cost), int(best_robot_id)
+
+
+def _grid_cell(x: float, y: float, grid_size: float) -> Tuple[int, int]:
+    size = max(1.0, float(grid_size))
+    return int(math.floor(float(x) / size)), int(math.floor(float(y) / size))
+
+
+def _manhattan_cells(x0: float, y0: float, x1: float, y1: float, grid_size: float) -> List[Tuple[int, int]]:
+    cells: List[Tuple[int, int]] = []
+    size = max(1.0, float(grid_size))
+    x_step = 1 if x1 >= x0 else -1
+    y_step = 1 if y1 >= y0 else -1
+    x = float(x0)
+    while (x_step > 0 and x <= float(x1)) or (x_step < 0 and x >= float(x1)):
+        cell = _grid_cell(x, y0, size)
+        if cell not in cells:
+            cells.append(cell)
+        x += float(x_step) * size
+    y = float(y0)
+    while (y_step > 0 and y <= float(y1)) or (y_step < 0 and y >= float(y1)):
+        cell = _grid_cell(x1, y, size)
+        if cell not in cells:
+            cells.append(cell)
+        y += float(y_step) * size
+    end_cell = _grid_cell(x1, y1, size)
+    if end_cell not in cells:
+        cells.append(end_cell)
+    return cells
+
+
+def _stack_station_cells(opt, stack_id: int, station_id: int, grid_size: float) -> List[Tuple[int, int]]:
+    problem = getattr(opt, "problem", None)
+    if problem is None:
+        return []
+    stack = getattr(problem, "point_to_stack", {}).get(int(stack_id))
+    stations = list(getattr(problem, "station_list", []) or [])
+    if stack is None or not (0 <= int(station_id) < len(stations)):
+        return []
+    stack_pt = stack.store_point
+    station_pt = stations[int(station_id)].point
+    return _manhattan_cells(float(stack_pt.x), float(stack_pt.y), float(station_pt.x), float(station_pt.y), float(grid_size))
+
+
+def _subtask_route_cells(opt, subtask: ResourceSubtask, station_id: int, grid_size: float) -> List[Tuple[int, int]]:
+    cells: List[Tuple[int, int]] = []
+    stack_ids = sorted({int(task.stack_id) for task in (subtask.z_tasks or []) if int(task.stack_id) >= 0})
+    for stack_id in stack_ids:
+        for cell in _stack_station_cells(opt, int(stack_id), int(station_id), float(grid_size)):
+            if cell not in cells:
+                cells.append(cell)
+    return cells
+
+
+def _station_neighbor_robot_budget(opt, station_id: int, grid_size: float) -> int:
+    problem = getattr(opt, "problem", None)
+    if problem is None:
+        return 1
+    stations = list(getattr(problem, "station_list", []) or [])
+    if not (0 <= int(station_id) < len(stations)):
+        return 1
+    station_pt = stations[int(station_id)].point
+    target = _grid_cell(float(station_pt.x), float(station_pt.y), float(grid_size))
+    budget = 0
+    for robot in getattr(problem, "robot_list", []) or []:
+        start_point = getattr(robot, "start_point", None)
+        if start_point is None:
+            continue
+        cell = _grid_cell(float(start_point.x), float(start_point.y), float(grid_size))
+        if abs(int(cell[0]) - int(target[0])) <= 1 and abs(int(cell[1]) - int(target[1])) <= 1:
+            budget += 1
+    return max(1, int(budget or len(getattr(problem, "robot_list", []) or []) or 1))
+
+
+def _subtask_station_window(subtask: ResourceSubtask, station_load_before: float, arrival_proxy: float) -> Tuple[float, float]:
+    start = float(max(0.0, station_load_before) + max(0.0, arrival_proxy))
+    end = float(start + _subtask_station_work(subtask))
+    return float(start), float(end)
+
+
+def _time_bucket_ids(start: float, end: float, bucket_sec: float) -> List[int]:
+    width = max(1.0, float(bucket_sec))
+    lo = int(math.floor(float(start) / width))
+    hi = int(math.floor(max(float(start), float(end) - 1e-9) / width))
+    return list(range(int(lo), int(hi) + 1))
+
+
+def _transient_conflict_constraints(config: ResourceConfig) -> Dict[str, object]:
+    return dict((getattr(config, "metadata", {}) or {}).get("transient_conflict_constraints", {}) or {})
+
+
+def _existing_subtask_windows(config: ResourceConfig, station_id: int, released_ids: Optional[Sequence[int]] = None) -> List[Tuple[int, float, float, List[Tuple[int, int]]]]:
+    released = {int(x) for x in (released_ids or [])}
+    windows: List[Tuple[int, float, float, List[Tuple[int, int]]]] = []
+    station_rows = sorted(
+        [row for row in config.subtasks.values() if int(row.station_id) == int(station_id) and int(row.subtask_id) not in released],
+        key=lambda row: (int(row.station_rank if row.station_rank >= 0 else 10**9), int(row.subtask_id)),
+    )
+    load_before = 0.0
+    for row in station_rows:
+        arrival = 0.0
+        start, end = _subtask_station_window(row, load_before, arrival)
+        windows.append((int(row.subtask_id), float(start), float(end), []))
+        load_before = float(end)
+    return windows
+
+
+def _station_choice_penalties(
+    opt,
+    config: ResourceConfig,
+    subtask: ResourceSubtask,
+    station_id: int,
+    loads: Dict[int, float],
+    released_ids: Optional[Sequence[int]] = None,
+) -> Tuple[float, float, float]:
+    grid_size = max(1.0, float(getattr(opt.cfg, "resource_y_heat_grid_size", 4.0)))
+    bucket_sec = max(1.0, float(getattr(opt.cfg, "resource_y_time_bucket_sec", 20.0)))
+    route_cells = _subtask_route_cells(opt, subtask, int(station_id), grid_size)
+    heat_counts: Dict[Tuple[int, int], int] = defaultdict(int)
+    existing_windows = []
+    released = {int(x) for x in (released_ids or [])}
+    for row in config.subtasks.values():
+        if int(row.subtask_id) in released:
+            continue
+        if int(row.station_id) < 0:
+            continue
+        for cell in _subtask_route_cells(opt, row, int(row.station_id), grid_size):
+            heat_counts[cell] += 1
+        if int(row.station_id) == int(station_id):
+            start, end = _subtask_station_window(row, float(loads.get(int(station_id), 0.0)), 0.0)
+            existing_windows.append((float(start), float(end), _subtask_route_cells(opt, row, int(station_id), grid_size)))
+    heat_penalty = float(sum(heat_counts.get(cell, 0) for cell in route_cells))
+    arrival = float(_arrival_proxy(opt, subtask, int(station_id)))
+    candidate_start, candidate_end = _subtask_station_window(subtask, float(loads.get(int(station_id), 0.0)), arrival)
+    candidate_buckets = set(_time_bucket_ids(candidate_start, candidate_end, bucket_sec))
+    overlap_penalty = 0.0
+    for start, end, cells in existing_windows:
+        overlap_buckets = candidate_buckets & set(_time_bucket_ids(float(start), float(end), bucket_sec))
+        if not overlap_buckets:
+            continue
+        shared_cells = len(set(route_cells) & set(cells)) if route_cells and cells else 0
+        overlap_penalty += float(len(overlap_buckets) * max(1, shared_cells or 1))
+    nearby_budget = int(_station_neighbor_robot_budget(opt, int(station_id), grid_size))
+    concurrent_demand = int(len(existing_windows) + 1)
+    budget_penalty = float(max(0, concurrent_demand - nearby_budget))
+    conflict = _transient_conflict_constraints(config)
+    if int(station_id) in set(int(x) for x in (conflict.get("station_ids", []) or [])):
+        heat_penalty += float(getattr(opt.cfg, "resource_y_conflict_station_penalty", 12.0))
+    if candidate_buckets & set(int(x) for x in (conflict.get("time_bucket_ids", []) or [])):
+        overlap_penalty += float(getattr(opt.cfg, "resource_y_conflict_time_bucket_penalty", 8.0))
+    if route_cells and set(route_cells) & {tuple(cell) for cell in (conflict.get("route_cells", []) or [])}:
+        heat_penalty += float(getattr(opt.cfg, "resource_y_conflict_heat_bonus", 4.0))
+    return float(heat_penalty), float(overlap_penalty), float(budget_penalty)
+
+
+def _station_choice_cost(
+    opt,
+    config: ResourceConfig,
+    subtask: ResourceSubtask,
+    station_id: int,
+    loads: Dict[int, float],
+    released_ids: Optional[Sequence[int]] = None,
+    counts: Optional[Dict[int, int]] = None,
+    assignment_index: int = 0,
+    first_batch_limit: int = 0,
+    used_station_ids: Optional[Set[int]] = None,
+    used_robot_ids: Optional[Set[int]] = None,
+    robot_frontier: Optional[Dict[int, Dict[str, float]]] = None,
+) -> float:
+    projected_finish = float(loads.get(int(station_id), 0.0) + _subtask_station_work(subtask))
+    arrival = float(_arrival_proxy(opt, subtask, station_id))
+    triangle_arrival, selected_robot_id = _triangle_arrival_cost(
+        opt,
+        config,
+        subtask,
+        int(station_id),
+        robot_frontier=robot_frontier,
+    )
+    heat_penalty, overlap_penalty, budget_penalty = _station_choice_penalties(
+        opt,
+        config,
+        subtask,
+        int(station_id),
+        loads,
+        released_ids=released_ids,
+    )
+    counts_map = dict(counts or {})
+    used_stations = set(int(x) for x in (used_station_ids or set()) if int(x) >= 0)
+    used_robots = set(int(x) for x in (used_robot_ids or set()) if int(x) >= 0)
+    station_count = _station_count(opt)
+    is_starving = bool(int(counts_map.get(int(station_id), 0)) <= 0)
+    is_first_batch = bool(int(assignment_index) < max(0, int(first_batch_limit)))
+    arrival_term = float(triangle_arrival if is_starving else arrival)
+    projected_finish_weight = 1.0
+    if is_starving:
+        projected_finish_weight = float(getattr(opt.cfg, "resource_y_triangle_projected_finish_weight", 0.35))
+    starvation_bonus = float(getattr(opt.cfg, "resource_y_starvation_bonus", 8.0)) if is_starving else 0.0
+    triangle_weight = float(getattr(opt.cfg, "resource_y_triangle_arrival_weight", 1.0))
+    spread_penalty = 0.0
+    robot_penalty = 0.0
+    if is_first_batch:
+        if len(used_stations) < int(station_count) and int(station_id) in used_stations:
+            spread_penalty += float(getattr(opt.cfg, "resource_y_first_batch_station_penalty", 40.0))
+        if int(selected_robot_id) >= 0 and int(selected_robot_id) in used_robots:
+            robot_penalty += float(getattr(opt.cfg, "resource_y_first_batch_robot_penalty", 18.0))
+        if is_starving:
+            starvation_bonus += float(getattr(opt.cfg, "resource_y_first_batch_starvation_bonus", 6.0))
+    return float(
+        projected_finish_weight * projected_finish
+        + 0.1 * triangle_weight * arrival_term
+        + float(getattr(opt.cfg, "resource_y_heat_penalty_weight", 0.75)) * heat_penalty
+        + float(getattr(opt.cfg, "resource_y_window_overlap_weight", 0.60)) * overlap_penalty
+        + float(getattr(opt.cfg, "resource_y_nearby_robot_budget_weight", 0.80)) * budget_penalty
+        + float(spread_penalty)
+        + float(robot_penalty)
+        - float(starvation_bonus)
+    )
 
 
 def _normalize_ranks(config: ResourceConfig) -> None:
@@ -147,6 +704,141 @@ def y_destroy_load_skew_release(opt, config: ResourceConfig, rng, degree: int) -
     return y_destroy_congested_station_block(opt, config, rng, degree)
 
 
+def _initial_idle_release_payload(opt, config: ResourceConfig, rng, degree: int, preview: bool) -> Dict[str, object]:
+    heads = _snapshot_station_idle_heads(opt)
+    metrics = _snapshot_subtask_metrics(opt)
+    robot_chains = _snapshot_robot_chains(opt)
+    if not heads or not metrics:
+        fallback = y_plan_destroy_congested_station_block if bool(preview) else y_destroy_congested_station_block
+        return fallback(opt, config, rng, degree)
+    target = max(heads.items(), key=lambda item: (float(item[1].get("initial_idle_time", 0.0)), -int(item[0])))
+    station_id = int(target[0])
+    anchor_subtask_id = int(target[1].get("subtask_id", -1))
+    anchor_meta = metrics.get(int(anchor_subtask_id), {})
+    robot_id = int(anchor_meta.get("assigned_robot_id", -1))
+    if int(anchor_subtask_id) not in config.subtasks or robot_id < 0:
+        fallback = y_plan_destroy_congested_station_block if bool(preview) else y_destroy_congested_station_block
+        return fallback(opt, config, rng, degree)
+    chain = list(robot_chains.get(int(robot_id), []) or [])
+    release_ids: List[int] = []
+    if int(anchor_subtask_id) in chain:
+        anchor_idx = chain.index(int(anchor_subtask_id))
+        release_ids.extend(int(subtask_id) for subtask_id in chain[: anchor_idx + 1])
+    else:
+        release_ids.append(int(anchor_subtask_id))
+    station_chain = list(_snapshot_station_chains(opt).get(int(station_id), []) or [])
+    for subtask_id in station_chain:
+        if int(subtask_id) == int(anchor_subtask_id):
+            break
+        if int(subtask_id) not in release_ids:
+            release_ids.append(int(subtask_id))
+        if len(release_ids) >= max(1, int(degree)):
+            break
+    return _finalize_release_ids(
+        config=config,
+        release_ids=release_ids,
+        degree=int(degree),
+        priority_ids=[int(anchor_subtask_id)] + [int(subtask_id) for subtask_id in chain if int(subtask_id) != int(anchor_subtask_id)],
+        metrics=metrics,
+        preview=bool(preview),
+        extra={
+            "source_station_ids": [int(station_id)],
+            "source_robot_ids": [int(robot_id)],
+            "trigger_reason": "initial_idle_head",
+        },
+    )
+
+
+def y_destroy_initial_idle_head(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
+    return _initial_idle_release_payload(opt, config, rng, int(degree), preview=False)
+
+
+def _max_tardiness_release_payload(opt, config: ResourceConfig, rng, degree: int, preview: bool) -> Dict[str, object]:
+    metrics = _snapshot_subtask_metrics(opt)
+    if not metrics:
+        fallback = y_plan_destroy_rank_window_release if bool(preview) else y_destroy_rank_window_release
+        return fallback(opt, config, rng, degree)
+    station_chains = _snapshot_station_chains(opt)
+    robot_chains = _snapshot_robot_chains(opt)
+    ordered_targets = sorted(
+        metrics.values(),
+        key=lambda item: (-float(item.get("completion_time", 0.0)), -float(item.get("arrival_station", 0.0)), int(item.get("subtask_id", -1))),
+    )
+    target_count = max(1, int(math.ceil(0.10 * len(ordered_targets))))
+    target_ids = [int(item.get("subtask_id", -1)) for item in ordered_targets[:target_count] if int(item.get("subtask_id", -1)) in config.subtasks]
+    if not target_ids:
+        fallback = y_plan_destroy_rank_window_release if bool(preview) else y_destroy_rank_window_release
+        return fallback(opt, config, rng, degree)
+    release_ids: List[int] = []
+    priority_ids: List[int] = []
+    source_station_ids: Set[int] = set()
+    source_robot_ids: Set[int] = set()
+    for target_subtask_id in target_ids:
+        meta = metrics.get(int(target_subtask_id), {})
+        station_id = int(meta.get("station_id", -1))
+        robot_id = int(meta.get("assigned_robot_id", -1))
+        arrival_station = float(meta.get("arrival_station", 0.0))
+        start_time = float(meta.get("start_time", 0.0))
+        if int(target_subtask_id) not in release_ids:
+            release_ids.append(int(target_subtask_id))
+        if int(target_subtask_id) not in priority_ids:
+            priority_ids.append(int(target_subtask_id))
+        if station_id >= 0:
+            source_station_ids.add(int(station_id))
+        if robot_id >= 0:
+            source_robot_ids.add(int(robot_id))
+        if robot_id >= 0:
+            chain = list(robot_chains.get(int(robot_id), []) or [])
+            if int(target_subtask_id) in chain:
+                anchor_idx = chain.index(int(target_subtask_id))
+                preceding = list(reversed(chain[:anchor_idx]))
+                for subtask_id in preceding:
+                    if int(subtask_id) not in release_ids:
+                        release_ids.append(int(subtask_id))
+                    if int(subtask_id) not in priority_ids:
+                        priority_ids.append(int(subtask_id))
+        if station_id >= 0:
+            station_chain = list(station_chains.get(int(station_id), []) or [])
+            for subtask_id in reversed(station_chain):
+                if int(subtask_id) == int(target_subtask_id):
+                    continue
+                blocker = metrics.get(int(subtask_id), {})
+                if int(blocker.get("station_rank", -1)) >= int(meta.get("station_rank", -1)):
+                    continue
+                blocker_completion = float(blocker.get("completion_time", 0.0))
+                if blocker_completion + 1e-9 < min(arrival_station, start_time):
+                    continue
+                if int(subtask_id) not in release_ids:
+                    release_ids.append(int(subtask_id))
+            if int(target_subtask_id) in station_chain:
+                idx = station_chain.index(int(target_subtask_id))
+                if idx > 0:
+                    immediate = int(station_chain[idx - 1])
+                    if immediate not in release_ids:
+                        release_ids.append(immediate)
+    if not release_ids:
+        fallback = y_plan_destroy_rank_window_release if bool(preview) else y_destroy_rank_window_release
+        return fallback(opt, config, rng, degree)
+    return _finalize_release_ids(
+        config=config,
+        release_ids=release_ids,
+        degree=int(degree),
+        priority_ids=priority_ids,
+        metrics=metrics,
+        preview=bool(preview),
+        extra={
+            "source_station_ids": sorted(int(x) for x in source_station_ids),
+            "source_robot_ids": sorted(int(x) for x in source_robot_ids),
+            "trigger_reason": "max_tardiness_blocker",
+            "target_subtask_ids": list(target_ids),
+        },
+    )
+
+
+def y_destroy_max_tardiness_blocker(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
+    return _max_tardiness_release_payload(opt, config, rng, int(degree), preview=False)
+
+
 def y_plan_destroy_congested_station_block(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
     loads = _station_loads(config)
     if not loads:
@@ -227,6 +919,14 @@ def y_plan_destroy_load_skew_release(opt, config: ResourceConfig, rng, degree: i
     return y_plan_destroy_congested_station_block(opt, config, rng, degree)
 
 
+def y_plan_destroy_initial_idle_head(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
+    return _initial_idle_release_payload(opt, config, rng, int(degree), preview=True)
+
+
+def y_plan_destroy_max_tardiness_blocker(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
+    return _max_tardiness_release_payload(opt, config, rng, int(degree), preview=True)
+
+
 def _assign_station_rank(config: ResourceConfig, subtask_id: int, station_id: int) -> None:
     row = config.subtasks.get(int(subtask_id))
     if row is None:
@@ -240,9 +940,7 @@ def _choose_station_earliest_finish(opt, config: ResourceConfig, subtask: Resour
     loads = _station_loads(config)
     choices = []
     for station_id in range(_station_count(opt)):
-        projected_finish = float(loads.get(int(station_id), 0.0) + _subtask_station_work(subtask))
-        arrival = float(_arrival_proxy(opt, subtask, station_id))
-        choices.append((projected_finish + 0.1 * arrival, int(station_id)))
+        choices.append((_station_choice_cost(opt, config, subtask, int(station_id), loads), int(station_id)))
     picked = pick_soft_greedy_min(rng, choices, opt.cfg, score_getter=lambda item: (float(item[0]), int(item[1])))
     return int((picked or choices[0])[1])
 
@@ -282,10 +980,9 @@ def _y_base_maps(config: ResourceConfig, released_ids: List[int]) -> Tuple[Dict[
 
 def _choose_station_earliest_finish_from_maps(opt, loads: Dict[int, float], subtask: ResourceSubtask, rng=None) -> int:
     choices = []
+    synthetic = ResourceConfig(work_units={}, subtasks={}, capacity_limits={}, next_subtask_id=0, next_task_id=0)
     for station_id in range(_station_count(opt)):
-        projected_finish = float(loads.get(int(station_id), 0.0) + _subtask_station_work(subtask))
-        arrival = float(_arrival_proxy(opt, subtask, station_id))
-        choices.append((projected_finish + 0.1 * arrival, int(station_id)))
+        choices.append((_station_choice_cost(opt, synthetic, subtask, int(station_id), loads), int(station_id)))
     picked = pick_soft_greedy_min(rng, choices, opt.cfg, score_getter=lambda item: (float(item[0]), int(item[1])))
     return int((picked or choices[0])[1])
 
@@ -319,6 +1016,20 @@ def _build_y_rough_features(opt, config: ResourceConfig, released_subtasks: Dict
     new_arrival = 0.0
     old_rank_sum = 0.0
     new_rank_sum = 0.0
+    old_heat = 0.0
+    new_heat = 0.0
+    old_overlap = 0.0
+    new_overlap = 0.0
+    old_triangle = 0.0
+    new_triangle = 0.0
+    old_starvation = 0.0
+    new_starvation = 0.0
+    new_first_batch_spread = 0.0
+    old_first_batch_spread = 0.0
+    robot_frontier = _snapshot_robot_frontier(opt)
+    first_batch_limit = min(_station_count(opt), len(assignments))
+    seen_new_stations: Set[int] = set()
+    seen_old_stations: Set[int] = set()
     for subtask_id, meta in (assignments or {}).items():
         row = config.subtasks.get(int(subtask_id))
         if row is None:
@@ -332,19 +1043,112 @@ def _build_y_rough_features(opt, config: ResourceConfig, released_subtasks: Dict
         origin_rank = int(released_subtasks.get(int(subtask_id), (-1, -1))[1])
         if origin_station >= 0:
             old_arrival += float(_arrival_proxy(opt, row, origin_station))
+            old_triangle += float(_triangle_arrival_cost(opt, config, row, int(origin_station), robot_frontier=robot_frontier)[0])
+            old_heat_i, old_overlap_i, _ = _station_choice_penalties(opt, config, row, int(origin_station), old_loads, released_ids=released_ids)
+            old_heat += float(old_heat_i)
+            old_overlap += float(old_overlap_i)
+            if int(base_counts.get(int(origin_station), 0)) <= 0:
+                old_starvation += 1.0
+            if len(seen_old_stations) < int(first_batch_limit):
+                seen_old_stations.add(int(origin_station))
         if origin_rank >= 0:
             old_rank_sum += float(origin_rank)
+        new_heat_i, new_overlap_i, _ = _station_choice_penalties(opt, config, row, int(target_station), new_loads, released_ids=released_ids)
+        new_heat += float(new_heat_i)
+        new_overlap += float(new_overlap_i)
+        new_triangle += float(_triangle_arrival_cost(opt, config, row, int(target_station), robot_frontier=robot_frontier)[0])
+        if int(base_counts.get(int(target_station), 0)) <= 0:
+            new_starvation += 1.0
+        if len(seen_new_stations) < int(first_batch_limit):
+            seen_new_stations.add(int(target_station))
     new_std = _station_load_std_from_map(new_loads)
     count = max(1, len(assignments))
     sy_delta = float((new_std - old_std) / max(1.0, float(getattr(opt, "work_z", 1.0) or 1.0)))
     sy_delta += 0.01 * float((new_arrival - old_arrival) / count)
     sy_delta += 0.02 * float((new_rank_sum - old_rank_sum) / count)
+    sy_delta += 0.01 * float((new_heat - old_heat) / count)
+    sy_delta += 0.01 * float((new_overlap - old_overlap) / count)
     return {
         "sy_delta": float(sy_delta),
         "affected_count": float(len(assignments)),
         "load_std_before": float(old_std),
         "load_std_after": float(new_std),
+        "heat_delta": float(new_heat - old_heat),
+        "window_overlap_delta": float(new_overlap - old_overlap),
+        "triangle_arrival_delta": float((new_triangle - old_triangle) / count),
+        "starvation_relief_delta": float(old_starvation - new_starvation),
+        "first_batch_spread_delta": float(len(seen_new_stations) - len(seen_old_stations)),
     }
+
+
+def _wave1_minimax_match(
+    opt,
+    config: ResourceConfig,
+    subtask_ids: Sequence[int],
+    counts: Dict[int, int],
+    robot_frontier: Optional[Dict[int, Dict[str, float]]] = None,
+) -> Dict[int, Dict[str, float]]:
+    prefix_ids = [int(subtask_id) for subtask_id in (subtask_ids or []) if int(subtask_id) in config.subtasks]
+    if not prefix_ids or not bool(getattr(opt.cfg, "resource_y_wave1_enable", True)):
+        return {}
+    station_ids = list(range(_station_count(opt)))
+    frontier = _robot_availability_proxy(opt, robot_frontier)
+    robot_ids = sorted(int(robot_id) for robot_id in frontier.keys())
+    if not station_ids or not robot_ids:
+        return {}
+    task_count = min(len(prefix_ids), len(station_ids), len(robot_ids))
+    prefix_ids = prefix_ids[:task_count]
+    if not prefix_ids:
+        return {}
+    cost_cache: Dict[Tuple[int, int, int], Tuple[float, float]] = {}
+    for subtask_id in prefix_ids:
+        row = config.subtasks.get(int(subtask_id))
+        if row is None:
+            continue
+        heavy_penalty = _subtask_heaviness_penalty(opt, config, row)
+        for station_id in station_ids:
+            for robot_id in robot_ids:
+                arrival = _robot_station_arrival_cost(opt, config, row, int(station_id), int(robot_id), robot_frontier=frontier)
+                cost_cache[(int(subtask_id), int(station_id), int(robot_id))] = (float(arrival), float(arrival + heavy_penalty))
+    if not cost_cache:
+        return {}
+    best_score = None
+    best_assignment: Dict[int, Dict[str, float]] = {}
+    for station_perm in itertools.permutations(station_ids, len(prefix_ids)):
+        for robot_perm in itertools.permutations(robot_ids, len(prefix_ids)):
+            raw_times: List[float] = []
+            adjusted_times: List[float] = []
+            trial: Dict[int, Dict[str, float]] = {}
+            feasible = True
+            for index, subtask_id in enumerate(prefix_ids):
+                key = (int(subtask_id), int(station_perm[index]), int(robot_perm[index]))
+                if key not in cost_cache:
+                    feasible = False
+                    break
+                raw_eta, adjusted_eta = cost_cache[key]
+                raw_times.append(float(raw_eta))
+                adjusted_times.append(float(adjusted_eta))
+                trial[int(subtask_id)] = {
+                    "station_id": int(station_perm[index]),
+                    "station_rank": int(counts.get(int(station_perm[index]), 0)),
+                    "selected_robot_id": int(robot_perm[index]),
+                    "projected_arrival": float(raw_eta),
+                    "adjusted_arrival": float(adjusted_eta),
+                }
+            if not feasible:
+                continue
+            score = (
+                float(max(adjusted_times) if adjusted_times else float("inf")),
+                float(sum(adjusted_times)),
+                float(max(raw_times) if raw_times else float("inf")),
+                float(sum(raw_times)),
+                tuple(int(x) for x in station_perm),
+                tuple(int(x) for x in robot_perm),
+            )
+            if best_score is None or score < best_score:
+                best_score = score
+                best_assignment = trial
+    return dict(best_assignment)
 
 
 def _plan_y_assignments(opt, config: ResourceConfig, released_subtasks: Dict[int, Tuple[int, int]], strategy: str, rng=None) -> Dict[str, object]:
@@ -354,6 +1158,28 @@ def _plan_y_assignments(opt, config: ResourceConfig, released_subtasks: Dict[int
     loads, counts = _y_base_maps(config, released_ids)
     assignments: Dict[int, Dict[str, int]] = {}
     remaining = list(released_ids)
+    first_batch_limit = min(_station_count(opt), len(released_ids))
+    robot_frontier = _snapshot_robot_frontier(opt)
+    used_station_ids: Set[int] = set()
+    used_robot_ids: Set[int] = set()
+    wave1_size = min(int(first_batch_limit), len(released_ids), max(0, len(_robot_availability_proxy(opt, robot_frontier))))
+    wave1_assignments = _wave1_minimax_match(opt, config, released_ids[:wave1_size], counts, robot_frontier=robot_frontier)
+    if wave1_assignments:
+        for subtask_id in released_ids[:wave1_size]:
+            meta = dict(wave1_assignments.get(int(subtask_id), {}) or {})
+            if not meta:
+                continue
+            station_id = int(meta["station_id"])
+            assignments[int(subtask_id)] = meta
+            row = config.subtasks.get(int(subtask_id))
+            if row is not None:
+                loads[int(station_id)] = loads.get(int(station_id), 0.0) + _subtask_station_work(row)
+            used_station_ids.add(int(station_id))
+            selected_robot_id = int(meta.get("selected_robot_id", -1))
+            if selected_robot_id >= 0:
+                used_robot_ids.add(int(selected_robot_id))
+            counts[int(station_id)] = counts.get(int(station_id), 0) + 1
+        remaining = [int(subtask_id) for subtask_id in remaining if int(subtask_id) not in assignments]
     if str(strategy) == "y_repair_regret2_station":
         while remaining:
             best = None
@@ -363,9 +1189,25 @@ def _plan_y_assignments(opt, config: ResourceConfig, released_subtasks: Dict[int
                     continue
                 choices = []
                 for station_id in range(_station_count(opt)):
-                    projected_finish = float(loads.get(int(station_id), 0.0) + _subtask_station_work(row))
-                    arrival = float(_arrival_proxy(opt, row, station_id))
-                    choices.append((projected_finish + 0.1 * arrival, int(station_id)))
+                    choices.append(
+                        (
+                            _station_choice_cost(
+                                opt,
+                                config,
+                                row,
+                                int(station_id),
+                                loads,
+                                released_ids=released_ids,
+                                counts=counts,
+                                assignment_index=len(assignments),
+                                first_batch_limit=first_batch_limit,
+                                used_station_ids=used_station_ids,
+                                used_robot_ids=used_robot_ids,
+                                robot_frontier=robot_frontier,
+                            ),
+                            int(station_id),
+                        )
+                    )
                 if not choices:
                     continue
                 ranked_choices = sorted(choices, key=lambda item: (item[0], item[1]))
@@ -386,21 +1228,77 @@ def _plan_y_assignments(opt, config: ResourceConfig, released_subtasks: Dict[int
                 break
             subtask_id = int(best["subtask_id"])
             station_id = int(best["station_choice"][1])
-            assignments[int(subtask_id)] = {"station_id": int(station_id), "station_rank": int(counts.get(int(station_id), 0))}
+            selected_robot_id = -1
             row = config.subtasks.get(int(subtask_id))
             if row is not None:
+                selected_robot_id = int(_triangle_arrival_cost(opt, config, row, int(station_id), robot_frontier=robot_frontier)[1])
+            assignments[int(subtask_id)] = {
+                "station_id": int(station_id),
+                "station_rank": int(counts.get(int(station_id), 0)),
+                "selected_robot_id": int(selected_robot_id),
+            }
+            if row is not None:
                 loads[int(station_id)] = loads.get(int(station_id), 0.0) + _subtask_station_work(row)
+                if len(assignments) <= int(first_batch_limit):
+                    used_station_ids.add(int(station_id))
+                    if selected_robot_id >= 0:
+                        used_robot_ids.add(int(selected_robot_id))
             counts[int(station_id)] = counts.get(int(station_id), 0) + 1
             remaining.remove(int(subtask_id))
     else:
         chooser = {
-            "y_repair_earliest_finish": lambda row: _choose_station_earliest_finish_from_maps(opt, loads, row, rng),
+            "y_repair_earliest_finish": lambda row: int(
+                (
+                    pick_soft_greedy_min(
+                        rng,
+                        [
+                            (
+                                _station_choice_cost(
+                                    opt,
+                                    config,
+                                    row,
+                                    int(station_id),
+                                    loads,
+                                    released_ids=released_ids,
+                                    counts=counts,
+                                    assignment_index=len(assignments),
+                                    first_batch_limit=first_batch_limit,
+                                    used_station_ids=used_station_ids,
+                                    used_robot_ids=used_robot_ids,
+                                    robot_frontier=robot_frontier,
+                                ),
+                                int(station_id),
+                            )
+                            for station_id in range(_station_count(opt))
+                        ],
+                        opt.cfg,
+                        score_getter=lambda item: (float(item[0]), int(item[1])),
+                    )
+                    or (0.0, 0)
+                )[1]
+            ),
             "y_repair_arrival_aware_rank": lambda row: int(
                 (
                     pick_soft_greedy_min(
                         rng,
                         [
-                            (float(_arrival_proxy(opt, row, station_id)) + 0.1 * float(loads.get(int(station_id), 0.0)), int(station_id))
+                            (
+                                _station_choice_cost(
+                                    opt,
+                                    config,
+                                    row,
+                                    int(station_id),
+                                    loads,
+                                    released_ids=released_ids,
+                                    counts=counts,
+                                    assignment_index=len(assignments),
+                                    first_batch_limit=first_batch_limit,
+                                    used_station_ids=used_station_ids,
+                                    used_robot_ids=used_robot_ids,
+                                    robot_frontier=robot_frontier,
+                                ),
+                                int(station_id),
+                            )
                             for station_id in range(_station_count(opt))
                         ],
                         opt.cfg,
@@ -410,14 +1308,57 @@ def _plan_y_assignments(opt, config: ResourceConfig, released_subtasks: Dict[int
                 )[1]
             ),
             "y_repair_load_balance": lambda row: _choose_station_load_balance_from_maps(opt, loads, row, rng),
-        }.get(str(strategy), lambda row: _choose_station_earliest_finish_from_maps(opt, loads, row, rng))
+        }.get(
+            str(strategy),
+            lambda row: int(
+                (
+                    pick_soft_greedy_min(
+                        rng,
+                        [
+                            (
+                                _station_choice_cost(
+                                    opt,
+                                    config,
+                                    row,
+                                    int(station_id),
+                                    loads,
+                                    released_ids=released_ids,
+                                    counts=counts,
+                                    assignment_index=len(assignments),
+                                    first_batch_limit=first_batch_limit,
+                                    used_station_ids=used_station_ids,
+                                    used_robot_ids=used_robot_ids,
+                                    robot_frontier=robot_frontier,
+                                ),
+                                int(station_id),
+                            )
+                            for station_id in range(_station_count(opt))
+                        ],
+                        opt.cfg,
+                        score_getter=lambda item: (float(item[0]), int(item[1])),
+                    )
+                    or (0.0, 0)
+                )[1]
+            ),
+        )
         for subtask_id in released_ids:
+            if int(subtask_id) in assignments:
+                continue
             row = config.subtasks.get(int(subtask_id))
             if row is None:
                 continue
             station_id = int(chooser(row))
-            assignments[int(subtask_id)] = {"station_id": int(station_id), "station_rank": int(counts.get(int(station_id), 0))}
+            selected_robot_id = int(_triangle_arrival_cost(opt, config, row, int(station_id), robot_frontier=robot_frontier)[1])
+            assignments[int(subtask_id)] = {
+                "station_id": int(station_id),
+                "station_rank": int(counts.get(int(station_id), 0)),
+                "selected_robot_id": int(selected_robot_id),
+            }
             loads[int(station_id)] = loads.get(int(station_id), 0.0) + _subtask_station_work(row)
+            if len(assignments) <= int(first_batch_limit):
+                used_station_ids.add(int(station_id))
+                if selected_robot_id >= 0:
+                    used_robot_ids.add(int(selected_robot_id))
             counts[int(station_id)] = counts.get(int(station_id), 0) + 1
     if not assignments:
         return {"success": False}
@@ -430,6 +1371,8 @@ def plan_y_candidate(opt, config: ResourceConfig, destroy_name: str, repair_name
         "y_destroy_cross_station_fragment": y_plan_destroy_cross_station_fragment,
         "y_destroy_rank_window_release": y_plan_destroy_rank_window_release,
         "y_destroy_load_skew_release": y_plan_destroy_load_skew_release,
+        "y_destroy_initial_idle_head": y_plan_destroy_initial_idle_head,
+        "y_destroy_max_tardiness_blocker": y_plan_destroy_max_tardiness_blocker,
     }
     destroy_ctx = destroy_planners[str(destroy_name)](opt, config, rng, degree)
     if not bool(destroy_ctx.get("success", False)):
@@ -609,6 +1552,8 @@ Y_DESTROY_OPERATORS = {
     "y_destroy_cross_station_fragment": y_destroy_cross_station_fragment,
     "y_destroy_rank_window_release": y_destroy_rank_window_release,
     "y_destroy_load_skew_release": y_destroy_load_skew_release,
+    "y_destroy_initial_idle_head": y_destroy_initial_idle_head,
+    "y_destroy_max_tardiness_blocker": y_destroy_max_tardiness_blocker,
 }
 
 Y_REPAIR_OPERATORS = {

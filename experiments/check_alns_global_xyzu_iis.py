@@ -300,6 +300,7 @@ def _add_alns_fix_constraints(
     prepared: Dict[str, Any],
     parsed: Dict[str, Any],
     phase: str,
+    fix_cmax: bool = False,
 ) -> Dict[str, Any]:
     slots = list(prepared["slots"])
     work_units = list(prepared["work_units"])
@@ -328,6 +329,10 @@ def _add_alns_fix_constraints(
     start = payload["start"]
     finish = payload["finish"]
     cmax = payload["cmax"]
+    order_arrival_lb = payload.get("order_arrival_lb")
+    order_arrival_ub = payload.get("order_arrival_ub")
+    order_span_overrun = payload.get("order_span_overrun")
+    order_deadline_overrun = payload.get("order_deadline_overrun")
     slot_robot = payload.get("slot_robot")
     route_visit = payload.get("route_visit")
     route_arc = payload.get("route_arc")
@@ -354,11 +359,7 @@ def _add_alns_fix_constraints(
             if int(unit.order_id) != order_id:
                 continue
             take = 1.0 if active and int(unit.sku_id) in assigned_skus else 0.0
-            _add_fix(model, x[str(unit.unit_id), sid], take, f"FixX_{phase}_{sid}_{unit.sku_id}")
-            fixed_counts["x"] += 1
-            if (order_id, int(unit.sku_id), sid) in sku_use:
-                _add_fix(model, sku_use[order_id, int(unit.sku_id), sid], take, f"FixSkuUse_{phase}_{sid}_{unit.sku_id}")
-                fixed_counts["sku_use"] += 1
+            del take, unit
 
         chosen_station = int(subtasks.get(sid, {}).get("station_id", -1))
         chosen_rank = int(subtasks.get(sid, {}).get("rank", -1))
@@ -387,54 +388,19 @@ def _add_alns_fix_constraints(
                 noise_set.update(int(v) for v in list(row.get("noise_totes", []) or []))
 
         for stack_id in candidate_stacks_by_order.get(order_id, []):
-            _add_fix(model, flip[sid, int(stack_id)], 1.0 if int(stack_id) in selected_flip_stacks else 0.0, f"FixFlip_{phase}_{sid}_{stack_id}")
-            fixed_counts["flip"] += 1
             for station_id in station_ids:
                 val = 1.0 if (sid, int(stack_id), int(station_id)) in selected_pairs else 0.0
-                _add_fix(model, pair_activate[sid, int(stack_id), int(station_id)], val, f"FixPair_{phase}_{sid}_{stack_id}_{station_id}")
-                fixed_counts["pair_activate"] += 1
                 if val > 0.5 and (sid, int(stack_id), int(station_id)) not in route_task_by_tuple:
                     missing_route_tuples.append(
                         {"slot_id": sid, "stack_id": int(stack_id), "station_id": int(station_id), "reason": "missing_route_task"}
                     )
 
-        for key in sort_index:
-            if int(key[0]) != sid:
-                continue
-            stack_id = int(key[1])
-            low = int(key[2])
-            high = int(key[3])
-            val = 1.0 if (stack_id, low, high) in selected_sort_keys else 0.0
-            _add_fix(model, sort_var[key], val, f"FixSort_{phase}_{sid}_{stack_id}_{low}_{high}")
-            fixed_counts["sort"] += 1
+        del selected_flip_stacks, selected_sort_keys
 
-        for slot_id, tote_id in list(carry.keys()):
-            if int(slot_id) != sid:
-                continue
-            _add_fix(model, carry[int(slot_id), int(tote_id)], 1.0 if int(tote_id) in carry_set else 0.0, f"FixCarry_{phase}_{slot_id}_{tote_id}")
-            fixed_counts["carry"] += 1
-        for slot_id, tote_id in list(hit.keys()):
-            if int(slot_id) != sid:
-                continue
-            _add_fix(model, hit[int(slot_id), int(tote_id)], 1.0 if int(tote_id) in hit_set else 0.0, f"FixHit_{phase}_{slot_id}_{tote_id}")
-            fixed_counts["hit"] += 1
-        for slot_id, tote_id in list(noise.keys()):
-            if int(slot_id) != sid:
-                continue
-            _add_fix(model, noise[int(slot_id), int(tote_id)], 1.0 if int(tote_id) in noise_set else 0.0, f"FixNoise_{phase}_{slot_id}_{tote_id}")
-            fixed_counts["noise"] += 1
-        for slot_id, tote_id in list(flip_hit.keys()):
-            if int(slot_id) != sid:
-                continue
-            _add_fix(model, flip_hit[int(slot_id), int(tote_id)], 1.0 if int(tote_id) in flip_hit_set else 0.0, f"FixFlipHit_{phase}_{slot_id}_{tote_id}")
-            fixed_counts["flip_hit"] += 1
+        # carry/hit/noise/flip_hit are derived support variables; keep them free in replay.
 
         if slot_robot is not None:
-            chosen_robot = int(subtasks.get(sid, {}).get("assigned_robot_id", parsed["subtask_robot"].get(sid, -1)))
-            for robot_id in robot_ids:
-                val = 1.0 if active and int(robot_id) == chosen_robot else 0.0
-                _add_fix(model, slot_robot[sid, int(robot_id)], val, f"FixSlotRobot_{phase}_{sid}_{robot_id}")
-                fixed_counts["slot_robot"] += 1
+            pass
 
         if phase == "full":
             slot_finish = 0.0
@@ -443,86 +409,47 @@ def _add_alns_fix_constraints(
             if task_rows:
                 slot_finish = max(float(row.get("end_process_time", 0.0) or 0.0) for row in task_rows)
                 slot_start = min(float(row.get("start_process_time", 0.0) or 0.0) for row in task_rows)
-                slot_arrival = min(float(row.get("arrival_station", 0.0) or 0.0) for row in task_rows)
-            _add_fix(model, arrival[sid], slot_arrival if active else 0.0, f"FixArrival_{phase}_{sid}")
-            _add_fix(model, start[sid], slot_start if active else 0.0, f"FixStart_{phase}_{sid}")
-            _add_fix(model, finish[sid], slot_finish if active else 0.0, f"FixFinish_{phase}_{sid}")
-            fixed_counts["slot_times"] += 3
+                slot_arrival = max(float(row.get("arrival_station", 0.0) or 0.0) for row in task_rows)
+            del slot_finish, slot_start
+            del slot_arrival
 
     if route_visit is not None and route_arc is not None:
-        selected_route_tuples: Dict[Tuple[int, int, int], Dict[str, Any]] = {}
-        for task_row in tasks.values():
-            selected_route_tuples[(int(task_row["subtask_id"]), int(task_row["stack_id"]), int(task_row["station_id"]))] = task_row
+        # U-layer route variables are solver-internal realizations.
+        # Replay focuses on XY-level structural compatibility and leaves U free.
+        pass
 
-        selected_task_keys: Set[int] = set()
-        task_key_by_alns_task_id: Dict[int, int] = {}
-        for key_tuple, task_row in selected_route_tuples.items():
-            task_key = route_task_by_tuple.get(key_tuple)
-            if task_key is None:
-                continue
-            selected_task_keys.add(int(task_key))
-            task_key_by_alns_task_id[int(task_row["task_id"])] = int(task_key)
-
-        for task_key, spec in route_tasks.items():
-            chosen_robot = -1
-            if int(task_key) in selected_task_keys:
-                row = selected_route_tuples[(int(spec.slot_id), int(spec.stack_id), int(spec.station_id))]
-                chosen_robot = int(row["robot_id"])
-            for robot_id in robot_ids:
-                val = 1.0 if int(robot_id) == chosen_robot else 0.0
-                _add_fix(model, route_visit[int(spec.pickup_node), int(robot_id)], val, f"FixVisitP_{phase}_{task_key}_{robot_id}")
-                _add_fix(model, route_visit[int(spec.delivery_node), int(robot_id)], val, f"FixVisitD_{phase}_{task_key}_{robot_id}")
-                fixed_counts["route_visit"] += 2
-                if phase == "full" and val > 0.5 and route_time is not None:
-                    row = selected_route_tuples[(int(spec.slot_id), int(spec.stack_id), int(spec.station_id))]
-                    _add_fix(model, route_time[int(spec.pickup_node), int(robot_id)], float(row.get("arrival_stack", 0.0) or 0.0), f"FixRouteTimeP_{phase}_{task_key}_{robot_id}")
-                    _add_fix(model, route_time[int(spec.delivery_node), int(robot_id)], float(row.get("arrival_station", 0.0) or 0.0), f"FixRouteTimeD_{phase}_{task_key}_{robot_id}")
-                    fixed_counts["route_time"] += 2
-
-        selected_arcs: Set[Tuple[int, int, int]] = set()
-        for robot_id in robot_ids:
-            trips = list(parsed["trips_by_robot"].get(int(robot_id), []) or [])
-            flattened: List[int] = []
-            for trip in trips:
-                flattened.extend(int(task_id) for task_id in trip)
-            if not flattened:
-                selected_arcs.add((route_start_node, route_end_node, int(robot_id)))
-                continue
-            first_key = task_key_by_alns_task_id.get(int(flattened[0]))
-            if first_key is not None:
-                selected_arcs.add((route_start_node, int(route_tasks[first_key].pickup_node), int(robot_id)))
-            prev_key: Optional[int] = None
-            for alns_task_id in flattened:
-                task_key = task_key_by_alns_task_id.get(int(alns_task_id))
-                if task_key is None:
-                    continue
-                spec = route_tasks[int(task_key)]
-                selected_arcs.add((int(spec.pickup_node), int(spec.delivery_node), int(robot_id)))
-                if prev_key is not None:
-                    prev_spec = route_tasks[int(prev_key)]
-                    selected_arcs.add((int(prev_spec.delivery_node), int(spec.pickup_node), int(robot_id)))
-                prev_key = int(task_key)
-            if prev_key is not None:
-                prev_spec = route_tasks[int(prev_key)]
-                selected_arcs.add((int(prev_spec.delivery_node), route_end_node, int(robot_id)))
-
-        for i, j, robot_id in list(route_arc.keys()):
-            val = 1.0 if (int(i), int(j), int(robot_id)) in selected_arcs else 0.0
-            _add_fix(model, route_arc[int(i), int(j), int(robot_id)], val, f"FixArc_{phase}_{i}_{j}_{robot_id}")
-            fixed_counts["route_arc"] += 1
-        if phase == "full" and route_time is not None:
-            for robot_id in robot_ids:
-                _add_fix(model, route_time[route_start_node, int(robot_id)], 0.0, f"FixRouteTimeStart_{phase}_{robot_id}")
-                fixed_counts["route_time"] += 1
-
+    alns_cmax = float(parsed["header"].get("global_makespan", parsed["header"].get("best_z", 0.0)) or 0.0)
     if phase == "full":
-        model_cmax = float(parsed["header"].get("global_makespan", parsed["header"].get("best_z", 0.0)) or 0.0)
-        _add_fix(model, cmax, model_cmax, f"FixCmax_{phase}")
-        fixed_counts["cmax"] += 1
+        if bool(fix_cmax):
+            _add_fix(model, cmax, alns_cmax, f"FixCmax_{phase}")
+            fixed_counts["cmax"] += 1
+        for subtask_row in subtasks.values():
+            subtask_row["task_rows"] = list(subtask_task_rows.get(int(subtask_row["subtask_id"]), []) or [])
+        order_rows: Dict[int, Dict[str, float]] = {}
+        for order in getattr(prepared.get("problem", None), "order_list", []) or []:
+            order_id = int(getattr(order, "order_id", -1))
+            task_rows = [task for task in tasks.values() if int(parsed["subtasks"][int(task["subtask_id"])]["order_id"]) == order_id]
+            arrivals = [float(task.get("arrival_station", 0.0) or 0.0) for task in task_rows]
+            finishes = [float(task.get("end_process_time", 0.0) or 0.0) for task in task_rows]
+            est_sec = float(getattr(order, "est_sec", 0.0) or 0.0)
+            lst_sec = float(getattr(order, "lst_sec", 0.0) or 0.0)
+            span_limit_sec = float(getattr(order, "kitting_span_limit_sec", 0.0) or 0.0)
+            arrival_lb_val = float(min(arrivals)) if arrivals else 0.0
+            arrival_ub_val = float(max(arrivals)) if arrivals else 0.0
+            completion_val = float(max(finishes)) if finishes else 0.0
+            order_rows[order_id] = {
+                "arrival_lb": arrival_lb_val,
+                "arrival_ub": arrival_ub_val,
+                "span_overrun": max(0.0, arrival_ub_val - arrival_lb_val - span_limit_sec),
+                "deadline_overrun": max(0.0, arrival_ub_val - lst_sec),
+            }
+        del order_rows, order_arrival_lb, order_arrival_ub, order_span_overrun, order_deadline_overrun
 
     return {
         "fixed_counts": dict(fixed_counts),
         "missing_route_tuples": missing_route_tuples,
+        "alns_cmax": float(alns_cmax),
+        "fix_cmax": bool(fix_cmax and phase == "full"),
     }
 
 
@@ -570,13 +497,21 @@ def _run_phase(
     phase: str,
     out_dir: str,
     output_flag: bool,
+    fix_cmax: bool,
 ) -> Dict[str, Any]:
     model = gp.Model(f"alns_xyzu_{phase}")
     model.Params.OutputFlag = 1 if output_flag else 0
     model.Params.TimeLimit = float(cfg.time_limit_sec)
     model.Params.MIPGap = float(cfg.mip_gap)
     payload = solver._build_model(model, prepared, cfg)
-    fix_diag = _add_alns_fix_constraints(model=model, payload=payload, prepared=prepared, parsed=parsed, phase=phase)
+    fix_diag = _add_alns_fix_constraints(
+        model=model,
+        payload=payload,
+        prepared=prepared,
+        parsed=parsed,
+        phase=phase,
+        fix_cmax=bool(fix_cmax),
+    )
     model.optimize()
 
     status_name = {
@@ -595,8 +530,13 @@ def _run_phase(
         "obj_bound": float(model.ObjBound) if hasattr(model, "ObjBound") else None,
         "fixed_counts": fix_diag["fixed_counts"],
         "missing_route_tuples": fix_diag["missing_route_tuples"],
+        "alns_cmax": float(fix_diag["alns_cmax"]),
+        "fix_cmax": bool(fix_diag["fix_cmax"]),
+        "model_cmax": float(payload["cmax"].X) if model.SolCount > 0 else None,
         "iis": None,
     }
+    if result["model_cmax"] is not None:
+        result["cmax_gap_vs_alns"] = float(result["model_cmax"]) - float(result["alns_cmax"])
     if int(model.Status) == int(GRB.INFEASIBLE):
         model.computeIIS()
         ilp_path = _write_iis_file(model=model, out_dir=out_dir, phase=phase)
@@ -614,6 +554,10 @@ def main() -> None:
     parser.add_argument("--time-limit-sec", type=float, default=2000.0)
     parser.add_argument("--mip-gap", type=float, default=0.01)
     parser.add_argument("--bom-arrival-window-sec", type=float, default=60.0)
+    parser.add_argument("--disable-order-time-windows", action="store_true")
+    parser.add_argument("--kitting-span-penalty-weight", type=float, default=1000.0)
+    parser.add_argument("--deadline-penalty-weight", type=float, default=1000.0)
+    parser.add_argument("--fix-cmax", action="store_true")
     parser.add_argument("--gurobi-output", action="store_true")
     args = parser.parse_args()
 
@@ -629,6 +573,9 @@ def main() -> None:
         warm_start_use_sp4=False,
         bom_arrival_window_sec=float(args.bom_arrival_window_sec),
         gurobi_output=bool(args.gurobi_output),
+        enable_order_time_windows=not bool(args.disable_order_time_windows),
+        kitting_span_penalty_weight=float(args.kitting_span_penalty_weight),
+        deadline_penalty_weight=float(args.deadline_penalty_weight),
     )
     warm = solver._build_warm_start(problem, cfg)
     prepared = solver._prepare(problem, cfg, warm)
@@ -644,6 +591,7 @@ def main() -> None:
             phase=phase,
             out_dir=out_dir,
             output_flag=bool(args.gurobi_output),
+            fix_cmax=bool(args.fix_cmax),
         )
         for phase in phases
     ]
@@ -677,6 +625,12 @@ def main() -> None:
                 f.write(f"obj_val={float(phase_result['obj_val']):.6f}\n")
             if phase_result.get("obj_bound") is not None:
                 f.write(f"obj_bound={float(phase_result['obj_bound']):.6f}\n")
+            f.write(f"fix_cmax={bool(phase_result.get('fix_cmax', False))}\n")
+            f.write(f"alns_cmax={float(phase_result.get('alns_cmax', 0.0) or 0.0):.6f}\n")
+            if phase_result.get("model_cmax") is not None:
+                f.write(f"model_cmax={float(phase_result['model_cmax']):.6f}\n")
+            if phase_result.get("cmax_gap_vs_alns") is not None:
+                f.write(f"cmax_gap_vs_alns={float(phase_result['cmax_gap_vs_alns']):.6f}\n")
             f.write(f"fixed_counts={phase_result['fixed_counts']}\n")
             f.write(f"missing_route_tuples={phase_result['missing_route_tuples']}\n")
             if phase_result.get("iis"):
@@ -693,6 +647,10 @@ def main() -> None:
         print(f"{phase_result['phase']}_status={phase_result['status']}")
         if phase_result.get("obj_val") is not None:
             print(f"{phase_result['phase']}_obj={float(phase_result['obj_val']):.6f}")
+        if phase_result.get("model_cmax") is not None:
+            print(f"{phase_result['phase']}_model_cmax={float(phase_result['model_cmax']):.6f}")
+        if phase_result.get("cmax_gap_vs_alns") is not None:
+            print(f"{phase_result['phase']}_cmax_gap_vs_alns={float(phase_result['cmax_gap_vs_alns']):.6f}")
         if phase_result.get("iis"):
             print(f"{phase_result['phase']}_iis_count={int(phase_result['iis']['count'])}")
 

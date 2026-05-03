@@ -161,14 +161,33 @@ def _collect_init_metrics(opt: TRAOptimizer) -> Dict[str, Any]:
 
 
 def _build_cfg(args, scale: str, seed: int, run_log_dir: str) -> TRARunConfig:
+    scale_idx = 0
+    try:
+        scale_idx = int(str(scale).upper().split("-S")[-1])
+    except Exception:
+        scale_idx = 0
+    sp4_limit = int(args.sp4_lkh_time_limit_seconds)
+    if scale_idx >= 5 and sp4_limit <= 5:
+        sp4_limit = 30
     return TRARunConfig(
         scale=str(scale).upper(),
         seed=int(seed),
         max_iters=int(args.max_iters),
         no_improve_limit=int(args.no_improve_limit),
         epsilon=float(args.epsilon),
+        bom_arrival_window_sec=float(args.bom_arrival_window_sec),
+        enable_order_time_windows=not bool(args.disable_order_time_windows),
+        kitting_span_penalty_weight=float(args.kitting_span_penalty_weight),
+        deadline_penalty_weight=float(args.deadline_penalty_weight),
         sp2_time_limit_sec=float(args.sp2_time_limit_sec),
-        sp4_lkh_time_limit_seconds=int(args.sp4_lkh_time_limit_seconds),
+        sp4_lkh_time_limit_seconds=int(sp4_limit),
+        sp4_first_solution_strategies=tuple(str(x).strip().upper() for x in str(args.sp4_first_solution_strategies).split(",") if str(x).strip()),
+        sp4_first_solution_slice_seconds=int(args.sp4_first_solution_slice_seconds),
+        sp4_enable_guided_local_search=bool(args.sp4_enable_guided_local_search),
+        sp4_same_subtask_vehicle_mode=str(args.sp4_same_subtask_vehicle_mode),
+        sp4_same_subtask_vehicle_threshold=int(args.sp4_same_subtask_vehicle_threshold),
+        sp4_enable_greedy_fallback=bool(args.sp4_enable_greedy_fallback),
+        sp4_raise_on_no_solution=bool(args.sp4_raise_on_no_solution),
         export_best_solution=bool(args.export_best_solution),
         write_iteration_logs=bool(args.write_iteration_logs),
         enable_sp1_feedback_analysis=False,
@@ -218,7 +237,15 @@ def _run_one(args, scale: str, run_idx: int, seed: int, batch_root: str) -> Dict
             if bool(iter_row.get("local_accept", False)):
                 layer_accepted[layer_name] = int(layer_accepted[layer_name]) + 1
     initial_makespan = _safe_float(init_metrics.get("initial_makespan", float("nan")))
-    best_z_value = _safe_float(best_z if not math.isnan(best_z) else best_row.get("z", float("nan")))
+    summary_best_z = _safe_float(best_row.get("z", float("nan")))
+    run_best_z = _safe_float(best_z)
+    best_z_value = summary_best_z if math.isfinite(summary_best_z) else run_best_z
+    best_iter_raw = best_row.get("iter_id", -1)
+    best_iter = -1 if best_iter_raw is None else int(best_iter_raw)
+    if status == "ok" and not math.isfinite(best_z_value):
+        status = "no_feasible"
+        if not error_text:
+            error_text = "no finite feasible incumbent"
     improvement_ratio = float("nan")
     if math.isfinite(initial_makespan) and initial_makespan > 0.0 and math.isfinite(best_z_value):
         improvement_ratio = float((initial_makespan - best_z_value) / initial_makespan)
@@ -231,7 +258,9 @@ def _run_one(args, scale: str, run_idx: int, seed: int, batch_root: str) -> Dict
         "error_text": error_text,
         "runtime_sec": runtime_sec,
         "best_z": best_z_value,
-        "best_iter": int(best_row.get("iter_id", -1) or -1),
+        "true_makespan": _safe_float(run_stats.get("best_validated_true_makespan", summary.get("best", {}).get("true_global_makespan", float("nan")))),
+        "total_fulfillment_time": _safe_float(summary.get("best", {}).get("total_fulfillment_time", float("nan"))),
+        "best_iter": int(best_iter),
         "improvement_ratio": improvement_ratio,
         "global_eval_count": int(run_stats.get("global_eval_count", 0) or 0),
         "lkh_call_count": int(run_stats.get("lkh_call_count", 0) or 0),
@@ -328,8 +357,19 @@ def parse_args():
     parser.add_argument("--max-iters", type=int, default=200, help="ALNS max_iters")
     parser.add_argument("--no-improve-limit", type=int, default=3, help="TRA no_improve_limit")
     parser.add_argument("--epsilon", type=float, default=0.05, help="TRA epsilon")
+    parser.add_argument("--bom-arrival-window-sec", type=float, default=60.0, help="BOM arrival window hard constraint; disable with <= 0")
+    parser.add_argument("--disable-order-time-windows", action="store_true", help="Disable order time windows in TRA objective")
+    parser.add_argument("--kitting-span-penalty-weight", type=float, default=1000.0, help="Soft penalty weight for kitting span overruns")
+    parser.add_argument("--deadline-penalty-weight", type=float, default=1000.0, help="Soft penalty weight for deadline overruns")
     parser.add_argument("--sp2-time-limit-sec", type=float, default=10.0, help="SP2 time limit")
     parser.add_argument("--sp4-lkh-time-limit-seconds", type=int, default=5, help="SP4 LKH time limit")
+    parser.add_argument("--sp4-first-solution-strategies", type=str, default="PATH_CHEAPEST_ARC,SAVINGS,PARALLEL_CHEAPEST_INSERTION", help="Comma-separated OR-Tools first solution strategies")
+    parser.add_argument("--sp4-first-solution-slice-seconds", type=int, default=10, help="Time slice for each SP4 first solution strategy")
+    parser.add_argument("--sp4-enable-guided-local-search", action="store_true", help="Enable guided local search as final SP4 pass")
+    parser.add_argument("--sp4-same-subtask-vehicle-mode", type=str, default="conditional", choices=["strict", "conditional", "relaxed"], help="How strongly to bind same-subtask tasks to one robot")
+    parser.add_argument("--sp4-same-subtask-vehicle-threshold", type=int, default=2, help="Conditional same-subtask robot threshold")
+    parser.add_argument("--sp4-enable-greedy-fallback", action="store_true", help="Enable greedy fallback if SP4 exact routing fails")
+    parser.add_argument("--sp4-raise-on-no-solution", action="store_true", help="Raise structured SP4 error on no-solution before fallback handling")
     parser.add_argument("--resource-real-eval-period", type=int, default=8, help="Validator period")
     parser.add_argument("--export-best-solution", action="store_true", help="Keep explicit export_best_solution=True")
     parser.add_argument("--write-iteration-logs", action="store_true", help="Keep explicit write_iteration_logs=True")
