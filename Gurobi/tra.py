@@ -392,6 +392,11 @@ class TRARunConfig:
     resource_z_conflict_stack_penalty: float = 15.0
     resource_z_conflict_tote_penalty: float = 18.0
     resource_z_conflict_time_bucket_penalty: float = 10.0
+    resource_z_structural_score_weight: float = 0.08
+    resource_z_diversification_weight_floor: float = 1.25
+    resource_z_diversification_force_period: int = 5
+    resource_tail_guard_enabled: bool = True
+    resource_tail_guard_ratio: float = 1.05
     resource_z_queue_wait_threshold_sec: float = 5.0
     resource_z_queue_wait_multiplier: float = 0.10
     resource_z_queue_noise_weight: float = 1.0

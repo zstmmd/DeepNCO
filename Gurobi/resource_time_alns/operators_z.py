@@ -127,6 +127,34 @@ def _station_service_proxy(descriptors: Sequence[ZTaskDescriptor]) -> float:
     return float(max(total, 1.0))
 
 
+def _z_station_load(config: ResourceConfig, station_id: int) -> float:
+    return float(
+        sum(
+            _station_service_proxy(row.z_tasks or [])
+            for row in config.subtasks.values()
+            if int(row.station_id) == int(station_id)
+        )
+    )
+
+
+def _z_robot_region_load(opt, station_id: int) -> float:
+    snapshot = getattr(getattr(opt, "best_validated", None), "snapshot", None)
+    if snapshot is None:
+        snapshot = getattr(opt, "work", None)
+    rows = list(getattr(snapshot, "subtask_state", []) or [])
+    load = 0.0
+    for subtask in rows:
+        if int(getattr(subtask, "assigned_station_id", -1)) != int(station_id):
+            continue
+        robot_ids = {
+            int(getattr(task, "robot_id", -1))
+            for task in (getattr(subtask, "execution_tasks", []) or [])
+            if int(getattr(task, "robot_id", -1)) >= 0
+        }
+        load += float(max(1, len(robot_ids)))
+    return float(load)
+
+
 def _estimate_arrival(opt, config: ResourceConfig, subtask: ResourceSubtask, snapshot_arrivals: Optional[Dict[int, Dict[str, float]]] = None) -> float:
     arrivals = dict(snapshot_arrivals or {})
     snapshot_row = dict(arrivals.get(int(subtask.subtask_id), {}) or {})
@@ -230,8 +258,10 @@ def _rough_route_feasibility(
     start, end, bucket_ids = _subtask_station_window(config, subtask, duration, bucket_sec)
     stack_budget = max(1, int(getattr(cfg, "resource_stack_concurrency_limit", 2)))
     tote_budget = max(1, int(getattr(cfg, "resource_tote_concurrency_limit", 1)))
+    choke_budget = max(1, int(getattr(cfg, "resource_choke_point_budget", 2)))
     stack_counts: Dict[int, int] = defaultdict(int)
     tote_counts: Dict[int, int] = defaultdict(int)
+    choke_counts: Dict[Tuple[int, int], int] = defaultdict(int)
     station_buckets = set(int(x) for x in bucket_ids)
     descriptor_stacks = {int(item.stack_id) for item in (descriptors or ()) if int(item.stack_id) >= 0}
     descriptor_totes = {int(tid) for item in (descriptors or ()) for tid in (item.target_tote_ids or ()) if int(tid) >= 0}
@@ -251,9 +281,11 @@ def _rough_route_feasibility(
             stack_counts[int(descriptor.stack_id)] += 1
             for tote_id in (descriptor.target_tote_ids or ()):
                 tote_counts[int(tote_id)] += 1
+            for cell in _z_route_cells(opt, int(descriptor.stack_id), int(row.station_id), grid_size):
+                choke_counts[cell] += 1
     stack_over = sum(max(0, int(stack_counts.get(stack_id, 0)) + 1 - stack_budget) for stack_id in descriptor_stacks)
     tote_over = sum(max(0, int(tote_counts.get(tote_id, 0)) + 1 - tote_budget) for tote_id in descriptor_totes)
-    choke_over = 0
+    choke_over = sum(max(0, int(choke_counts.get(cell, 0)) + 1 - choke_budget) for cell in descriptor_cells)
     penalty = 0.0
     penalty += float(getattr(cfg, "resource_z_stack_contention_penalty", 6.0)) * float(stack_over)
     penalty += float(getattr(cfg, "resource_z_tote_contention_penalty", 10.0)) * float(tote_over)
@@ -1083,6 +1115,8 @@ def _rebuild_window(
     multistack_weight = float(getattr(opt.cfg, "resource_z_queue_multistack_weight", 0.8))
     sort_weight = float(getattr(opt.cfg, "resource_z_queue_sort_weight", 0.6))
     station_service_weight = float(getattr(opt.cfg, "resource_z_queue_station_service_weight", 0.15))
+    spread_balance = str(strategy) in {"z_repair_spread_region_balance", "z_repair_load_balance_idle_robot"}
+    structural_weight = float(getattr(opt.cfg, "resource_z_structural_score_weight", 0.08))
 
     def _queue_weighted_station_burden(descriptor: ZTaskDescriptor) -> float:
         stack_penalty = max(0.0, float(len({int(descriptor.stack_id)})) - 1.0)
@@ -1151,9 +1185,13 @@ def _rebuild_window(
                 if guard_reason and not bool(fallback_used):
                     continue
                 temp_descriptor = _descriptor_from_plan(opt, subtask, plan, -1, coverage_gain)
-                rough_ok, rough_penalty, _ = _rough_route_feasibility(opt, config, subtask, list(created) + [temp_descriptor])
+                rough_ok, rough_penalty, rough_meta = _rough_route_feasibility(opt, config, subtask, list(created) + [temp_descriptor])
                 if not rough_ok and not bool(fallback_used):
                     continue
+                station_load_soft = float(_z_station_load(config, int(subtask.station_id)))
+                robot_region_load_soft = float(_z_robot_region_load(opt, int(subtask.station_id)))
+                choke_over_soft = float(rough_meta.get("choke_over", 0.0) or 0.0)
+                structural_score = float(choke_over_soft + 0.05 * station_load_soft + robot_region_load_soft)
                 detour = float(opt._z_best_insertion_detour(int(stack_id)))
                 target_len = len(list(plan.get("target_tote_ids", []) or []))
                 queue_burden = float(_queue_weighted_station_burden(temp_descriptor))
@@ -1163,6 +1201,7 @@ def _rebuild_window(
                         *_gurobi_like_sort_score(temp_descriptor, target_len),
                         float(queue_burden),
                         float(rough_penalty),
+                        float(structural_weight * structural_score),
                         float(detour),
                         int(stack_id),
                         "SORT",
@@ -1172,13 +1211,14 @@ def _rebuild_window(
                         -float(coverage_gain),
                         float(queue_burden),
                         float(rough_penalty),
+                        float(structural_weight * structural_score),
                         float(detour),
                         float(target_len),
                         float(_joint_sort_tie_break(_descriptor_from_plan(opt, subtask, plan, -1, coverage_gain), len(seed_hits))),
                         int(stack_id),
                         "SORT",
                     )
-                candidate_rows.append({"score": score, "plan": plan, "coverage_gain": coverage_gain})
+                candidate_rows.append({"score": score, "plan": plan, "coverage_gain": coverage_gain, "structural_score": structural_score})
 
         for stack_id in candidate_stack_ids:
             dummy_task = Task(
@@ -1218,9 +1258,14 @@ def _rebuild_window(
                 if guard_reason and not bool(fallback_used):
                     continue
                 temp_descriptor = _descriptor_from_plan(opt, subtask, plan, -1, coverage_gain)
-                rough_ok, rough_penalty, _ = _rough_route_feasibility(opt, config, subtask, list(created) + [temp_descriptor])
+                rough_ok, rough_penalty, rough_meta = _rough_route_feasibility(opt, config, subtask, list(created) + [temp_descriptor])
                 if not rough_ok and not bool(fallback_used):
                     continue
+                station_load_soft = float(_z_station_load(config, int(subtask.station_id)))
+                robot_region_load_soft = float(_z_robot_region_load(opt, int(subtask.station_id)))
+                choke_over_soft = float(rough_meta.get("choke_over", 0.0) or 0.0)
+                structural_score = float(choke_over_soft + 0.05 * station_load_soft + robot_region_load_soft)
+                spread_bonus = -0.25 if bool(spread_balance) and structural_score <= 1.0 else 0.0
                 detour = float(opt._z_best_insertion_detour(int(stack_id)))
                 target_len = len(list(plan.get("target_tote_ids", []) or []))
                 queue_burden = float(_queue_weighted_station_burden(temp_descriptor))
@@ -1233,6 +1278,7 @@ def _rebuild_window(
                         *_gurobi_like_sort_score(temp_descriptor, target_len),
                         float(queue_burden),
                         float(rough_penalty),
+                        float(structural_weight * structural_score + spread_bonus),
                         float(detour),
                         float(same_stack_bonus),
                         int(stack_id),
@@ -1243,6 +1289,7 @@ def _rebuild_window(
                         -float(coverage_gain),
                         float(queue_burden),
                         float(rough_penalty),
+                        float(structural_weight * structural_score + spread_bonus),
                         float(detour),
                         float(same_stack_bonus),
                         float(target_len),
@@ -1250,7 +1297,7 @@ def _rebuild_window(
                         int(stack_id),
                         str(mode).upper(),
                     )
-                candidate_rows.append({"score": score, "plan": plan, "coverage_gain": coverage_gain})
+                candidate_rows.append({"score": score, "plan": plan, "coverage_gain": coverage_gain, "structural_score": structural_score})
         chosen_row = pick_soft_greedy_min(rng, candidate_rows, opt.cfg, score_getter=lambda item: item["score"])
         if chosen_row is None:
             if not bool(allow_fallback) or bool(fallback_used):
@@ -1561,6 +1608,62 @@ def z_plan_destroy_mode_window(opt, config: ResourceConfig, rng, degree: int) ->
     return _plan_destroy_windows(opt, config, rng, degree, _build, mode_sensitive=True)
 
 
+def z_destroy_spread_hotspot_window(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
+    queue_ctx = _predict_station_queues(opt, config)
+    wait_map = dict(queue_ctx.get("expected_wait_times", {}) or {})
+
+    def _build(config_obj: ResourceConfig, touched_subtasks: Set[int]):
+        candidates = []
+        for row in config_obj.subtasks.values():
+            if int(row.subtask_id) in touched_subtasks or not row.z_tasks or int(row.station_id) < 0:
+                continue
+            wait = float(wait_map.get(int(row.subtask_id), 0.0) or 0.0)
+            station_load = float(_z_station_load(config_obj, int(row.station_id)))
+            robot_region = float(_z_robot_region_load(opt, int(row.station_id)))
+            duration = float(_estimate_assignment_duration(opt, row.z_tasks or []))
+            score = float(wait + 0.05 * station_load + robot_region + 0.10 * duration)
+            center_idx = max(
+                range(len(row.z_tasks)),
+                key=lambda idx: (
+                    float(opt._z_best_insertion_detour(int(row.z_tasks[idx].stack_id))),
+                    len(row.z_tasks[idx].target_tote_ids or ()),
+                    -idx,
+                ),
+            )
+            candidates.append(((-score, int(row.station_id), int(row.subtask_id)), int(row.subtask_id), int(center_idx)))
+        return sorted(candidates, key=lambda item: item[0])
+
+    return _destroy_windows(opt, config, rng, degree, _build, mode_sensitive=False)
+
+
+def z_plan_destroy_spread_hotspot_window(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
+    queue_ctx = _predict_station_queues(opt, config)
+    wait_map = dict(queue_ctx.get("expected_wait_times", {}) or {})
+
+    def _build(config_obj: ResourceConfig, touched_subtasks: Set[int]):
+        candidates = []
+        for row in config_obj.subtasks.values():
+            if int(row.subtask_id) in touched_subtasks or not row.z_tasks or int(row.station_id) < 0:
+                continue
+            wait = float(wait_map.get(int(row.subtask_id), 0.0) or 0.0)
+            station_load = float(_z_station_load(config_obj, int(row.station_id)))
+            robot_region = float(_z_robot_region_load(opt, int(row.station_id)))
+            duration = float(_estimate_assignment_duration(opt, row.z_tasks or []))
+            score = float(wait + 0.05 * station_load + robot_region + 0.10 * duration)
+            center_idx = max(
+                range(len(row.z_tasks)),
+                key=lambda idx: (
+                    float(opt._z_best_insertion_detour(int(row.z_tasks[idx].stack_id))),
+                    len(row.z_tasks[idx].target_tote_ids or ()),
+                    -idx,
+                ),
+            )
+            candidates.append(((-score, int(row.station_id), int(row.subtask_id)), int(row.subtask_id), int(center_idx)))
+        return sorted(candidates, key=lambda item: item[0])
+
+    return _plan_destroy_windows(opt, config, rng, degree, _build, mode_sensitive=False)
+
+
 def _build_z_action_signature(destroy_name: str, repair_name: str, windows: Sequence[Dict[str, object]], target_stack_ids: Sequence[int], mode_summary: Sequence[str]) -> Tuple[object, ...]:
     window_sig = tuple(
         sorted(
@@ -1604,18 +1707,39 @@ def _build_z_rough_features(
     mode_penalty = 0.2 * float(sum(1 for mode in (mode_summary or []) if str(mode).upper() == "SORT"))
     sz_delta = float(0.35 * noise_ratio + 0.25 * stack_delta + 0.20 * detour_proxy / 100.0 + 0.20 * mode_penalty - 0.15 * len(target_stack_ids))
     predicted_wait_sec = 0.0
+    z_choke_over_soft = 0.0
+    z_station_load_soft = 0.0
+    z_robot_region_load_soft = 0.0
     if config is not None:
         queue_ctx = _predict_station_queues(opt, config)
         wait_map = dict(queue_ctx.get("expected_wait_times", {}) or {})
         subtask_ids = [int(window_ctx.get("subtask_id", -1)) for window_ctx in (windows or []) if int(window_ctx.get("subtask_id", -1)) >= 0]
         if subtask_ids:
             predicted_wait_sec = float(sum(float(wait_map.get(int(subtask_id), 0.0)) for subtask_id in subtask_ids) / max(1, len(subtask_ids)))
+        for subtask_id in subtask_ids:
+            row = config.subtasks.get(int(subtask_id))
+            if row is None:
+                continue
+            _ok, _penalty, meta = _rough_route_feasibility(opt, config, row, row.z_tasks or [])
+            z_choke_over_soft += float(meta.get("choke_over", 0.0) or 0.0)
+            z_station_load_soft += float(_z_station_load(config, int(row.station_id)))
+            z_robot_region_load_soft += float(_z_robot_region_load(opt, int(row.station_id)))
+        denom = max(1, len(subtask_ids))
+        z_choke_over_soft = float(z_choke_over_soft / denom)
+        z_station_load_soft = float(z_station_load_soft / denom)
+        z_robot_region_load_soft = float(z_robot_region_load_soft / denom)
+    z_structural_score = float(z_choke_over_soft + 0.05 * z_station_load_soft + z_robot_region_load_soft)
+    sz_delta += float(getattr(opt.cfg, "resource_z_structural_score_weight", 0.08)) * z_structural_score
     return {
         "sz_delta": float(sz_delta),
         "affected_count": float(sum(len(window_ctx.get("removed_window", []) or []) for window_ctx in (windows or []))),
         "predicted_wait_sec": float(predicted_wait_sec),
         "queue_weighted_noise_delta": float(noise_ratio * max(1.0, predicted_wait_sec)),
         "queue_weighted_station_burden_delta": float((noise_ratio + mode_penalty + stack_delta) * max(1.0, predicted_wait_sec)),
+        "z_structural_score": float(z_structural_score),
+        "z_choke_over_soft": float(z_choke_over_soft),
+        "z_station_load_soft": float(z_station_load_soft),
+        "z_robot_region_load_soft": float(z_robot_region_load_soft),
     }
 
 
@@ -1625,6 +1749,7 @@ def plan_z_candidate(opt, config: ResourceConfig, destroy_name: str, repair_name
         "z_destroy_multistack_window": z_plan_destroy_multistack_window,
         "z_destroy_detour_window": z_plan_destroy_detour_window,
         "z_destroy_mode_window": z_plan_destroy_mode_window,
+        "z_destroy_spread_hotspot_window": z_plan_destroy_spread_hotspot_window,
     }
     destroy_ctx = destroy_planners[str(destroy_name)](opt, config, rng, degree)
     if not bool(destroy_ctx.get("success", False)):
@@ -1781,6 +1906,14 @@ def z_repair_joint_sort_colocated_flip(opt, config: ResourceConfig, ctx: Dict[st
     return _repair_window(opt, config, ctx, "z_repair_joint_sort_colocated_flip", allow_fallback=False, rng=rng)
 
 
+def z_repair_spread_region_balance(opt, config: ResourceConfig, ctx: Dict[str, object], rng) -> Dict[str, object]:
+    return _repair_window(opt, config, ctx, "z_repair_spread_region_balance", allow_fallback=False, rng=rng)
+
+
+def z_repair_load_balance_idle_robot(opt, config: ResourceConfig, ctx: Dict[str, object], rng) -> Dict[str, object]:
+    return _repair_window(opt, config, ctx, "z_repair_load_balance_idle_robot", allow_fallback=False, rng=rng)
+
+
 def z_repair_greedy_fallback(opt, config: ResourceConfig, ctx: Dict[str, object], rng) -> Dict[str, object]:
     return _repair_window(opt, config, ctx, "z_repair_greedy_fallback", allow_fallback=True, rng=rng)
 
@@ -1790,6 +1923,7 @@ Z_DESTROY_OPERATORS = {
     "z_destroy_multistack_window": z_destroy_multistack_window,
     "z_destroy_detour_window": z_destroy_detour_window,
     "z_destroy_mode_window": z_destroy_mode_window,
+    "z_destroy_spread_hotspot_window": z_destroy_spread_hotspot_window,
 }
 
 Z_REPAIR_OPERATORS = {
@@ -1799,6 +1933,8 @@ Z_REPAIR_OPERATORS = {
     "z_repair_gurobi_like_sort": z_repair_gurobi_like_sort,
     "z_repair_mode_toggle_contextual": z_repair_mode_toggle_contextual,
     "z_repair_joint_sort_colocated_flip": z_repair_joint_sort_colocated_flip,
+    "z_repair_spread_region_balance": z_repair_spread_region_balance,
+    "z_repair_load_balance_idle_robot": z_repair_load_balance_idle_robot,
 }
 
 Z_FALLBACK_OPERATOR = "z_repair_greedy_fallback"

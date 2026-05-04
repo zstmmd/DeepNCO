@@ -92,6 +92,7 @@ class ResourceTimeALNSEngine:
         self.layer_dynamic_multiplier = {"X": 1.0, "Y": 1.0, "Z": 1.0}
         self.consecutive_fail_count = {"X": 0, "Y": 0, "Z": 0}
         self.z_exact_fail_streak = 0
+        self.z_operator_pick_count = 0
         self.forced_layer_queue: deque[str] = deque()
         self.last_selected_layer = ""
         self.no_improve_rounds = 0.0
@@ -126,6 +127,72 @@ class ResourceTimeALNSEngine:
         self.opt.joint_colocated_sort_postprocess_stats = self.joint_colocated_sort_postprocess_stats
         self._refresh_operator_stats_payload()
 
+    def _snapshot_tail_metrics(self, snapshot, config: Optional[ResourceConfig] = None) -> Dict[str, object]:
+        rows = list(getattr(snapshot, "subtask_state", []) or [])
+        active_robots = set()
+        latest_robot_finish = 0.0
+        order_completion: Dict[int, float] = {}
+        for subtask in rows:
+            subtask_id = int(getattr(subtask, "id", getattr(subtask, "subtask_id", -1)))
+            order_id = -1
+            if config is not None and int(subtask_id) in config.subtasks:
+                order_id = int(config.subtasks[int(subtask_id)].order_id)
+            parent_order = getattr(subtask, "parent_order", None)
+            if order_id < 0 and parent_order is not None:
+                order_id = int(getattr(parent_order, "order_id", getattr(parent_order, "id", -1)))
+            task_rows = list(getattr(subtask, "execution_tasks", []) or [])
+            max_end = 0.0
+            for task in task_rows:
+                robot_id = int(getattr(task, "robot_id", -1))
+                if robot_id >= 0:
+                    active_robots.add(int(robot_id))
+                latest_robot_finish = max(
+                    float(latest_robot_finish),
+                    float(getattr(task, "arrival_time_at_station", 0.0) or 0.0),
+                    float(getattr(task, "arrival_time_at_stack", 0.0) or 0.0),
+                )
+                max_end = max(float(max_end), float(getattr(task, "end_process_time", 0.0) or 0.0))
+            if order_id >= 0:
+                order_completion[int(order_id)] = max(float(order_completion.get(int(order_id), 0.0)), float(max_end))
+        return {
+            "latest_robot_finish": float(latest_robot_finish),
+            "max_order_completion": float(max(order_completion.values(), default=0.0)),
+            "active_robot_count": int(len(active_robots)),
+            "active_robot_ids": sorted(active_robots),
+        }
+
+    def _tail_guard_reason(self, candidate_validation: Dict[str, object], candidate_config: ResourceConfig) -> Tuple[str, Dict[str, object]]:
+        if not bool(getattr(self.cfg, "resource_tail_guard_enabled", True)):
+            return "", {}
+        candidate_makespan = float(candidate_validation.get("makespan", float("inf")) or float("inf"))
+        improves_makespan = bool(candidate_makespan + 1e-9 < float(getattr(self.best_validated, "makespan", float("inf"))))
+        incumbent_metrics = self._snapshot_tail_metrics(getattr(self.best_validated, "snapshot", None), self.best_validated.config)
+        candidate_metrics = self._snapshot_tail_metrics(candidate_validation.get("snapshot", None), candidate_config)
+        ratio = float(getattr(self.cfg, "resource_tail_guard_ratio", 1.05))
+        reason = ""
+        incumbent_latest = float(incumbent_metrics.get("latest_robot_finish", 0.0) or 0.0)
+        candidate_latest = float(candidate_metrics.get("latest_robot_finish", 0.0) or 0.0)
+        incumbent_order = float(incumbent_metrics.get("max_order_completion", 0.0) or 0.0)
+        candidate_order = float(candidate_metrics.get("max_order_completion", 0.0) or 0.0)
+        if (not improves_makespan) and incumbent_latest > 1e-9 and candidate_latest > incumbent_latest * ratio + 1e-9:
+            reason = "latest_robot_finish_regression"
+        elif (not improves_makespan) and incumbent_order > 1e-9 and candidate_order > incumbent_order * ratio + 1e-9:
+            reason = "max_order_completion_regression"
+        else:
+            incumbent_active = set(int(x) for x in (incumbent_metrics.get("active_robot_ids", []) or []))
+            candidate_active = set(int(x) for x in (candidate_metrics.get("active_robot_ids", []) or []))
+            if len(candidate_active) < len(incumbent_active) and bool(incumbent_active - candidate_active):
+                reason = "active_robot_count_regression"
+        meta = {
+            "candidate_latest_robot_finish": float(candidate_latest),
+            "candidate_max_order_completion": float(candidate_order),
+            "candidate_active_robot_count": int(candidate_metrics.get("active_robot_count", 0) or 0),
+            "incumbent_latest_robot_finish": float(incumbent_latest),
+            "incumbent_max_order_completion": float(incumbent_order),
+            "incumbent_active_robot_count": int(incumbent_metrics.get("active_robot_count", 0) or 0),
+        }
+        return str(reason), meta
+
     def _candidate_validation_trigger(self, iter_id: int, candidate_eval, candidate_signature, precomputed_validation) -> str:
         if precomputed_validation is not None:
             return "joint_colocated_sort_postprocess"
@@ -156,12 +223,36 @@ class ResourceTimeALNSEngine:
             "z_repair_gurobi_like_sort": 3.0,
             "z_repair_sort_range_shrink_first": 2.0,
             "z_repair_joint_sort_colocated_flip": 2.0,
+            "z_repair_spread_region_balance": 2.5,
+            "z_repair_load_balance_idle_robot": 2.5,
         }.items():
             if name in arms["Z"]["repair"]:
                 arms["Z"]["repair"][name].weight = float(weight)
+        if "z_destroy_spread_hotspot_window" in arms["Z"]["destroy"]:
+            arms["Z"]["destroy"]["z_destroy_spread_hotspot_window"].weight = 2.5
         if "y_destroy_heavy_robot_tail" in arms["Y"]["destroy"]:
             arms["Y"]["destroy"]["y_destroy_heavy_robot_tail"].weight = 2.0
+        self._apply_operator_weight_floors(arms)
         return arms
+
+    def _z_diversification_names(self) -> Tuple[set[str], set[str]]:
+        return (
+            {"z_destroy_spread_hotspot_window"},
+            {"z_repair_spread_region_balance", "z_repair_load_balance_idle_robot"},
+        )
+
+    def _apply_operator_weight_floors(self, arms=None) -> None:
+        arms = self.operator_arms if arms is None else arms
+        destroy_names, repair_names = self._z_diversification_names()
+        floor = float(getattr(getattr(self, "cfg", None), "resource_z_diversification_weight_floor", 1.25))
+        for name in destroy_names:
+            arm = arms.get("Z", {}).get("destroy", {}).get(str(name))
+            if arm is not None:
+                arm.weight = float(max(float(arm.weight), floor))
+        for name in repair_names:
+            arm = arms.get("Z", {}).get("repair", {}).get(str(name))
+            if arm is not None:
+                arm.weight = float(max(float(arm.weight), floor))
 
     def _refresh_operator_stats_payload(self) -> None:
         payload: Dict[str, Dict[str, Dict[str, float]]] = {}
@@ -307,6 +398,15 @@ class ResourceTimeALNSEngine:
         return int(max(base, dynamic))
 
     def _sample_operator_pair(self, layer: str) -> Tuple[str, str]:
+        if str(layer).upper() == "Z":
+            self.z_operator_pick_count = int(getattr(self, "z_operator_pick_count", 0)) + 1
+            period = max(0, int(getattr(self.cfg, "resource_z_diversification_force_period", 5)))
+            destroy_names, repair_names = self._z_diversification_names()
+            if period > 0 and self.z_operator_pick_count % period == 0:
+                destroy_available = [name for name in sorted(destroy_names) if name in self.operator_arms["Z"]["destroy"]]
+                repair_available = [name for name in sorted(repair_names) if name in self.operator_arms["Z"]["repair"]]
+                if destroy_available and repair_available:
+                    return str(destroy_available[0]), str(repair_available[(self.z_operator_pick_count // period) % len(repair_available)])
         destroy_name = self._weighted_pick(self.operator_arms[layer]["destroy"])
         repair_candidates = {
             name: arm
@@ -562,6 +662,10 @@ class ResourceTimeALNSEngine:
                     "selected_for_sa": False,
                     "action_signature": str(action_signature_text),
                     "plan": plan,
+                    "z_structural_score": float(rough_features.get("z_structural_score", 0.0) or 0.0),
+                    "z_choke_over_soft": float(rough_features.get("z_choke_over_soft", 0.0) or 0.0),
+                    "z_station_load_soft": float(rough_features.get("z_station_load_soft", 0.0) or 0.0),
+                    "z_robot_region_load_soft": float(rough_features.get("z_robot_region_load_soft", 0.0) or 0.0),
                 }
             )
 
@@ -610,6 +714,10 @@ class ResourceTimeALNSEngine:
                         "action_signature": str(rough_row.get("action_signature", "")),
                         "exact_fail_reason": reason,
                         "exact_fail_detail": str(exact_fail_detail),
+                        "z_structural_score": float(rough_row.get("z_structural_score", 0.0) or 0.0),
+                        "z_choke_over_soft": float(rough_row.get("z_choke_over_soft", 0.0) or 0.0),
+                        "z_station_load_soft": float(rough_row.get("z_station_load_soft", 0.0) or 0.0),
+                        "z_robot_region_load_soft": float(rough_row.get("z_robot_region_load_soft", 0.0) or 0.0),
                     }
                 )
                 continue
@@ -652,6 +760,10 @@ class ResourceTimeALNSEngine:
                 "action_signature": str(rough_row.get("action_signature", "")),
                 "coverage_feasible": bool(candidate_eval.coverage_feasible),
                 "unmet_sku_total": int(candidate_eval.unmet_sku_total),
+                "z_structural_score": float(rough_row.get("z_structural_score", 0.0) or 0.0),
+                "z_choke_over_soft": float(rough_row.get("z_choke_over_soft", 0.0) or 0.0),
+                "z_station_load_soft": float(rough_row.get("z_station_load_soft", 0.0) or 0.0),
+                "z_robot_region_load_soft": float(rough_row.get("z_robot_region_load_soft", 0.0) or 0.0),
             }
             candidate_rows.append(exact_row)
             if not bool(candidate_eval.coverage_feasible) or int(candidate_eval.unmet_sku_total) > 0:
@@ -836,6 +948,7 @@ class ResourceTimeALNSEngine:
                     target = max(floor, avg_reward)
                     arm.weight = float((1.0 - rho) * float(arm.weight) + rho * target)
                     arm.pending_rewards = []
+        self._apply_operator_weight_floors()
         self.layer_exec_since_update[layer] = 0
         self.layer_last_update_iter[layer] = int(iter_id)
         self._refresh_operator_stats_payload()
@@ -1018,6 +1131,9 @@ class ResourceTimeALNSEngine:
             validation_trigger = ""
             validated_makespan = float("nan")
             catastrophic_rollback = False
+            tail_guard_rejected = False
+            tail_guard_reason = ""
+            tail_guard_meta: Dict[str, object] = {}
             improved_best = False
             reward = -2.0
             candidate_eval = self.current_eval
@@ -1170,6 +1286,26 @@ class ResourceTimeALNSEngine:
                                 validation_trigger = str(validation_hard_reject_reason)
                                 validated_makespan = float("inf")
                         if not str(validation_hard_reject_reason):
+                            guard_reason, guard_meta = self._tail_guard_reason(validation, self.current_config)
+                            tail_guard_reason = str(guard_reason)
+                            tail_guard_meta = dict(guard_meta or {})
+                            if str(guard_reason):
+                                tail_guard_rejected = True
+                                candidate_hard_reject_reason = f"tail_guard:{guard_reason}"
+                                reward = -6.0
+                                self.current_config = self.best_validated.config.clone()
+                                self.last_validated_config = self.best_validated.config.clone()
+                                self.last_validated_signature = self.best_validated.config.validation_signature()
+                                self.opt._clear_z_detour_cache()
+                                self.current_eval = self.scorer.evaluate(
+                                    config=self.current_config,
+                                    iterations_since_last_validation=0,
+                                    distance_to_last_validated=0.0,
+                                )
+                                accepted = False
+                                validation_trigger = f"tail_guard:{guard_reason}"
+                                validated_makespan = float(validation.get("makespan", float("inf")))
+                        if not str(validation_hard_reject_reason) and not bool(tail_guard_rejected):
                             validated_makespan = float(validation["makespan"])
                             self.recent_validated_makespans.append(float(validated_makespan))
                             self.last_validation_iter = int(iter_id)
@@ -1287,10 +1423,18 @@ class ResourceTimeALNSEngine:
                     "candidate_pool_exact_fail_count": int(candidate_pool_info.get("exact_fail_count", 0)),
                     "candidate_pool_exact_fail_reasons": str(candidate_pool_info.get("exact_fail_reasons", {}) or {}),
                     "candidate_pool_duplicate_hard_reject_count": int(candidate_pool_info.get("duplicate_hard_reject_count", 0)),
+                    "z_structural_score": float(selected_candidate.get("z_structural_score", 0.0)) if selected_candidate is not None else 0.0,
+                    "z_choke_over_soft": float(selected_candidate.get("z_choke_over_soft", 0.0)) if selected_candidate is not None else 0.0,
+                    "z_station_load_soft": float(selected_candidate.get("z_station_load_soft", 0.0)) if selected_candidate is not None else 0.0,
+                    "z_robot_region_load_soft": float(selected_candidate.get("z_robot_region_load_soft", 0.0)) if selected_candidate is not None else 0.0,
                     "candidate_pool_best_f_raw": float(selected_candidate.get("F_raw", float("nan"))) if selected_candidate is not None else float("nan"),
                     "candidate_pool_best_f_cal": float(selected_candidate.get("F_cal", float("nan"))) if selected_candidate is not None else float("nan"),
                     "selected_candidate_rank": int(selected_candidate.get("candidate_rank", 0)) if selected_candidate is not None else 0,
                     "global_eval_triggered": bool(validation_trigger not in ("", "periodic_skip_same_config")),
+                    "tail_guard_rejected": bool(tail_guard_rejected),
+                    "tail_guard_reason": str(tail_guard_reason),
+                    "candidate_latest_robot_finish": float(tail_guard_meta.get("candidate_latest_robot_finish", 0.0) or 0.0),
+                    "candidate_active_robot_count": int(tail_guard_meta.get("candidate_active_robot_count", 0) or 0),
                     "empty_candidate_penalized": bool(empty_candidate_penalized),
                     "joint_colocated_sort_postprocess_triggered": float(joint_postprocess_stats.get("triggered", 0.0)),
                     "joint_colocated_sort_postprocess_candidate_groups": float(joint_postprocess_stats.get("candidate_groups", 0.0)),
