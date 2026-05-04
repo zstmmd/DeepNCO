@@ -39,6 +39,9 @@ RESOURCE_TIME_ITER_COLUMNS = [
     "candidate_pool_unique_count",
     "candidate_pool_attempt_count",
     "candidate_pool_exact_count",
+    "candidate_pool_exact_fail_count",
+    "candidate_pool_exact_fail_reasons",
+    "candidate_pool_duplicate_hard_reject_count",
     "candidate_pool_best_f_raw",
     "candidate_pool_best_f_cal",
     "selected_candidate_rank",
@@ -93,6 +96,8 @@ RESOURCE_TIME_CANDIDATE_COLUMNS = [
     "duplicate_tote_count",
     "duplicate_tote_penalty",
     "candidate_signature",
+    "exact_fail_reason",
+    "exact_fail_detail",
     "selected_for_sa",
 ]
 

@@ -91,6 +91,8 @@ class ResourceTimeALNSEngine:
         self.layer_failure_cooldown_until_iter = {"X": 0, "Y": 0, "Z": 0}
         self.layer_dynamic_multiplier = {"X": 1.0, "Y": 1.0, "Z": 1.0}
         self.consecutive_fail_count = {"X": 0, "Y": 0, "Z": 0}
+        self.z_exact_fail_streak = 0
+        self.forced_layer_queue: deque[str] = deque()
         self.last_selected_layer = ""
         self.no_improve_rounds = 0.0
         self.no_best_z_change_rounds = 0.0
@@ -136,7 +138,7 @@ class ResourceTimeALNSEngine:
         return "operator_route_precheck"
 
     def _init_operator_arms(self) -> Dict[str, Dict[str, Dict[str, OperatorArm]]]:
-        return {
+        arms = {
             "X": {
                 "destroy": {name: OperatorArm(name=name) for name in X_DESTROY_OPERATORS.keys()},
                 "repair": {name: OperatorArm(name=name) for name in list(X_REPAIR_OPERATORS.keys()) + [X_FALLBACK_OPERATOR]},
@@ -150,6 +152,16 @@ class ResourceTimeALNSEngine:
                 "repair": {name: OperatorArm(name=name) for name in list(Z_REPAIR_OPERATORS.keys()) + [Z_FALLBACK_OPERATOR]},
             },
         }
+        for name, weight in {
+            "z_repair_gurobi_like_sort": 3.0,
+            "z_repair_sort_range_shrink_first": 2.0,
+            "z_repair_joint_sort_colocated_flip": 2.0,
+        }.items():
+            if name in arms["Z"]["repair"]:
+                arms["Z"]["repair"][name].weight = float(weight)
+        if "y_destroy_heavy_robot_tail" in arms["Y"]["destroy"]:
+            arms["Y"]["destroy"]["y_destroy_heavy_robot_tail"].weight = 2.0
+        return arms
 
     def _refresh_operator_stats_payload(self) -> None:
         payload: Dict[str, Dict[str, Dict[str, float]]] = {}
@@ -212,13 +224,22 @@ class ResourceTimeALNSEngine:
         return int(max(0, until_iter - int(iter_id) + 1))
 
     def _select_layer(self, iter_id: int) -> Tuple[str, bool]:
+        available_layers = self._available_layers(int(iter_id))
+        forced_queue = getattr(self, "forced_layer_queue", None)
+        if forced_queue is None:
+            forced_queue = deque()
+            self.forced_layer_queue = forced_queue
+        while forced_queue:
+            layer = str(forced_queue.popleft()).upper()
+            if layer in available_layers:
+                self.last_selected_layer = layer
+                return layer, True
         wx = float(getattr(self.cfg, "resource_component_weight_x", 1.0))
         wy = float(getattr(self.cfg, "resource_component_weight_y", 1.0))
         wz = float(getattr(self.cfg, "resource_component_weight_z", 1.0))
         bx = float(getattr(self.cfg, "resource_layer_base_weight_x", 0.10))
         by = float(getattr(self.cfg, "resource_layer_base_weight_y", 0.45))
         bz = float(getattr(self.cfg, "resource_layer_base_weight_z", 0.45))
-        available_layers = self._available_layers(int(iter_id))
         pressure = {
             "X": float(self.current_eval.Sx),
             "Y": float(self.current_eval.Sy),
@@ -544,7 +565,8 @@ class ResourceTimeALNSEngine:
                 }
             )
 
-        best_rough = self._select_best_candidate(rough_pool)
+        self._select_best_candidate(rough_pool)
+        rough_ranked = sorted(rough_pool, key=self._candidate_sort_key)
         candidate_rows: List[Dict[str, object]] = [dict(row) for row in rough_pool]
         exact_count = 0
         unique_count = 0
@@ -552,64 +574,111 @@ class ResourceTimeALNSEngine:
         hard_reject_reason = ""
         penalized_pairs: List[Tuple[str, str, float]] = []
         coverage_hard_reject_count = 0
-        if best_rough is not None:
-            exact_payload = exact_applier(self.opt, self.current_config, best_rough["plan"], self.rng)
+        exact_fail_count = 0
+        duplicate_hard_reject_count = 0
+        exact_fail_reasons: Dict[str, int] = {}
+        exact_trial_limit = max(1, int(getattr(self.cfg, "resource_exact_candidate_trial_limit", target)))
+        exact_valid_rows: List[Dict[str, object]] = []
+        for rough_row in rough_ranked[:exact_trial_limit]:
+            exact_payload = exact_applier(self.opt, self.current_config, rough_row["plan"], self.rng)
             if not bool(exact_payload.get("success", False)):
-                hard_reject_reason = "exact_candidate_fail"
-            else:
-                exact_count = 1
-                candidate_signature = exact_payload["config"].validation_signature()
-                candidate_eval = self.scorer.evaluate(
-                    config=exact_payload["config"],
-                    score_cache=exact_payload.get("score_cache", None),
-                    affected_subtask_ids=exact_payload.get("affected_ids", set()),
-                    fallback_penalty=0.15 if bool(exact_payload.get("fallback_used", False)) else 0.0,
-                    iterations_since_last_validation=int(iter_id) - int(self.last_validation_iter),
-                    distance_to_last_validated=config_distance(exact_payload["config"], self.last_validated_config),
-                )
-                candidate_eval.metadata.update(
+                exact_fail_count += 1
+                reason = str(exact_payload.get("reason", "exact_candidate_fail") or "exact_candidate_fail")
+                exact_fail_reasons[reason] = int(exact_fail_reasons.get(reason, 0)) + 1
+                exact_fail_detail = dict(exact_payload.get("validation_detail", {}) or {})
+                hard_reject_reason = f"exact_candidate_fail:{reason}"
+                candidate_rows.append(
                     {
-                        "last_validation_iter": int(self.last_validation_iter),
-                        "last_validation_f_raw": float(self.last_validation_f_raw),
-                        "recent_validated_makespans": list(self.recent_validated_makespans),
+                        "iter": int(iter_id),
+                        "layer": str(layer).upper(),
+                        "candidate_stage": "exact_fail",
+                        "candidate_rank": int(rough_row.get("candidate_rank", 1) or 1),
+                        "destroy_operator": str(rough_row.get("destroy_operator", "")),
+                        "repair_operator": str(rough_row.get("repair_operator", "")),
+                        "fallback_used": False,
+                        "projection_mode": "",
+                        "projection_repaired_subtask_count": 0,
+                        "F_raw": float("nan"),
+                        "F_cal": float("nan"),
+                        "duplicate_tote_count": 0,
+                        "duplicate_tote_penalty": 0.0,
+                        "candidate_signature": str(rough_row.get("candidate_signature", "")),
+                        "candidate_signature_tuple": rough_row.get("candidate_signature_tuple", None),
+                        "candidate_payload": None,
+                        "candidate_eval": None,
+                        "selected_for_sa": False,
+                        "action_signature": str(rough_row.get("action_signature", "")),
+                        "exact_fail_reason": reason,
+                        "exact_fail_detail": str(exact_fail_detail),
                     }
                 )
-                exact_row = {
-                    "iter": int(iter_id),
-                    "layer": str(layer).upper(),
-                    "candidate_stage": "exact",
-                    "candidate_rank": int(best_rough.get("candidate_rank", 1) or 1),
-                    "destroy_operator": str(best_rough.get("destroy_operator", "")),
-                    "repair_operator": str(best_rough.get("repair_operator", "")),
-                    "fallback_used": bool(exact_payload.get("fallback_used", False)),
-                    "projection_mode": str(exact_payload.get("projection_mode", "")),
-                    "projection_repaired_subtask_count": int(exact_payload.get("projection_repaired_subtask_count", 0)),
-                    "F_raw": float(candidate_eval.F_raw),
-                    "F_cal": float(candidate_eval.F_cal),
-                    "duplicate_tote_count": int(candidate_eval.duplicate_tote_count),
-                    "duplicate_tote_penalty": float(candidate_eval.duplicate_tote_penalty),
-                    "candidate_signature": self._candidate_signature_text(candidate_signature),
-                    "candidate_signature_tuple": candidate_signature,
-                    "candidate_payload": exact_payload,
-                    "candidate_eval": candidate_eval,
-                    "selected_for_sa": False,
-                    "action_signature": str(best_rough.get("action_signature", "")),
-                    "coverage_feasible": bool(candidate_eval.coverage_feasible),
-                    "unmet_sku_total": int(candidate_eval.unmet_sku_total),
+                continue
+            exact_count += 1
+            candidate_signature = exact_payload["config"].validation_signature()
+            candidate_eval = self.scorer.evaluate(
+                config=exact_payload["config"],
+                score_cache=exact_payload.get("score_cache", None),
+                affected_subtask_ids=exact_payload.get("affected_ids", set()),
+                fallback_penalty=0.15 if bool(exact_payload.get("fallback_used", False)) else 0.0,
+                iterations_since_last_validation=int(iter_id) - int(self.last_validation_iter),
+                distance_to_last_validated=config_distance(exact_payload["config"], self.last_validated_config),
+            )
+            candidate_eval.metadata.update(
+                {
+                    "last_validation_iter": int(self.last_validation_iter),
+                    "last_validation_f_raw": float(self.last_validation_f_raw),
+                    "recent_validated_makespans": list(self.recent_validated_makespans),
                 }
-                if not bool(candidate_eval.coverage_feasible) or int(candidate_eval.unmet_sku_total) > 0:
-                    hard_reject_reason = "coverage_hard_reject"
-                    coverage_hard_reject_count += 1
-                    penalized_pairs.append((str(best_rough.get("destroy_operator", "")), str(best_rough.get("repair_operator", "")), -6.0))
-                    candidate_rows.append(exact_row)
-                elif int(candidate_eval.duplicate_tote_count) > 0:
-                    hard_reject_reason = "duplicate_tote_hard_reject"
-                    candidate_rows.append(exact_row)
-                else:
-                    unique_count = 1
-                    exact_row["selected_for_sa"] = True
-                    candidate_rows.append(exact_row)
-                    selected = exact_row
+            )
+            exact_row = {
+                "iter": int(iter_id),
+                "layer": str(layer).upper(),
+                "candidate_stage": "exact",
+                "candidate_rank": int(rough_row.get("candidate_rank", 1) or 1),
+                "destroy_operator": str(rough_row.get("destroy_operator", "")),
+                "repair_operator": str(rough_row.get("repair_operator", "")),
+                "fallback_used": bool(exact_payload.get("fallback_used", False)),
+                "projection_mode": str(exact_payload.get("projection_mode", "")),
+                "projection_repaired_subtask_count": int(exact_payload.get("projection_repaired_subtask_count", 0)),
+                "F_raw": float(candidate_eval.F_raw),
+                "F_cal": float(candidate_eval.F_cal),
+                "duplicate_tote_count": int(candidate_eval.duplicate_tote_count),
+                "duplicate_tote_penalty": float(candidate_eval.duplicate_tote_penalty),
+                "candidate_signature": self._candidate_signature_text(candidate_signature),
+                "candidate_signature_tuple": candidate_signature,
+                "candidate_payload": exact_payload,
+                "candidate_eval": candidate_eval,
+                "selected_for_sa": False,
+                "action_signature": str(rough_row.get("action_signature", "")),
+                "coverage_feasible": bool(candidate_eval.coverage_feasible),
+                "unmet_sku_total": int(candidate_eval.unmet_sku_total),
+            }
+            candidate_rows.append(exact_row)
+            if not bool(candidate_eval.coverage_feasible) or int(candidate_eval.unmet_sku_total) > 0:
+                hard_reject_reason = "coverage_hard_reject"
+                coverage_hard_reject_count += 1
+                penalized_pairs.append((str(rough_row.get("destroy_operator", "")), str(rough_row.get("repair_operator", "")), -6.0))
+                continue
+            if int(candidate_eval.duplicate_tote_count) > 0:
+                hard_reject_reason = "duplicate_tote_hard_reject"
+                duplicate_hard_reject_count += 1
+                continue
+            exact_valid_rows.append(exact_row)
+        if exact_valid_rows:
+            unique_count = int(len(exact_valid_rows))
+            selected = self._select_best_candidate(exact_valid_rows)
+            if selected is not None:
+                selected["selected_for_sa"] = True
+                selected_signature = selected.get("candidate_signature_tuple", None)
+                for row in candidate_rows:
+                    if row.get("candidate_stage") == "exact" and row.get("candidate_signature_tuple") == selected_signature:
+                        row["selected_for_sa"] = True
+                        break
+                hard_reject_reason = ""
+        elif int(coverage_hard_reject_count) > 0:
+            hard_reject_reason = "coverage_hard_reject"
+        elif int(duplicate_hard_reject_count) > 0:
+            hard_reject_reason = "duplicate_tote_hard_reject"
         return {
             "target_size": int(target),
             "attempt_count": int(attempts),
@@ -622,6 +691,9 @@ class ResourceTimeALNSEngine:
             "attempted_pairs": attempted_pairs,
             "penalized_pairs": penalized_pairs,
             "coverage_hard_reject_count": int(coverage_hard_reject_count),
+            "exact_fail_count": int(exact_fail_count),
+            "exact_fail_reasons": dict(exact_fail_reasons),
+            "duplicate_hard_reject_count": int(duplicate_hard_reject_count),
         }
 
     def _sa_accept(self, candidate_eval, layer: str) -> Tuple[bool, float, float]:
@@ -1006,9 +1078,21 @@ class ResourceTimeALNSEngine:
                     candidate_hard_reject_reason = "coverage_hard_reject"
                     reward = -6.0
                 else:
+                    if not bool(getattr(self.cfg, "resource_joint_colocated_sort_on_accepted_only", True)):
+                        selected_candidate, precomputed_validation, joint_postprocess_stats, joint_postprocess_time_sec = self._maybe_apply_joint_colocated_sort_postprocess(
+                            int(iter_id),
+                            str(layer),
+                            selected_candidate,
+                        )
+                        self._accumulate_joint_postprocess_stats(joint_postprocess_stats)
+                        if selected_candidate is not None:
+                            candidate_eval = selected_candidate["candidate_eval"]
+                            candidate_payload = selected_candidate["candidate_payload"]
+                            candidate_config = candidate_payload["config"]
+                            candidate_signature = candidate_payload["config"].validation_signature()
                     accepted, accept_prob, effective_sa_temperature = self._sa_accept(candidate_eval, layer)
                     x_temp_boost_used = bool(str(layer) == "X")
-                if accepted and not bool(coverage_hard_reject):
+                if accepted and not bool(coverage_hard_reject) and bool(getattr(self.cfg, "resource_joint_colocated_sort_on_accepted_only", True)):
                     selected_candidate, precomputed_validation, joint_postprocess_stats, joint_postprocess_time_sec = self._maybe_apply_joint_colocated_sort_postprocess(
                         int(iter_id),
                         str(layer),
@@ -1132,6 +1216,18 @@ class ResourceTimeALNSEngine:
                         self._maybe_update_weights(layer, iter_id)
                 elif bool(pair_penalties_applied):
                     self._maybe_update_weights(layer, iter_id)
+            if str(layer).upper() == "Z" and (str(candidate_hard_reject_reason).startswith("exact_candidate_fail") or str(candidate_hard_reject_reason) == "no_candidate_pool"):
+                self.z_exact_fail_streak = int(getattr(self, "z_exact_fail_streak", 0)) + 1
+                threshold = int(getattr(self.cfg, "resource_z_exact_fail_force_threshold", 3))
+                forced_queue = getattr(self, "forced_layer_queue", None)
+                if forced_queue is None:
+                    forced_queue = deque()
+                    self.forced_layer_queue = forced_queue
+                if threshold > 0 and int(self.z_exact_fail_streak) >= threshold and not forced_queue:
+                    forced_queue.extend(["Y", "Z"])
+                    self.z_exact_fail_streak = 0
+            elif str(layer).upper() == "Z" and (bool(accepted) or int(candidate_pool_info.get("generated_count", 0) or 0) > 0):
+                self.z_exact_fail_streak = 0
             if selected_candidate is not None:
                 self._record_reward(layer, destroy_name, repair_name, reward, fallback_used, iter_id)
                 self._maybe_update_weights(layer, iter_id)
@@ -1188,6 +1284,9 @@ class ResourceTimeALNSEngine:
                     "candidate_pool_unique_count": int(candidate_pool_info.get("unique_count", 0)),
                     "candidate_pool_exact_count": int(candidate_pool_info.get("exact_count", 0)),
                     "candidate_pool_attempt_count": int(candidate_pool_info.get("attempt_count", 0)),
+                    "candidate_pool_exact_fail_count": int(candidate_pool_info.get("exact_fail_count", 0)),
+                    "candidate_pool_exact_fail_reasons": str(candidate_pool_info.get("exact_fail_reasons", {}) or {}),
+                    "candidate_pool_duplicate_hard_reject_count": int(candidate_pool_info.get("duplicate_hard_reject_count", 0)),
                     "candidate_pool_best_f_raw": float(selected_candidate.get("F_raw", float("nan"))) if selected_candidate is not None else float("nan"),
                     "candidate_pool_best_f_cal": float(selected_candidate.get("F_cal", float("nan"))) if selected_candidate is not None else float("nan"),
                     "selected_candidate_rank": int(selected_candidate.get("candidate_rank", 0)) if selected_candidate is not None else 0,
@@ -1213,6 +1312,8 @@ class ResourceTimeALNSEngine:
                     "consecutive_exact_cache_hit_count": int(self.consecutive_exact_cache_hit_count),
                     "adaptive_destroy_bonus": float(self.adaptive_destroy_bonus),
                     "consecutive_fail_count_x": int(self.consecutive_fail_count.get("X", 0)),
+                    "z_exact_fail_streak": int(getattr(self, "z_exact_fail_streak", 0)),
+                    "forced_layer_queue_len": int(len(getattr(self, "forced_layer_queue", []))),
                     "x_layer_dynamic_multiplier": float(self.layer_dynamic_multiplier.get("X", 1.0)),
                     "x_failure_cooldown_remaining": int(x_failure_cooldown_remaining),
                     "validated_best_no_change_rounds": int(self.validated_best_no_change_rounds),

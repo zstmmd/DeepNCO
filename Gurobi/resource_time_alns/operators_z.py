@@ -230,10 +230,8 @@ def _rough_route_feasibility(
     start, end, bucket_ids = _subtask_station_window(config, subtask, duration, bucket_sec)
     stack_budget = max(1, int(getattr(cfg, "resource_stack_concurrency_limit", 2)))
     tote_budget = max(1, int(getattr(cfg, "resource_tote_concurrency_limit", 1)))
-    choke_budget = max(1, int(getattr(cfg, "resource_choke_point_budget", 2)))
     stack_counts: Dict[int, int] = defaultdict(int)
     tote_counts: Dict[int, int] = defaultdict(int)
-    choke_counts: Dict[Tuple[int, int], int] = defaultdict(int)
     station_buckets = set(int(x) for x in bucket_ids)
     descriptor_stacks = {int(item.stack_id) for item in (descriptors or ()) if int(item.stack_id) >= 0}
     descriptor_totes = {int(tid) for item in (descriptors or ()) for tid in (item.target_tote_ids or ()) if int(tid) >= 0}
@@ -253,15 +251,12 @@ def _rough_route_feasibility(
             stack_counts[int(descriptor.stack_id)] += 1
             for tote_id in (descriptor.target_tote_ids or ()):
                 tote_counts[int(tote_id)] += 1
-            for cell in _z_route_cells(opt, int(descriptor.stack_id), int(row.station_id), grid_size):
-                choke_counts[cell] += 1
     stack_over = sum(max(0, int(stack_counts.get(stack_id, 0)) + 1 - stack_budget) for stack_id in descriptor_stacks)
     tote_over = sum(max(0, int(tote_counts.get(tote_id, 0)) + 1 - tote_budget) for tote_id in descriptor_totes)
-    choke_over = sum(max(0, int(choke_counts.get(cell, 0)) + 1 - choke_budget) for cell in descriptor_cells)
+    choke_over = 0
     penalty = 0.0
     penalty += float(getattr(cfg, "resource_z_stack_contention_penalty", 6.0)) * float(stack_over)
     penalty += float(getattr(cfg, "resource_z_tote_contention_penalty", 10.0)) * float(tote_over)
-    penalty += float(getattr(cfg, "resource_z_choke_point_penalty", 4.0)) * float(choke_over)
     conflict = _transient_conflict_constraints(config)
     conflict_stacks = {int(x) for x in (conflict.get("stack_ids", []) or [])}
     conflict_totes = {int(x) for x in (conflict.get("target_tote_ids", []) or [])}
@@ -275,7 +270,7 @@ def _rough_route_feasibility(
     over_cap = max(0.0, float(duration) - cap)
     if over_cap > 0.0:
         penalty += float(getattr(cfg, "resource_z_route_feasibility_penalty", 20.0)) * float(over_cap / max(1.0, cap))
-    ok = bool(over_cap <= 1e-9 and stack_over <= 0 and tote_over <= 0 and choke_over <= 0)
+    ok = bool(over_cap <= 1e-9 and stack_over <= 0 and tote_over <= 0)
     return ok, float(penalty), {
         "duration": float(duration),
         "window_start": float(start),
@@ -461,6 +456,7 @@ def _guard_reason(
 
 
 def _descriptor_from_plan(opt, subtask: ResourceSubtask, plan: Dict[str, object], task_id: int, sku_pick_count: int) -> ZTaskDescriptor:
+    plan = _canonicalize_z_plan(opt, plan)
     robot_service = max(float(plan.get("robot_service_time", 0.0) or 0.0), 0.5 * float(len(list(plan.get("target_tote_ids", []) or []))))
     return ZTaskDescriptor(
         task_id=int(task_id),
@@ -490,28 +486,102 @@ def _sort_plan_within_capacity(plan: Dict[str, object]) -> bool:
     return len(list(plan.get("target_tote_ids", []) or [])) <= int(capacity)
 
 
-def _normalize_joint_sort_plan(plan: Dict[str, object], carry_tote_ids: Sequence[int]) -> Dict[str, object]:
+def _dedupe_ints(values: Sequence[int]) -> List[int]:
+    deduped: List[int] = []
+    for value in values or ():
+        item = int(value)
+        if item >= 0 and item not in deduped:
+            deduped.append(item)
+    return deduped
+
+
+def _stack_tote_ids(opt, stack_id: int) -> List[int]:
+    stack = getattr(getattr(opt, "problem", None), "point_to_stack", {}).get(int(stack_id))
+    if stack is None:
+        return []
+    return [int(getattr(tote, "id", -1)) for tote in (getattr(stack, "totes", []) or []) if int(getattr(tote, "id", -1)) >= 0]
+
+
+def _stack_interval_tote_ids(opt, stack_id: int, sort_layer_range: Optional[Tuple[int, int]]) -> Optional[List[int]]:
+    if sort_layer_range is None:
+        return None
+    stack = getattr(getattr(opt, "problem", None), "point_to_stack", {}).get(int(stack_id))
+    if stack is None:
+        return None
+    totes = list(getattr(stack, "totes", []) or [])
+    lo, hi = int(sort_layer_range[0]), int(sort_layer_range[1])
+    if lo < 0 or hi < lo or hi >= len(totes):
+        return None
+    return [int(getattr(tote, "id", -1)) for tote in totes[lo:hi + 1] if int(getattr(tote, "id", -1)) >= 0]
+
+
+def _tote_layer_map(opt, stack_id: int) -> Dict[int, int]:
+    stack = getattr(getattr(opt, "problem", None), "point_to_stack", {}).get(int(stack_id))
+    if stack is None:
+        return {}
+    layer_by_tote: Dict[int, int] = {}
+    for idx, tote in enumerate(getattr(stack, "totes", []) or []):
+        tote_id = int(getattr(tote, "id", -1))
+        if tote_id >= 0:
+            layer_by_tote[int(tote_id)] = int(idx)
+    return layer_by_tote
+
+
+def _canonicalize_z_plan(opt, plan: Dict[str, object]) -> Dict[str, object]:
     normalized = dict(plan or {})
-    carried = []
-    for tote_id in carry_tote_ids or ():
-        tid = int(tote_id)
-        if tid >= 0 and tid not in carried:
-            carried.append(tid)
-    normalized["target_tote_ids"] = list(carried)
-    normalized["hit_tote_ids"] = list(
-        int(tote_id)
-        for tote_id in (normalized.get("hit_tote_ids", []) or [])
-        if int(tote_id) in set(carried)
-    )
-    normalized["noise_tote_ids"] = list(
-        int(tote_id)
-        for tote_id in (normalized.get("noise_tote_ids", []) or [])
-        if int(tote_id) in set(carried) and int(tote_id) not in set(normalized["hit_tote_ids"])
-    )
-    normalized["station_service_time"] = float(
-        len(list(normalized.get("noise_tote_ids", []) or [])) * float(getattr(OFSConfig, "MOVE_EXTRA_TOTE_TIME", 1.0))
-    )
+    mode = str(normalized.get("operation_mode", "FLIP")).upper()
+    stack_id = int(normalized.get("target_stack_id", -1))
+    if mode != "SORT":
+        hit_ids = _dedupe_ints(normalized.get("hit_tote_ids", []) or normalized.get("target_tote_ids", []) or [])
+        normalized["operation_mode"] = "FLIP"
+        normalized["target_tote_ids"] = list(hit_ids)
+        normalized["hit_tote_ids"] = list(hit_ids)
+        normalized["noise_tote_ids"] = []
+        normalized["sort_layer_range"] = None
+        normalized["station_service_time"] = 0.0
+        return normalized
+
+    hit_ids = _dedupe_ints(normalized.get("hit_tote_ids", []) or normalized.get("target_tote_ids", []) or [])
+    target_seed_ids = _dedupe_ints(normalized.get("target_tote_ids", []) or []) + [tid for tid in hit_ids if tid not in set(normalized.get("target_tote_ids", []) or [])]
+    layer_by_tote = _tote_layer_map(opt, stack_id)
+    sort_range = normalized.get("sort_layer_range", None)
+    lo = hi = None
+    if sort_range is not None:
+        lo, hi = int(sort_range[0]), int(sort_range[1])
+    seed_layers = [int(layer_by_tote[int(tid)]) for tid in target_seed_ids if int(tid) in layer_by_tote]
+    if seed_layers:
+        lo = min(seed_layers) if lo is None else min(int(lo), min(seed_layers))
+        hi = max(seed_layers) if hi is None else max(int(hi), max(seed_layers))
+    if lo is not None and hi is not None:
+        interval_ids = _stack_interval_tote_ids(opt, stack_id, (int(lo), int(hi)))
+    else:
+        interval_ids = None
+    if interval_ids is not None:
+        target_ids = list(interval_ids)
+        target_set = set(target_ids)
+        hit_ids = [int(tid) for tid in hit_ids if int(tid) in target_set]
+        noise_ids = [int(tid) for tid in target_ids if int(tid) not in set(hit_ids)]
+        normalized["sort_layer_range"] = (int(lo), int(hi))
+        normalized["target_tote_ids"] = list(target_ids)
+        normalized["hit_tote_ids"] = list(hit_ids)
+        normalized["noise_tote_ids"] = list(noise_ids)
+        normalized["station_service_time"] = float(len(noise_ids) * float(getattr(OFSConfig, "MOVE_EXTRA_TOTE_TIME", 1.0)))
+    else:
+        normalized["target_tote_ids"] = _dedupe_ints(normalized.get("target_tote_ids", []) or [])
+        normalized["hit_tote_ids"] = list(hit_ids)
+        normalized["noise_tote_ids"] = _dedupe_ints(normalized.get("noise_tote_ids", []) or [])
+    normalized["operation_mode"] = "SORT"
     return normalized
+
+
+def _normalize_joint_sort_plan(opt, plan: Dict[str, object], carry_tote_ids: Sequence[int]) -> Dict[str, object]:
+    normalized = dict(plan or {})
+    carried = _dedupe_ints(carry_tote_ids or ())
+    normalized["operation_mode"] = "SORT"
+    normalized["hit_tote_ids"] = list(carried)
+    if not list(normalized.get("target_tote_ids", []) or []):
+        normalized["target_tote_ids"] = list(carried)
+    return _canonicalize_z_plan(opt, normalized)
 
 
 def _tote_demand_overlap(opt, tote_id: int, remaining: Dict[int, int]) -> int:
@@ -626,13 +696,11 @@ def _build_joint_sort_candidate_options(
         plan = opt._z_build_plan_from_hits(temp_subtask, dummy_task, int(stack_id), list(hit_ids), "SORT", {-1})
         if not bool(plan.get("valid", False)) or plan.get("sort_layer_range", None) is None:
             continue
-        plan = _normalize_joint_sort_plan(plan, hit_ids)
+        plan = _normalize_joint_sort_plan(opt, plan, hit_ids)
         if not _sort_plan_within_capacity(plan):
             continue
         target_ids = [int(x) for x in (plan.get("target_tote_ids", []) or [])]
         if any(int(tid) in blocked_totes or int(tid) in local_used_totes for tid in target_ids):
-            continue
-        if list(plan.get("noise_tote_ids", []) or []):
             continue
         coverage_gain = int(_coverage_gain(opt, remaining, list(plan.get("hit_tote_ids", []) or [])))
         if coverage_gain <= 0:
@@ -850,6 +918,87 @@ def _joint_sort_seed_hit_map(removed_window: Sequence[ZTaskDescriptor]) -> Dict[
     return seed_hits
 
 
+def _validation_meta(subtask: ResourceSubtask, descriptor: Optional[ZTaskDescriptor], idx: int, extra: Optional[Dict[str, object]] = None) -> Dict[str, object]:
+    meta: Dict[str, object] = {
+        "subtask_id": int(getattr(subtask, "subtask_id", -1)),
+        "descriptor_index": int(idx),
+    }
+    if descriptor is not None:
+        meta.update(
+            {
+                "task_id": int(getattr(descriptor, "task_id", -1)),
+                "stack_id": int(getattr(descriptor, "stack_id", -1)),
+                "mode": str(getattr(descriptor, "mode", "")).upper(),
+                "target_tote_ids": list(int(x) for x in (getattr(descriptor, "target_tote_ids", ()) or ())),
+                "hit_tote_ids": list(int(x) for x in (getattr(descriptor, "hit_tote_ids", ()) or ())),
+                "noise_tote_ids": list(int(x) for x in (getattr(descriptor, "noise_tote_ids", ()) or ())),
+                "sort_layer_range": None
+                if getattr(descriptor, "sort_layer_range", None) is None
+                else [int(descriptor.sort_layer_range[0]), int(descriptor.sort_layer_range[1])],
+            }
+        )
+    if extra:
+        meta.update(extra)
+    return meta
+
+
+def validate_z_assignment_detail(
+    opt,
+    config: ResourceConfig,
+    subtask: ResourceSubtask,
+    descriptors: Sequence[ZTaskDescriptor],
+    external_used_totes: Optional[Set[int]] = None,
+) -> Tuple[bool, str, Dict[str, object]]:
+    used_totes: Set[int] = set()
+    blocked = {int(x) for x in (external_used_totes or set())}
+    for idx, descriptor in enumerate(descriptors or ()):
+        mode = str(descriptor.mode).upper()
+        target_ids = [int(x) for x in (descriptor.target_tote_ids or ())]
+        hit_ids = [int(x) for x in (descriptor.hit_tote_ids or ())]
+        noise_ids = [int(x) for x in (descriptor.noise_tote_ids or ())]
+        if len(target_ids) != len(set(target_ids)) or len(hit_ids) != len(set(hit_ids)) or len(noise_ids) != len(set(noise_ids)):
+            return False, "duplicate_or_blocked_tote", _validation_meta(subtask, descriptor, idx, {"duplicate_scope": "descriptor"})
+        if mode == "FLIP":
+            if tuple(target_ids) != tuple(hit_ids) or list(noise_ids) or descriptor.sort_layer_range is not None:
+                return False, "flip_target_hit_mismatch", _validation_meta(subtask, descriptor, idx)
+        if mode == "SORT":
+            if descriptor.sort_layer_range is None:
+                return False, "sort_missing_range", _validation_meta(subtask, descriptor, idx)
+            interval_list = _stack_interval_tote_ids(opt, int(descriptor.stack_id), descriptor.sort_layer_range)
+            if interval_list is None or not interval_list:
+                return False, "sort_range_invalid", _validation_meta(subtask, descriptor, idx)
+            interval_totes = set(interval_list)
+            target_set = set(target_ids)
+            hit_set = set(hit_ids)
+            noise_set = set(noise_ids)
+            if not target_set:
+                return False, "sort_target_not_contiguous", _validation_meta(subtask, descriptor, idx, {"expected_target_tote_ids": list(interval_list)})
+            if list(target_ids) != list(interval_list):
+                return False, "sort_target_not_contiguous", _validation_meta(subtask, descriptor, idx, {"expected_target_tote_ids": list(interval_list)})
+            if not hit_set.issubset(target_set):
+                return False, "hit_not_subset_target", _validation_meta(subtask, descriptor, idx)
+            if not noise_set.issubset(target_set):
+                return False, "noise_not_subset_target", _validation_meta(subtask, descriptor, idx)
+            if hit_set & noise_set:
+                return False, "hit_noise_overlap", _validation_meta(subtask, descriptor, idx, {"overlap_tote_ids": sorted(hit_set & noise_set)})
+            if target_set != (hit_set | noise_set):
+                return False, "target_not_hit_plus_noise", _validation_meta(subtask, descriptor, idx, {"missing_tote_ids": sorted(target_set - (hit_set | noise_set))})
+        for tote_id in target_ids:
+            if int(tote_id) in used_totes or int(tote_id) in blocked:
+                return False, "duplicate_or_blocked_tote", _validation_meta(subtask, descriptor, idx, {"tote_id": int(tote_id)})
+            used_totes.add(int(tote_id))
+    demand = _demand_counts(config, subtask)
+    remaining = dict(demand)
+    for descriptor in descriptors:
+        remaining = _consume_coverage(opt, remaining, descriptor.hit_tote_ids)
+    if not all(int(qty) <= 0 for qty in remaining.values()):
+        return False, "unmet_demand", _validation_meta(subtask, None, -1, {"remaining_demand": dict(remaining)})
+    rough_ok, _, rough_meta = _rough_route_feasibility(opt, config, subtask, descriptors)
+    if not bool(rough_ok):
+        return False, "rough_route_infeasible", _validation_meta(subtask, None, -1, {"rough_meta": rough_meta})
+    return True, "", {}
+
+
 def validate_z_assignment(
     opt,
     config: ResourceConfig,
@@ -857,50 +1006,8 @@ def validate_z_assignment(
     descriptors: Sequence[ZTaskDescriptor],
     external_used_totes: Optional[Set[int]] = None,
 ) -> bool:
-    used_totes: Set[int] = set()
-    blocked = {int(x) for x in (external_used_totes or set())}
-    for descriptor in descriptors:
-        target_ids = [int(x) for x in (descriptor.target_tote_ids or ())]
-        hit_ids = [int(x) for x in (descriptor.hit_tote_ids or ())]
-        noise_ids = [int(x) for x in (descriptor.noise_tote_ids or ())]
-        if str(descriptor.mode).upper() == "FLIP" and tuple(target_ids) != tuple(hit_ids):
-            return False
-        if descriptor.sort_layer_range is not None:
-            stack = opt.problem.point_to_stack.get(int(descriptor.stack_id))
-            if stack is None:
-                return False
-            lo, hi = descriptor.sort_layer_range
-            interval_totes = {
-                int(getattr(tote, "id", -1))
-                for tote in (getattr(stack, "totes", []) or [])[int(lo):int(hi) + 1]
-            }
-            target_set = set(target_ids)
-            hit_set = set(hit_ids)
-            noise_set = set(noise_ids)
-            if not target_set:
-                return False
-            if not target_set.issubset(interval_totes):
-                return False
-            if not hit_set.issubset(target_set):
-                return False
-            if not noise_set.issubset(target_set):
-                return False
-            if hit_set & noise_set:
-                return False
-            if target_set != (hit_set | noise_set):
-                return False
-        for tote_id in target_ids:
-            if int(tote_id) in used_totes or int(tote_id) in blocked:
-                return False
-            used_totes.add(int(tote_id))
-    demand = _demand_counts(config, subtask)
-    remaining = dict(demand)
-    for descriptor in descriptors:
-        remaining = _consume_coverage(opt, remaining, descriptor.hit_tote_ids)
-    if not all(int(qty) <= 0 for qty in remaining.values()):
-        return False
-    rough_ok, _, _ = _rough_route_feasibility(opt, config, subtask, descriptors)
-    return bool(rough_ok)
+    ok, _, _ = validate_z_assignment_detail(opt, config, subtask, descriptors, external_used_totes=external_used_totes)
+    return bool(ok)
 
 
 def build_full_z_assignment(
@@ -989,6 +1096,27 @@ def _rebuild_window(
             )
         )
 
+    gurobi_like_sort = str(strategy) == "z_repair_gurobi_like_sort"
+    gurobi_noise_weight = float(getattr(opt.cfg, "resource_gurobi_like_sort_noise_weight", 2.0))
+    gurobi_span_weight = float(getattr(opt.cfg, "resource_gurobi_like_sort_span_weight", 0.20))
+    gurobi_sort_bonus = float(getattr(opt.cfg, "resource_gurobi_like_sort_bonus", 1.0))
+
+    def _gurobi_like_sort_score(descriptor: ZTaskDescriptor, target_len: int) -> Tuple[float, float, float, float]:
+        mode = str(descriptor.mode).upper()
+        sort_range = getattr(descriptor, "sort_layer_range", None)
+        span = 0.0
+        if sort_range is not None:
+            span = float(max(0, int(sort_range[1]) - int(sort_range[0]) + 1))
+        noise_count = float(len(list(getattr(descriptor, "noise_tote_ids", []) or [])))
+        service_time = float(getattr(descriptor, "robot_service_time", 0.0) or 0.0) + float(getattr(descriptor, "station_service_time", 0.0) or 0.0)
+        mode_penalty = 0.0 if mode == "SORT" else float(gurobi_sort_bonus)
+        return (
+            float(mode_penalty),
+            float(gurobi_noise_weight * noise_count),
+            float(service_time + gurobi_span_weight * span),
+            float(target_len),
+        )
+
     while any(int(qty) > 0 for qty in remaining.values()):
         candidate_rows = []
         if joint_seed_hits:
@@ -1008,7 +1136,10 @@ def _rebuild_window(
                     operation_mode="SORT",
                 )
                 plan = opt._z_build_plan_from_hits(temp_subtask, dummy_task, int(stack_id), hit_ids, "SORT", {-1})
-                if not bool(plan.get("valid", False)) or not _sort_plan_within_capacity(plan):
+                if not bool(plan.get("valid", False)):
+                    continue
+                plan = _canonicalize_z_plan(opt, plan)
+                if not _sort_plan_within_capacity(plan):
                     continue
                 target_ids = [int(x) for x in (plan.get("target_tote_ids", []) or [])]
                 if any(int(tid) in blocked_totes or int(tid) in local_used_totes for tid in target_ids):
@@ -1026,16 +1157,27 @@ def _rebuild_window(
                 detour = float(opt._z_best_insertion_detour(int(stack_id)))
                 target_len = len(list(plan.get("target_tote_ids", []) or []))
                 queue_burden = float(_queue_weighted_station_burden(temp_descriptor))
-                score = (
-                    -float(coverage_gain),
-                    float(queue_burden),
-                    float(rough_penalty),
-                    float(detour),
-                    float(target_len),
-                    float(_joint_sort_tie_break(_descriptor_from_plan(opt, subtask, plan, -1, coverage_gain), len(seed_hits))),
-                    int(stack_id),
-                    "SORT",
-                )
+                if gurobi_like_sort:
+                    score = (
+                        -float(coverage_gain),
+                        *_gurobi_like_sort_score(temp_descriptor, target_len),
+                        float(queue_burden),
+                        float(rough_penalty),
+                        float(detour),
+                        int(stack_id),
+                        "SORT",
+                    )
+                else:
+                    score = (
+                        -float(coverage_gain),
+                        float(queue_burden),
+                        float(rough_penalty),
+                        float(detour),
+                        float(target_len),
+                        float(_joint_sort_tie_break(_descriptor_from_plan(opt, subtask, plan, -1, coverage_gain), len(seed_hits))),
+                        int(stack_id),
+                        "SORT",
+                    )
                 candidate_rows.append({"score": score, "plan": plan, "coverage_gain": coverage_gain})
 
         for stack_id in candidate_stack_ids:
@@ -1055,7 +1197,7 @@ def _rebuild_window(
             if not hit_ids:
                 continue
             modes = ["FLIP", "SORT"]
-            if str(strategy) == "z_repair_sort_range_shrink_first":
+            if str(strategy) in {"z_repair_sort_range_shrink_first", "z_repair_gurobi_like_sort"}:
                 modes = ["SORT", "FLIP"]
             elif _is_joint_sort_strategy(str(strategy)) and int(stack_id) in set(int(x) for x in joint_seed_hits.keys()):
                 modes = ["SORT", "FLIP"]
@@ -1063,6 +1205,7 @@ def _rebuild_window(
                 plan = opt._z_build_plan_from_hits(temp_subtask, dummy_task, int(stack_id), hit_ids, str(mode).upper(), {-1})
                 if not bool(plan.get("valid", False)):
                     continue
+                plan = _canonicalize_z_plan(opt, plan)
                 if not _sort_plan_within_capacity(plan):
                     continue
                 target_ids = [int(x) for x in (plan.get("target_tote_ids", []) or [])]
@@ -1084,17 +1227,29 @@ def _rebuild_window(
                 same_stack_bonus = 0.0 if int(stack_id) in set(int(x) for x in seed_stack_ids) else 1.0
                 if _is_joint_sort_strategy(str(strategy)) and int(stack_id) in set(int(x) for x in joint_seed_hits.keys()):
                     same_stack_bonus -= 0.1
-                score = (
-                    -float(coverage_gain),
-                    float(queue_burden),
-                    float(rough_penalty),
-                    float(detour),
-                    float(same_stack_bonus),
-                    float(target_len),
-                    float(_joint_sort_tie_break(_descriptor_from_plan(opt, subtask, plan, -1, coverage_gain), len(joint_seed_hits.get(int(stack_id), [])))),
-                    int(stack_id),
-                    str(mode).upper(),
-                )
+                if gurobi_like_sort:
+                    score = (
+                        -float(coverage_gain),
+                        *_gurobi_like_sort_score(temp_descriptor, target_len),
+                        float(queue_burden),
+                        float(rough_penalty),
+                        float(detour),
+                        float(same_stack_bonus),
+                        int(stack_id),
+                        str(mode).upper(),
+                    )
+                else:
+                    score = (
+                        -float(coverage_gain),
+                        float(queue_burden),
+                        float(rough_penalty),
+                        float(detour),
+                        float(same_stack_bonus),
+                        float(target_len),
+                        float(_joint_sort_tie_break(_descriptor_from_plan(opt, subtask, plan, -1, coverage_gain), len(joint_seed_hits.get(int(stack_id), [])))),
+                        int(stack_id),
+                        str(mode).upper(),
+                    )
                 candidate_rows.append({"score": score, "plan": plan, "coverage_gain": coverage_gain})
         chosen_row = pick_soft_greedy_min(rng, candidate_rows, opt.cfg, score_getter=lambda item: item["score"])
         if chosen_row is None:
@@ -1117,7 +1272,14 @@ def _rebuild_window(
         remaining = _consume_coverage(opt, remaining, descriptor.hit_tote_ids)
 
     full_assignment = list(preserved_before) + list(created) + list(preserved_after)
-    if validate_z_assignment(opt, config, subtask, full_assignment, external_used_totes=blocked_totes):
+    validation_ok, validation_reason, validation_detail = validate_z_assignment_detail(
+        opt,
+        config,
+        subtask,
+        full_assignment,
+        external_used_totes=blocked_totes,
+    )
+    if validation_ok:
         _, rough_penalty, rough_meta = _rough_route_feasibility(opt, config, subtask, full_assignment)
         return True, full_assignment, {
             "fallback_used": bool(fallback_used),
@@ -1128,7 +1290,8 @@ def _rebuild_window(
         }
     _, rough_penalty, rough_meta = _rough_route_feasibility(opt, config, subtask, full_assignment)
     return False, list(full_assignment), {
-        "reason": "invalid_assignment",
+        "reason": str(validation_reason or "invalid_assignment"),
+        "validation_detail": dict(validation_detail or {}),
         "fallback_used": bool(fallback_used),
         "rough_penalty": float(rough_penalty),
         "rough_meta": rough_meta,
@@ -1503,14 +1666,14 @@ def apply_exact_z_plan(opt, config: ResourceConfig, plan: Dict[str, object], rng
         windows = [destroy_ctx]
     touched_subtask_ids = sorted({int(window_ctx.get("subtask_id", -1)) for window_ctx in windows if int(window_ctx.get("subtask_id", -1)) >= 0})
     if not touched_subtask_ids:
-        return {"success": False}
+        return {"success": False, "reason": "no_touched_subtasks"}
     candidate = config.clone_for_layer("Z", touched_subtask_ids)
     exact_windows = []
     for window_ctx in windows:
         subtask_id = int(window_ctx.get("subtask_id", -1))
         exact_ctx = _destroy_window(candidate, subtask_id, int(window_ctx.get("window_start", 0)), int(window_ctx.get("window_end", 0)))
         if not bool(exact_ctx.get("success", False)):
-            return {"success": False}
+            return {"success": False, "reason": "exact_destroy_window_fail"}
         exact_windows.append(exact_ctx)
     exact_ctx = {"success": True, "windows": exact_windows}
     repair_result = _repair_window(opt, candidate, exact_ctx, str(plan.get("strategy", "z_repair_same_stack_window")), allow_fallback=False, rng=rng)
@@ -1519,7 +1682,11 @@ def apply_exact_z_plan(opt, config: ResourceConfig, plan: Dict[str, object], rng
         repair_result = _repair_window(opt, candidate, exact_ctx, "z_repair_greedy_fallback", allow_fallback=True, rng=rng)
         fallback_used = bool(repair_result.get("success", False))
     if not bool(repair_result.get("success", False)):
-        return {"success": False}
+        return {
+            "success": False,
+            "reason": str(repair_result.get("reason", "exact_repair_fail") or "exact_repair_fail"),
+            "validation_detail": dict(repair_result.get("validation_detail", {}) or {}),
+        }
     candidate.rebuild_indices()
     return {
         "success": True,
@@ -1574,7 +1741,12 @@ def _repair_window(opt, config: ResourceConfig, ctx: Dict[str, object], strategy
                 restore_row = config.subtasks.get(int(restore_subtask_id))
                 if restore_row is not None:
                     restore_row.z_tasks = list(restore_assignment)
-            return {"success": False, "reason": str(meta.get("reason", "repair_fail")), "fallback_used": bool(fallback_used or meta.get("fallback_used", False))}
+            return {
+                "success": False,
+                "reason": str(meta.get("reason", "repair_fail")),
+                "validation_detail": dict(meta.get("validation_detail", {}) or {}),
+                "fallback_used": bool(fallback_used or meta.get("fallback_used", False)),
+            }
         subtask.z_tasks = list(assignment)
         affected_subtasks.add(int(subtask_id))
         fallback_used = bool(fallback_used or meta.get("fallback_used", False))
@@ -1595,6 +1767,10 @@ def z_repair_bounded_detour_window(opt, config: ResourceConfig, ctx: Dict[str, o
 
 def z_repair_sort_range_shrink_first(opt, config: ResourceConfig, ctx: Dict[str, object], rng) -> Dict[str, object]:
     return _repair_window(opt, config, ctx, "z_repair_sort_range_shrink_first", allow_fallback=False, rng=rng)
+
+
+def z_repair_gurobi_like_sort(opt, config: ResourceConfig, ctx: Dict[str, object], rng) -> Dict[str, object]:
+    return _repair_window(opt, config, ctx, "z_repair_gurobi_like_sort", allow_fallback=False, rng=rng)
 
 
 def z_repair_mode_toggle_contextual(opt, config: ResourceConfig, ctx: Dict[str, object], rng) -> Dict[str, object]:
@@ -1620,7 +1796,9 @@ Z_REPAIR_OPERATORS = {
     "z_repair_same_stack_window": z_repair_same_stack_window,
     "z_repair_bounded_detour_window": z_repair_bounded_detour_window,
     "z_repair_sort_range_shrink_first": z_repair_sort_range_shrink_first,
+    "z_repair_gurobi_like_sort": z_repair_gurobi_like_sort,
     "z_repair_mode_toggle_contextual": z_repair_mode_toggle_contextual,
+    "z_repair_joint_sort_colocated_flip": z_repair_joint_sort_colocated_flip,
 }
 
 Z_FALLBACK_OPERATOR = "z_repair_greedy_fallback"

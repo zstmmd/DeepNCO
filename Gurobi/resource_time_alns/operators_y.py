@@ -376,8 +376,9 @@ def _triangle_arrival_cost(
     best_cost = float("inf")
     best_robot_id = -1
     for robot_id, meta in frontier.items():
-        del meta
         total = _robot_station_arrival_cost(opt, config, subtask, int(station_id), int(robot_id), robot_frontier=frontier)
+        total += float(getattr(opt.cfg, "resource_y_robot_available_time_weight", 0.25)) * float(meta.get("available_time", 0.0) or 0.0)
+        total += float(getattr(opt.cfg, "resource_y_robot_count_penalty", 6.0)) * float(meta.get("assigned_count", 0.0) or 0.0)
         if (float(total), int(robot_id)) < (float(best_cost), int(best_robot_id if best_robot_id >= 0 else 10**9)):
             best_cost = float(total)
             best_robot_id = int(robot_id)
@@ -704,6 +705,51 @@ def y_destroy_load_skew_release(opt, config: ResourceConfig, rng, degree: int) -
     return y_destroy_congested_station_block(opt, config, rng, degree)
 
 
+def _heavy_robot_release_payload(opt, config: ResourceConfig, rng, degree: int, preview: bool) -> Dict[str, object]:
+    metrics = _snapshot_subtask_metrics(opt)
+    robot_chains = _snapshot_robot_chains(opt)
+    if not metrics or not robot_chains:
+        fallback = y_plan_destroy_load_skew_release if bool(preview) else y_destroy_load_skew_release
+        return fallback(opt, config, rng, degree)
+    robot_scores = []
+    for robot_id, chain in robot_chains.items():
+        task_ids = [int(subtask_id) for subtask_id in (chain or []) if int(subtask_id) in config.subtasks]
+        if not task_ids:
+            continue
+        finish = max(float(metrics.get(int(subtask_id), {}).get("completion_time", 0.0)) for subtask_id in task_ids)
+        work = sum(float(_subtask_station_work(config.subtasks[int(subtask_id)])) for subtask_id in task_ids)
+        robot_scores.append(((-float(finish), -float(work), -len(task_ids), int(robot_id)), int(robot_id), task_ids))
+    if not robot_scores:
+        fallback = y_plan_destroy_load_skew_release if bool(preview) else y_destroy_load_skew_release
+        return fallback(opt, config, rng, degree)
+    robot_scores.sort(key=lambda item: item[0])
+    _, heavy_robot_id, chain = robot_scores[0]
+    tail = list(reversed(chain))
+    release_ids = tail[: max(1, int(degree))]
+    if len(release_ids) < max(1, int(degree)):
+        for subtask_id in chain:
+            if int(subtask_id) not in release_ids:
+                release_ids.append(int(subtask_id))
+            if len(release_ids) >= max(1, int(degree)):
+                break
+    return _finalize_release_ids(
+        config=config,
+        release_ids=release_ids,
+        degree=int(degree),
+        priority_ids=release_ids,
+        metrics=metrics,
+        preview=bool(preview),
+        extra={
+            "source_robot_ids": [int(heavy_robot_id)],
+            "trigger_reason": "heavy_robot_unload",
+        },
+    )
+
+
+def y_destroy_heavy_robot_tail(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
+    return _heavy_robot_release_payload(opt, config, rng, int(degree), preview=False)
+
+
 def _initial_idle_release_payload(opt, config: ResourceConfig, rng, degree: int, preview: bool) -> Dict[str, object]:
     heads = _snapshot_station_idle_heads(opt)
     metrics = _snapshot_subtask_metrics(opt)
@@ -917,6 +963,10 @@ def y_plan_destroy_rank_window_release(opt, config: ResourceConfig, rng, degree:
 
 def y_plan_destroy_load_skew_release(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
     return y_plan_destroy_congested_station_block(opt, config, rng, degree)
+
+
+def y_plan_destroy_heavy_robot_tail(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
+    return _heavy_robot_release_payload(opt, config, rng, int(degree), preview=True)
 
 
 def y_plan_destroy_initial_idle_head(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
@@ -1371,6 +1421,7 @@ def plan_y_candidate(opt, config: ResourceConfig, destroy_name: str, repair_name
         "y_destroy_cross_station_fragment": y_plan_destroy_cross_station_fragment,
         "y_destroy_rank_window_release": y_plan_destroy_rank_window_release,
         "y_destroy_load_skew_release": y_plan_destroy_load_skew_release,
+        "y_destroy_heavy_robot_tail": y_plan_destroy_heavy_robot_tail,
         "y_destroy_initial_idle_head": y_plan_destroy_initial_idle_head,
         "y_destroy_max_tardiness_blocker": y_plan_destroy_max_tardiness_blocker,
     }
@@ -1552,6 +1603,7 @@ Y_DESTROY_OPERATORS = {
     "y_destroy_cross_station_fragment": y_destroy_cross_station_fragment,
     "y_destroy_rank_window_release": y_destroy_rank_window_release,
     "y_destroy_load_skew_release": y_destroy_load_skew_release,
+    "y_destroy_heavy_robot_tail": y_destroy_heavy_robot_tail,
     "y_destroy_initial_idle_head": y_destroy_initial_idle_head,
     "y_destroy_max_tardiness_blocker": y_destroy_max_tardiness_blocker,
 }
