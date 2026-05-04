@@ -1,0 +1,12 @@
+best_iter=0
+best_z=212.000000
+recomputed_z=212.000000
+global_makespan=212.000000
+kitting_span_overrun_total=0.000000
+kitting_span_penalty_weight=5.000000
+run_total_time_sec=5.966261
+sp1_subtask_count=7, sp1_avg_sku_per_subtask=4.000000, sp1_max_sku_per_subtask=6.000000
+sp2_station_idle_total=628.000000, sp2_station_load_max=4.000000, sp2_station_load_std=1.000000
+sp3_hit_stack_count=11.000000, sp3_noise_ratio=0.052632, sp3_avg_stack_span=2.333333, sp3_sorting_cost_proxy=2.000000
+sp4_robot_path_length_total=554.000000, sp4_latest_robot_finish=185.000000, sp4_arrival_slack_mean=11.333333
+coverage_ok=True, unmet_sku_total=0, unmet_subtask_count=0

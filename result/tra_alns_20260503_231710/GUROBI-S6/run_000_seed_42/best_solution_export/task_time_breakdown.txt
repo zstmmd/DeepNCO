@@ -1,0 +1,26 @@
+[Task Time Breakdown]
+TaskID | SubTask | Station | Robot | Trip | ArriveStack | RobotSrv | ArriveStation | Start | PickDur | ExtraDur | End | Wait | TotalDur | NoiseCnt | SP3Source
+     0 |       2 |       2 |     0 |    0 |        8.00 |     3.00 |        102.00 | 102.00 |   12.00 |     2.00 | 116.00 | 0.00 |    14.00 |        1 | RESOURCE_TIME_ALNS
+  SP3Inputs: materialized_from_resource_config
+     1 |       2 |       2 |     0 |    0 |       38.00 |     3.00 |        102.00 | 116.00 |    3.00 |     0.00 | 119.00 | 14.00 |     3.00 |        0 | RESOURCE_TIME_ALNS
+  SP3Inputs: materialized_from_resource_config
+     2 |       3 |       3 |     1 |    0 |       49.00 |     6.00 |        181.00 | 181.00 |    9.00 |     0.00 | 190.00 | 0.00 |     9.00 |        0 | RESOURCE_TIME_ALNS
+  SP3Inputs: materialized_from_resource_config
+     3 |       3 |       3 |     1 |    0 |      157.00 |     3.00 |        181.00 | 190.00 |    3.00 |     0.00 | 193.00 | 9.00 |     3.00 |        0 | RESOURCE_TIME_ALNS
+  SP3Inputs: materialized_from_resource_config
+     4 |       6 |       1 |     0 |    0 |       69.00 |     6.00 |        128.00 | 175.00 |    9.00 |     0.00 | 184.00 | 47.00 |     9.00 |        0 | RESOURCE_TIME_ALNS
+  SP3Inputs: materialized_from_resource_config
+     5 |       4 |       0 |     4 |    0 |      125.00 |     6.00 |        185.00 | 194.00 |   15.00 |     0.00 | 209.00 | 9.00 |    15.00 |        0 | RESOURCE_TIME_ALNS
+  SP3Inputs: materialized_from_resource_config
+     6 |       4 |       0 |     4 |    0 |       28.00 |     3.00 |        185.00 | 209.00 |    3.00 |     0.00 | 212.00 | 24.00 |     3.00 |        0 | RESOURCE_TIME_ALNS
+  SP3Inputs: materialized_from_resource_config
+     7 |       1 |       1 |     4 |    0 |      117.00 |     3.00 |        160.00 | 160.00 |   15.00 |     0.00 | 175.00 | 0.00 |    15.00 |        0 | RESOURCE_TIME_ALNS
+  SP3Inputs: materialized_from_resource_config
+     8 |       0 |       0 |     4 |    0 |      114.00 |     3.00 |        185.00 | 185.00 |    6.00 |     0.00 | 191.00 | 0.00 |     6.00 |        0 | RESOURCE_TIME_ALNS
+  SP3Inputs: materialized_from_resource_config
+     9 |       0 |       0 |     4 |    0 |       73.00 |     3.00 |        185.00 | 191.00 |    3.00 |     0.00 | 194.00 | 6.00 |     3.00 |        0 | RESOURCE_TIME_ALNS
+  SP3Inputs: materialized_from_resource_config
+    10 |       5 |       3 |     1 |    0 |       87.00 |     3.00 |        181.00 | 193.00 |    3.00 |     0.00 | 196.00 | 12.00 |     3.00 |        0 | RESOURCE_TIME_ALNS
+  SP3Inputs: materialized_from_resource_config
+    11 |       5 |       3 |     1 |    0 |      127.00 |     2.00 |        181.00 | 196.00 |    3.00 |     0.00 | 199.00 | 15.00 |     3.00 |        0 | RESOURCE_TIME_ALNS
+  SP3Inputs: materialized_from_resource_config

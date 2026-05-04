@@ -776,7 +776,8 @@ def main() -> None:
     parser.add_argument("--disable-warm-candidate-stack-prune", action="store_true", help="Disable warm-stack candidate pruning.")
     parser.add_argument("--candidate-station-topk-per-stack", type=int, default=2)
     parser.add_argument("--route-pickup-neighbor-limit", type=int, default=5)
-    parser.add_argument("--disable-scale-adaptive-candidate-prune", action="store_true", help="Disable GUROBI-S6+ adaptive candidate compression.")
+    parser.add_argument("--enable-scale-adaptive-candidate-prune", action="store_true", help="Enable GUROBI-S6+ adaptive candidate compression.")
+    parser.add_argument("--disable-scale-adaptive-candidate-prune", action="store_true", help="Deprecated no-op: scale-adaptive candidate compression is disabled by default.")
     parser.add_argument("--disable-resource-lex-symmetry", action="store_true", help="Disable safe same-coordinate resource lex symmetry constraints.")
     parser.add_argument("--enable-anchor-first-order-robot", action="store_true", help="Experimental: fix warm first pickup to its warm robot.")
     parser.add_argument("--disable-selected-workload-lbs", action="store_true", help="Disable selected route/station workload lower bounds.")
@@ -823,7 +824,7 @@ def main() -> None:
         enable_warm_candidate_stack_prune=not bool(args.disable_warm_candidate_stack_prune),
         candidate_station_topk_per_stack=int(args.candidate_station_topk_per_stack),
         route_pickup_neighbor_limit=int(args.route_pickup_neighbor_limit),
-        enable_scale_adaptive_candidate_prune=not bool(args.disable_scale_adaptive_candidate_prune),
+        enable_scale_adaptive_candidate_prune=bool(args.enable_scale_adaptive_candidate_prune) and not bool(args.disable_scale_adaptive_candidate_prune),
         enable_resource_lex_symmetry=not bool(args.disable_resource_lex_symmetry),
         enable_anchor_first_order_robot=bool(args.enable_anchor_first_order_robot),
         enable_selected_workload_lbs=not bool(args.disable_selected_workload_lbs),

@@ -1,0 +1,10 @@
+status=TIME_LIMIT
+model_objective=106.344998
+model_cmax=105.999998
+global_makespan=105.999998
+total_span_overrun=0.000000
+total_deadline_overrun=53.000000
+sp1_subtask_count=7
+sp3_task_count=12
+sp4_robot_count=5
+coverage_ok=True

@@ -1,0 +1,34 @@
+[
+  {
+    "scale": "GUROBI-S7",
+    "status": "TIME_LIMIT",
+    "error": "",
+    "model_status_code": 9,
+    "model_sol_count": 10,
+    "u_arc_count": 9807,
+    "u_time_window_pruned_arc_count": 4885,
+    "u_time_window_latest_tightened_node_count": 340,
+    "model_objective": 231.128,
+    "model_cmax": 230.0,
+    "total_span_overrun": 0.0,
+    "total_deadline_overrun": 544.0,
+    "bom_arrival_window_violating_order_count": 0,
+    "solution_export_dir": "D:\\研究生\\毕设代码\\DeepNCO\\result\\gurobi_scale_suite_20260504_163219\\GUROBI-S7\\gurobi_solution_export"
+  },
+  {
+    "scale": "GUROBI-S8",
+    "status": "TIME_LIMIT",
+    "error": "",
+    "model_status_code": 9,
+    "model_sol_count": 10,
+    "u_arc_count": 15734,
+    "u_time_window_pruned_arc_count": 14718,
+    "u_time_window_latest_tightened_node_count": 504,
+    "model_objective": 221.2549999999999,
+    "model_cmax": 220.0,
+    "total_span_overrun": 0.0,
+    "total_deadline_overrun": 651.0,
+    "bom_arrival_window_violating_order_count": 0,
+    "solution_export_dir": "D:\\研究生\\毕设代码\\DeepNCO\\result\\gurobi_scale_suite_20260504_163219\\GUROBI-S8\\gurobi_solution_export"
+  }
+]

@@ -1,0 +1,132 @@
+[TRA Best Solution Dump]
+best_iter=0
+seed=42
+best_z=212.000000
+recomputed_z=212.000000
+global_makespan=212.000000
+
+[TRA Iter Log]
+iter=0, focus=init, z=212.0, best_z=212.0, improved=True, skipped=False, lb=None, epsilon=0.05
+iter=1, focus=Z, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=2, focus=Z, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=3, focus=Z, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=4, focus=Z, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=5, focus=Z, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=6, focus=Y, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=7, focus=Z, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=8, focus=Z, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=9, focus=Z, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=10, focus=Z, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=11, focus=Z, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=12, focus=Z, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=13, focus=Z, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=14, focus=X, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=15, focus=X, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=16, focus=Z, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=17, focus=Z, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=18, focus=Z, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=19, focus=Z, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=20, focus=Z, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=21, focus=Z, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=22, focus=Z, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=23, focus=Z, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=24, focus=X, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=25, focus=Y, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=26, focus=Z, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=27, focus=X, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=28, focus=Y, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=29, focus=Z, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=30, focus=Y, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=31, focus=Z, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=32, focus=X, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=33, focus=Y, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=34, focus=Z, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=35, focus=Y, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=36, focus=Z, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=37, focus=Y, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=38, focus=Z, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=39, focus=Y, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=40, focus=Z, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=41, focus=Y, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=42, focus=Z, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=43, focus=X, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=44, focus=Y, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=45, focus=Z, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=46, focus=Y, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=47, focus=Z, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=48, focus=X, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=49, focus=Y, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+iter=50, focus=Z, z=212.0, best_z=212.0, improved=False, skipped=False, lb=None, epsilon=None
+
+[SP1 Decisions]
+subtask_id=0, order_id=0, sku_units=3, unique_skus=[3, 13, 14], sku_list=[13, 14, 3]
+subtask_id=1, order_id=1, sku_units=5, unique_skus=[2, 3, 4, 5, 12], sku_list=[12, 2, 3, 4, 5]
+subtask_id=2, order_id=2, sku_units=5, unique_skus=[0, 3, 11, 28, 33], sku_list=[0, 11, 28, 33, 3]
+subtask_id=3, order_id=3, sku_units=4, unique_skus=[2, 4, 33, 35], sku_list=[2, 33, 35, 4]
+subtask_id=4, order_id=4, sku_units=6, unique_skus=[0, 1, 4, 6, 7, 19], sku_list=[0, 19, 1, 4, 6, 7]
+subtask_id=5, order_id=4, sku_units=2, unique_skus=[24, 29], sku_list=[24, 29]
+subtask_id=6, order_id=5, sku_units=3, unique_skus=[3, 5, 27], sku_list=[27, 3, 5]
+
+[SP2 Decisions]
+subtask_id=0, station_id=0, rank=0, est_start=0.000000
+subtask_id=4, station_id=0, rank=1, est_start=0.000000
+subtask_id=1, station_id=1, rank=0, est_start=0.000000
+subtask_id=6, station_id=1, rank=1, est_start=0.000000
+subtask_id=2, station_id=2, rank=0, est_start=0.000000
+subtask_id=3, station_id=3, rank=0, est_start=0.000000
+subtask_id=5, station_id=3, rank=1, est_start=0.000000
+
+[SP3 Decisions]
+task_id=0, subtask_id=2, stack_id=389, station_id=2, mode=SORT, target_totes=[49, 50, 51], hit_totes=[49, 51], noise_totes=[50], sort_range=(4, 6), load=3, sku_pick_count=4, robot_service_time=3.000000, station_service_time=2.000000
+task_id=1, subtask_id=2, stack_id=1556, station_id=2, mode=FLIP, target_totes=[65], hit_totes=[65], noise_totes=[], sort_range=None, load=1, sku_pick_count=1, robot_service_time=3.000000, station_service_time=0.000000
+task_id=2, subtask_id=3, stack_id=2862, station_id=3, mode=FLIP, target_totes=[23, 30], hit_totes=[23, 30], noise_totes=[], sort_range=None, load=2, sku_pick_count=3, robot_service_time=6.000000, station_service_time=0.000000
+task_id=3, subtask_id=3, stack_id=523, station_id=3, mode=FLIP, target_totes=[19], hit_totes=[19], noise_totes=[], sort_range=None, load=1, sku_pick_count=1, robot_service_time=3.000000, station_service_time=0.000000
+task_id=4, subtask_id=6, stack_id=1350, station_id=1, mode=FLIP, target_totes=[87, 95], hit_totes=[87, 95], noise_totes=[], sort_range=None, load=2, sku_pick_count=3, robot_service_time=6.000000, station_service_time=0.000000
+task_id=5, subtask_id=4, stack_id=358, station_id=0, mode=FLIP, target_totes=[120, 125], hit_totes=[120, 125], noise_totes=[], sort_range=None, load=2, sku_pick_count=5, robot_service_time=6.000000, station_service_time=0.000000
+task_id=6, subtask_id=4, stack_id=1853, station_id=0, mode=FLIP, target_totes=[132], hit_totes=[132], noise_totes=[], sort_range=None, load=1, sku_pick_count=1, robot_service_time=3.000000, station_service_time=0.000000
+task_id=7, subtask_id=1, stack_id=509, station_id=1, mode=SORT, target_totes=[106, 107], hit_totes=[106, 107], noise_totes=[], sort_range=(1, 2), load=2, sku_pick_count=5, robot_service_time=3.000000, station_service_time=0.000000
+task_id=8, subtask_id=0, stack_id=509, station_id=0, mode=SORT, target_totes=[105, 108], hit_totes=[105, 108], noise_totes=[], sort_range=(0, 1), load=2, sku_pick_count=2, robot_service_time=3.000000, station_service_time=0.000000
+task_id=9, subtask_id=0, stack_id=2655, station_id=0, mode=FLIP, target_totes=[79], hit_totes=[79], noise_totes=[], sort_range=None, load=1, sku_pick_count=1, robot_service_time=3.000000, station_service_time=0.000000
+task_id=10, subtask_id=5, stack_id=1958, station_id=3, mode=FLIP, target_totes=[38], hit_totes=[38], noise_totes=[], sort_range=None, load=1, sku_pick_count=1, robot_service_time=3.000000, station_service_time=0.000000
+task_id=11, subtask_id=5, stack_id=2603, station_id=3, mode=FLIP, target_totes=[3], hit_totes=[3], noise_totes=[], sort_range=None, load=1, sku_pick_count=1, robot_service_time=2.000000, station_service_time=0.000000
+
+[SP4 Decisions]
+subtask_id=0, assigned_robot_id=4
+subtask_id=1, assigned_robot_id=4
+subtask_id=2, assigned_robot_id=0
+subtask_id=3, assigned_robot_id=1
+subtask_id=4, assigned_robot_id=4
+subtask_id=5, assigned_robot_id=1
+subtask_id=6, assigned_robot_id=0
+task_id=0, robot_id=0, trip_id=0, arrival_stack=8.000000, arrival_station=102.000000
+task_id=1, robot_id=0, trip_id=0, arrival_stack=38.000000, arrival_station=102.000000
+task_id=2, robot_id=1, trip_id=0, arrival_stack=49.000000, arrival_station=181.000000
+task_id=3, robot_id=1, trip_id=0, arrival_stack=157.000000, arrival_station=181.000000
+task_id=4, robot_id=0, trip_id=0, arrival_stack=69.000000, arrival_station=128.000000
+task_id=5, robot_id=4, trip_id=0, arrival_stack=125.000000, arrival_station=185.000000
+task_id=6, robot_id=4, trip_id=0, arrival_stack=28.000000, arrival_station=185.000000
+task_id=7, robot_id=4, trip_id=0, arrival_stack=117.000000, arrival_station=160.000000
+task_id=8, robot_id=4, trip_id=0, arrival_stack=114.000000, arrival_station=185.000000
+task_id=9, robot_id=4, trip_id=0, arrival_stack=73.000000, arrival_station=185.000000
+task_id=10, robot_id=1, trip_id=0, arrival_stack=87.000000, arrival_station=181.000000
+task_id=11, robot_id=1, trip_id=0, arrival_stack=127.000000, arrival_station=181.000000
+
+[SP4 Trips By Robot]
+robot_id=0, trip_id=0, task_ids=[0, 1, 4], station_ids=[2, 2, 1], stack_ids=[389, 1556, 1350]
+robot_id=1, trip_id=0, task_ids=[2, 10, 11, 3], station_ids=[3, 3, 3, 3], stack_ids=[2862, 1958, 2603, 523]
+robot_id=4, trip_id=0, task_ids=[6, 9, 8, 7, 5], station_ids=[0, 0, 0, 1, 0], stack_ids=[1853, 2655, 509, 509, 358]
+
+[Z Reproduction Fields]
+z = max(task.end_process_time)
+task_id=8, subtask_id=0, station_id=0, robot_id=4, trip_id=0, arrival_stack=114.000000, robot_service_time=3.000000, arrival_station=185.000000, sku_pick_count=2, picking_duration=6.000000, station_service_time=0.000000, extra_service_used=0.000000, start_process_time=185.000000, end_process_time=191.000000, tote_wait_time=0.000000, total_process_duration=6.000000, noise_cnt=0
+task_id=9, subtask_id=0, station_id=0, robot_id=4, trip_id=0, arrival_stack=73.000000, robot_service_time=3.000000, arrival_station=185.000000, sku_pick_count=1, picking_duration=3.000000, station_service_time=0.000000, extra_service_used=0.000000, start_process_time=191.000000, end_process_time=194.000000, tote_wait_time=6.000000, total_process_duration=3.000000, noise_cnt=0
+task_id=5, subtask_id=4, station_id=0, robot_id=4, trip_id=0, arrival_stack=125.000000, robot_service_time=6.000000, arrival_station=185.000000, sku_pick_count=5, picking_duration=15.000000, station_service_time=0.000000, extra_service_used=0.000000, start_process_time=194.000000, end_process_time=209.000000, tote_wait_time=9.000000, total_process_duration=15.000000, noise_cnt=0
+task_id=6, subtask_id=4, station_id=0, robot_id=4, trip_id=0, arrival_stack=28.000000, robot_service_time=3.000000, arrival_station=185.000000, sku_pick_count=1, picking_duration=3.000000, station_service_time=0.000000, extra_service_used=0.000000, start_process_time=209.000000, end_process_time=212.000000, tote_wait_time=24.000000, total_process_duration=3.000000, noise_cnt=0
+task_id=7, subtask_id=1, station_id=1, robot_id=4, trip_id=0, arrival_stack=117.000000, robot_service_time=3.000000, arrival_station=160.000000, sku_pick_count=5, picking_duration=15.000000, station_service_time=0.000000, extra_service_used=0.000000, start_process_time=160.000000, end_process_time=175.000000, tote_wait_time=0.000000, total_process_duration=15.000000, noise_cnt=0
+task_id=4, subtask_id=6, station_id=1, robot_id=0, trip_id=0, arrival_stack=69.000000, robot_service_time=6.000000, arrival_station=128.000000, sku_pick_count=3, picking_duration=9.000000, station_service_time=0.000000, extra_service_used=0.000000, start_process_time=175.000000, end_process_time=184.000000, tote_wait_time=47.000000, total_process_duration=9.000000, noise_cnt=0
+task_id=0, subtask_id=2, station_id=2, robot_id=0, trip_id=0, arrival_stack=8.000000, robot_service_time=3.000000, arrival_station=102.000000, sku_pick_count=4, picking_duration=12.000000, station_service_time=2.000000, extra_service_used=2.000000, start_process_time=102.000000, end_process_time=116.000000, tote_wait_time=0.000000, total_process_duration=14.000000, noise_cnt=1
+task_id=1, subtask_id=2, station_id=2, robot_id=0, trip_id=0, arrival_stack=38.000000, robot_service_time=3.000000, arrival_station=102.000000, sku_pick_count=1, picking_duration=3.000000, station_service_time=0.000000, extra_service_used=0.000000, start_process_time=116.000000, end_process_time=119.000000, tote_wait_time=14.000000, total_process_duration=3.000000, noise_cnt=0
+task_id=2, subtask_id=3, station_id=3, robot_id=1, trip_id=0, arrival_stack=49.000000, robot_service_time=6.000000, arrival_station=181.000000, sku_pick_count=3, picking_duration=9.000000, station_service_time=0.000000, extra_service_used=0.000000, start_process_time=181.000000, end_process_time=190.000000, tote_wait_time=0.000000, total_process_duration=9.000000, noise_cnt=0
+task_id=3, subtask_id=3, station_id=3, robot_id=1, trip_id=0, arrival_stack=157.000000, robot_service_time=3.000000, arrival_station=181.000000, sku_pick_count=1, picking_duration=3.000000, station_service_time=0.000000, extra_service_used=0.000000, start_process_time=190.000000, end_process_time=193.000000, tote_wait_time=9.000000, total_process_duration=3.000000, noise_cnt=0
+task_id=10, subtask_id=5, station_id=3, robot_id=1, trip_id=0, arrival_stack=87.000000, robot_service_time=3.000000, arrival_station=181.000000, sku_pick_count=1, picking_duration=3.000000, station_service_time=0.000000, extra_service_used=0.000000, start_process_time=193.000000, end_process_time=196.000000, tote_wait_time=12.000000, total_process_duration=3.000000, noise_cnt=0
+task_id=11, subtask_id=5, station_id=3, robot_id=1, trip_id=0, arrival_stack=127.000000, robot_service_time=2.000000, arrival_station=181.000000, sku_pick_count=1, picking_duration=3.000000, station_service_time=0.000000, extra_service_used=0.000000, start_process_time=196.000000, end_process_time=199.000000, tote_wait_time=15.000000, total_process_duration=3.000000, noise_cnt=0

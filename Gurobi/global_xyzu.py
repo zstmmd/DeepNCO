@@ -134,7 +134,7 @@ class GlobalXYZUConfig:
     enable_route_arrival_slot_linear: bool = False
     enable_warm_prune_bound_repair: bool = False
     enable_warm_start_route_repair: bool = True
-    enable_scale_adaptive_candidate_prune: bool = True
+    enable_scale_adaptive_candidate_prune: bool = False
     route_pickup_neighbor_limit: int = 5
 
 

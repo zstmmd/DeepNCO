@@ -1,0 +1,85 @@
+{
+  "unmet_subtask_count": 0,
+  "unmet_sku_total": 0,
+  "details": [
+    {
+      "subtask_id": 0,
+      "unmet": 0,
+      "unmet_skus": {},
+      "chosen_stacks": [
+        941,
+        1547
+      ],
+      "hit_totes": [
+        85,
+        89
+      ]
+    },
+    {
+      "subtask_id": 1,
+      "unmet": 0,
+      "unmet_skus": {},
+      "chosen_stacks": [
+        1457,
+        1547
+      ],
+      "hit_totes": [
+        6,
+        92,
+        95
+      ]
+    },
+    {
+      "subtask_id": 2,
+      "unmet": 0,
+      "unmet_skus": {},
+      "chosen_stacks": [
+        938
+      ],
+      "hit_totes": [
+        46,
+        47
+      ]
+    },
+    {
+      "subtask_id": 3,
+      "unmet": 0,
+      "unmet_skus": {},
+      "chosen_stacks": [
+        207
+      ],
+      "hit_totes": [
+        27,
+        29
+      ]
+    },
+    {
+      "subtask_id": 4,
+      "unmet": 0,
+      "unmet_skus": {},
+      "chosen_stacks": [
+        941,
+        1582
+      ],
+      "hit_totes": [
+        17,
+        82
+      ]
+    },
+    {
+      "subtask_id": 5,
+      "unmet": 0,
+      "unmet_skus": {},
+      "chosen_stacks": [
+        336,
+        938,
+        1916
+      ],
+      "hit_totes": [
+        3,
+        33,
+        45
+      ]
+    }
+  ]
+}

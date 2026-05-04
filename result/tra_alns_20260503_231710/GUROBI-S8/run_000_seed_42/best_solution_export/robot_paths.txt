@@ -1,0 +1,58 @@
+Robot 0 Path:
+Time, X, Y, Action
+72.00, 34, 30, Arrive_Stack_2344
+153.00, 76, 0, Arrive_Station_5
+93.00, 44, 24, Arrive_Stack_1892
+199.00, 30, 0, Arrive_Station_2
+130.00, 60, 5, Arrive_Stack_445
+153.00, 76, 0, Arrive_Station_5
+221.00, 20, 12, Arrive_Stack_944
+241.00, 15, 0, Arrive_Station_1
+------------------------------
+Robot 1 Path:
+Time, X, Y, Action
+31.00, 20, 12, Arrive_Stack_944
+183.00, 46, 0, Arrive_Station_3
+56.00, 12, 45, Arrive_Stack_3477
+161.00, 30, 0, Arrive_Station_2
+66.00, 34, 30, Arrive_Stack_2344
+183.00, 46, 0, Arrive_Station_3
+77.00, 29, 44, Arrive_Stack_3417
+145.00, 46, 0, Arrive_Station_3
+95.00, 37, 36, Arrive_Stack_2809
+145.00, 46, 0, Arrive_Station_3
+106.00, 37, 27, Arrive_Stack_2116
+247.00, 0, 0, Arrive_Station_0
+193.00, 23, 25, Arrive_Stack_1948
+247.00, 0, 0, Arrive_Station_0
+209.00, 16, 19, Arrive_Stack_1479
+232.00, 15, 0, Arrive_Station_1
+------------------------------
+Robot 2 Path:
+Time, X, Y, Action
+------------------------------
+Robot 3 Path:
+Time, X, Y, Action
+------------------------------
+Robot 4 Path:
+Time, X, Y, Action
+------------------------------
+Robot 5 Path:
+Time, X, Y, Action
+25.00, 20, 6, Arrive_Stack_482
+78.00, 61, 0, Arrive_Station_4
+33.00, 25, 6, Arrive_Stack_487
+298.00, 15, 0, Arrive_Station_1
+128.00, 56, 45, Arrive_Stack_3521
+298.00, 15, 0, Arrive_Station_1
+131.00, 56, 45, Arrive_Stack_3521
+298.00, 15, 0, Arrive_Station_1
+155.00, 42, 38, Arrive_Stack_2968
+267.00, 46, 0, Arrive_Station_3
+168.00, 32, 37, Arrive_Stack_2881
+267.00, 46, 0, Arrive_Station_3
+182.00, 27, 30, Arrive_Stack_2337
+252.00, 61, 0, Arrive_Station_4
+223.00, 48, 13, Arrive_Stack_1049
+298.00, 15, 0, Arrive_Station_1
+------------------------------

@@ -1,0 +1,173 @@
+{
+  "unmet_subtask_count": 0,
+  "unmet_sku_total": 0,
+  "details": [
+    {
+      "subtask_id": 0,
+      "unmet": 0,
+      "unmet_skus": {},
+      "chosen_stacks": [
+        1948
+      ],
+      "hit_totes": [
+        132,
+        133,
+        134
+      ]
+    },
+    {
+      "subtask_id": 1,
+      "unmet": 0,
+      "unmet_skus": {},
+      "chosen_stacks": [
+        487,
+        3521
+      ],
+      "hit_totes": [
+        116,
+        117,
+        147
+      ]
+    },
+    {
+      "subtask_id": 2,
+      "unmet": 0,
+      "unmet_skus": {},
+      "chosen_stacks": [
+        3477
+      ],
+      "hit_totes": [
+        169,
+        172
+      ]
+    },
+    {
+      "subtask_id": 3,
+      "unmet": 0,
+      "unmet_skus": {},
+      "chosen_stacks": [
+        2881,
+        2968
+      ],
+      "hit_totes": [
+        9,
+        10
+      ]
+    },
+    {
+      "subtask_id": 4,
+      "unmet": 0,
+      "unmet_skus": {},
+      "chosen_stacks": [
+        482,
+        2337
+      ],
+      "hit_totes": [
+        67,
+        71,
+        72,
+        165
+      ]
+    },
+    {
+      "subtask_id": 5,
+      "unmet": 0,
+      "unmet_skus": {},
+      "chosen_stacks": [
+        445
+      ],
+      "hit_totes": [
+        6
+      ]
+    },
+    {
+      "subtask_id": 6,
+      "unmet": 0,
+      "unmet_skus": {},
+      "chosen_stacks": [
+        2344
+      ],
+      "hit_totes": [
+        53,
+        60
+      ]
+    },
+    {
+      "subtask_id": 7,
+      "unmet": 0,
+      "unmet_skus": {},
+      "chosen_stacks": [
+        944,
+        2344,
+        2809,
+        3417
+      ],
+      "hit_totes": [
+        4,
+        8,
+        34,
+        52,
+        57
+      ]
+    },
+    {
+      "subtask_id": 8,
+      "unmet": 0,
+      "unmet_skus": {},
+      "chosen_stacks": [
+        1479
+      ],
+      "hit_totes": [
+        143
+      ]
+    },
+    {
+      "subtask_id": 9,
+      "unmet": 0,
+      "unmet_skus": {},
+      "chosen_stacks": [
+        1049,
+        3521
+      ],
+      "hit_totes": [
+        84,
+        120
+      ]
+    },
+    {
+      "subtask_id": 10,
+      "unmet": 0,
+      "unmet_skus": {},
+      "chosen_stacks": [
+        1892
+      ],
+      "hit_totes": [
+        0
+      ]
+    },
+    {
+      "subtask_id": 11,
+      "unmet": 0,
+      "unmet_skus": {},
+      "chosen_stacks": [
+        2116
+      ],
+      "hit_totes": [
+        98,
+        99
+      ]
+    },
+    {
+      "subtask_id": 12,
+      "unmet": 0,
+      "unmet_skus": {},
+      "chosen_stacks": [
+        944
+      ],
+      "hit_totes": [
+        35,
+        37
+      ]
+    }
+  ]
+}
