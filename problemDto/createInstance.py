@@ -65,6 +65,15 @@ class CreateOFSProblem:
             "GUROBI-S7": {"map_size": (4, 6), "resources": (5, 5, 180), "data": (7, 45), "bom_complexity": (8, 1)},
             "GUROBI-S8": {"map_size": (4, 6), "resources": (6, 6, 200), "data": (8, 50), "bom_complexity": (8, 1)},
             "GUROBI-S9": {"map_size": (5, 6), "resources": (7, 6, 240), "data": (9, 60), "bom_complexity": (8, 1)},
+            "GUROBI-SM1": {"map_size": (2, 4), "resources": (2, 2, 30), "data": (1, 10), "bom_complexity": (2, 1), "exact_bom_sku_count": 2, "exact_bom_sku_quantity": 1, "exact_demand_sku_from_tail": True},
+            "GUROBI-SM2": {"map_size": (2, 4), "resources": (2, 2, 35), "data": (2, 12), "bom_complexity": (2, 1), "exact_disjoint_bom_sku_count": 2, "exact_disjoint_bom_sku_quantity": 1, "exact_demand_sku_from_tail": True},
+            "GUROBI-SM3": {"map_size": (2, 4), "resources": (2, 2, 40), "data": (2, 12), "bom_complexity": (2, 1), "exact_disjoint_bom_sku_count": 2, "exact_disjoint_bom_sku_quantity": 2, "exact_demand_sku_from_tail": True},
+            "GUROBI-SM4": {"map_size": (2, 4), "resources": (2, 2, 55), "data": (4, 16), "bom_complexity": (2, 1), "exact_disjoint_bom_sku_count": 2, "exact_disjoint_bom_sku_quantity": 2, "exact_demand_sku_from_tail": True},
+            "GUROBI-SM5": {"map_size": (3, 4), "resources": (3, 3, 70), "data": (4, 24), "bom_complexity": (4, 1), "exact_disjoint_bom_sku_count": 4, "exact_disjoint_bom_sku_quantity": 2, "exact_demand_sku_from_tail": True},
+            "GUROBI-SM6": {"map_size": (3, 4), "resources": (3, 3, 85), "data": (6, 32), "bom_complexity": (4, 1), "exact_disjoint_bom_sku_count": 4, "exact_disjoint_bom_sku_quantity": 2, "exact_demand_sku_from_tail": True},
+            "GUROBI-SM7": {"map_size": (3, 5), "resources": (4, 3, 100), "data": (6, 44), "bom_complexity": (6, 1), "exact_disjoint_bom_sku_count": 6, "exact_disjoint_bom_sku_quantity": 2, "exact_demand_sku_from_tail": True},
+            "GUROBI-SM8": {"map_size": (3, 5), "resources": (4, 4, 115), "data": (8, 56), "bom_complexity": (6, 1), "exact_disjoint_bom_sku_count": 6, "exact_disjoint_bom_sku_quantity": 2, "exact_demand_sku_from_tail": True},
+            "GUROBI-SM9": {"map_size": (3, 5), "resources": (4, 4, 130), "data": (8, 72), "bom_complexity": (8, 1), "exact_disjoint_bom_sku_count": 8, "exact_disjoint_bom_sku_quantity": 2, "exact_demand_sku_from_tail": True},
             "TINY3": {"map_size": (4, 4), "resources": (2, 2, 150), "data": (3, 30), "bom_complexity": (10, 1), "exact_disjoint_bom_sku_count": 10},
             "SMALL": {"map_size": (4, 4), "resources": (2, 2, 200), "data": (2, 60), "bom_complexity": (20, 5)},
             "SMALL2": {"map_size": (4, 4), "resources": (3, 2, 200), "data": (3, 60), "bom_complexity": (25, 5)},
@@ -92,6 +101,9 @@ class CreateOFSProblem:
         bom_types, bom_qty = cfg["bom_complexity"]
         exact_bom_sku_count = int(cfg.get("exact_bom_sku_count", 0))
         exact_disjoint_bom_sku_count = int(cfg.get("exact_disjoint_bom_sku_count", 0))
+        exact_bom_sku_quantity = int(cfg.get("exact_bom_sku_quantity", 1))
+        exact_disjoint_bom_sku_quantity = int(cfg.get("exact_disjoint_bom_sku_quantity", 1))
+        exact_demand_sku_from_tail = bool(cfg.get("exact_demand_sku_from_tail", False))
 
         print(f">>> 生成 [{scale}] 规模实例 | Seed: {seed}")
         print(f"    Map: {map_L}x{map_W} blocks | Robots: {rob_n} | Stations: {st_n}")
@@ -110,6 +122,9 @@ class CreateOFSProblem:
             imbalance_profile=imbalance_profile,
             exact_bom_sku_count=exact_bom_sku_count,
             exact_disjoint_bom_sku_count=exact_disjoint_bom_sku_count,
+            exact_bom_sku_quantity=exact_bom_sku_quantity,
+            exact_disjoint_bom_sku_quantity=exact_disjoint_bom_sku_quantity,
+            exact_demand_sku_from_tail=exact_demand_sku_from_tail,
             base_seed=int(seed),
         )
         problem.scale_name = scale_upper
@@ -130,6 +145,9 @@ class CreateOFSProblem:
             imbalance_profile: str = None,
             exact_bom_sku_count: int = 0,
             exact_disjoint_bom_sku_count: int = 0,
+            exact_bom_sku_quantity: int = 1,
+            exact_disjoint_bom_sku_quantity: int = 1,
+            exact_demand_sku_from_tail: bool = False,
             base_seed: int = OFSConfig.RANDOM_SEED,
     ) -> OFSProblemDTO:
         """
@@ -186,20 +204,24 @@ class CreateOFSProblem:
             if int(order_num) != 1:
                 raise ValueError("exact_bom_sku_count is intended for single-BOM test cases.")
             exact_count = min(int(exact_bom_sku_count), int(len(skus_list_obj)))
+            exact_qty = max(1, int(exact_bom_sku_quantity))
             exact_order = orders[0]
-            exact_order.order_product_id_list = [int(sku.id) for sku in skus_list_obj[:exact_count]]
-            exact_order.order_skus_number = int(exact_count)
+            exact_skus = skus_list_obj[-exact_count:] if bool(exact_demand_sku_from_tail) else skus_list_obj[:exact_count]
+            exact_order.order_product_id_list = [int(sku.id) for sku in exact_skus for _ in range(exact_qty)]
+            exact_order.order_skus_number = int(exact_count * exact_qty)
             CreateOFSProblem._assign_order_time_window(exact_order, base_seed=int(base_seed))
             exact_order.status = "pending"
         if int(exact_disjoint_bom_sku_count) > 0:
             exact_count = int(exact_disjoint_bom_sku_count)
+            exact_qty = max(1, int(exact_disjoint_bom_sku_quantity))
             if int(order_num) * exact_count > int(len(skus_list_obj)):
                 raise ValueError("exact_disjoint_bom_sku_count requires order_num * count <= skus_num.")
+            tail_start = int(len(skus_list_obj)) - int(order_num) * exact_count
             for order_idx, order in enumerate(orders):
-                start_idx = int(order_idx) * exact_count
+                start_idx = (tail_start if bool(exact_demand_sku_from_tail) else 0) + int(order_idx) * exact_count
                 order_skus = skus_list_obj[start_idx:start_idx + exact_count]
-                order.order_product_id_list = [int(sku.id) for sku in order_skus]
-                order.order_skus_number = int(exact_count)
+                order.order_product_id_list = [int(sku.id) for sku in order_skus for _ in range(exact_qty)]
+                order.order_skus_number = int(exact_count * exact_qty)
                 CreateOFSProblem._assign_order_time_window(order, base_seed=int(base_seed))
                 order.status = "pending"
         ofs_problem_dto.order_list = orders
