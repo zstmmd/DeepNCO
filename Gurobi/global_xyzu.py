@@ -129,6 +129,10 @@ class GlobalXYZUConfig:
     enable_route_directional_arc_prune: bool = False
     enable_route_service_sec_cuts: bool = False
     enable_resource_lex_symmetry: bool = True
+    enable_slot_lex_symmetry: bool = True
+    enable_tote_equivalence_symmetry: bool = True
+    enable_station_global_lex_symmetry: bool = True
+    enable_robot_finish_lex_symmetry: bool = True
     enable_anchor_first_order_robot: bool = False
     enable_selected_workload_lbs: bool = True
     enable_route_arrival_slot_linear: bool = False
@@ -731,13 +735,13 @@ class GlobalXYZUSolver:
         slot_id = 0
         cap_limit = max(1, int(getattr(OFSConfig, "ROBOT_CAPACITY", 8) - 2))
         heuristic_subtasks_by_order = warm.subtask_by_order if warm is not None else {}
-        required_unit_count_by_order: Dict[int, int] = defaultdict(int)
-        for (order_id, _sku_id), qty in demand_qty_by_order_sku.items():
-            required_unit_count_by_order[int(order_id)] += max(0, int(qty))
         for order in getattr(problem, "order_list", []) or []:
             order_id = int(getattr(order, "order_id", -1))
             unique_count = int(len(unique_skus_by_order.get(order_id, [])))
-            required_unit_count = max(unique_count, int(required_unit_count_by_order.get(order_id, 0)))
+            # Transport slots are robot trips bounded by tote capacity. Demand
+            # quantities still affect coverage and picking time, but should not
+            # create extra candidate trips beyond distinct SKU types.
+            required_unit_count = max(1, unique_count)
             lower_bound = max(1, int(math.ceil(float(required_unit_count) / max(1, cap_limit))))
             heur_count = int(len(heuristic_subtasks_by_order.get(order_id, [])))
             slot_count = self._slot_upper_bound(required_unit_count, heur_count, cap_limit, cfg)
@@ -1868,6 +1872,16 @@ class GlobalXYZUSolver:
         protected_arc_set: Set[Tuple[int, int]] = {
             (int(i), int(j)) for i, j in (protected_arcs or set())
         }
+        limit = int(pickup_neighbor_limit)
+        if limit <= 0:
+            return sorted((int(i), int(j)) for i, j in route_arcs), {
+                "u_legal_arc_count_before_knn": int(len(route_arcs)),
+                "u_arc_count_after_knn": int(len(route_arcs)),
+                "u_knn_pruned_arc_count": 0,
+                "u_protected_arc_count": int(len(protected_arc_set)),
+                "u_pickup_neighbor_limit": int(limit),
+                "u_route_start_node": int(route_start_node),
+            }
         pickup_successors_by_src: Dict[int, List[Tuple[float, int]]] = defaultdict(list)
         special_predecessors_by_pickup: Dict[int, List[Tuple[float, int]]] = defaultdict(list)
         for i, j in route_arcs:
@@ -1925,7 +1939,6 @@ class GlobalXYZUSolver:
         #     if str(src.kind) in {"start", "delivery"}:
         #         special_predecessors_by_pickup[int(j)].append((travel, int(i)))
 
-        limit = max(0, int(pickup_neighbor_limit))
         for src_id, rows in pickup_successors_by_src.items():
             rows.sort(key=lambda row: (float(row[0]), int(row[1])))
             for _, dst_id in rows[:limit]:
@@ -2618,6 +2631,10 @@ class GlobalXYZUSolver:
                     robot_id = int(getattr(task, "robot_id", -1))
                     if robot_id < 0:
                         robot_id = int(getattr(st, "assigned_robot_id", -1))
+                    target_totes = [int(tote_id) for tote_id in (getattr(task, "target_tote_ids", []) or [])]
+                    hit_totes = [int(tote_id) for tote_id in (getattr(task, "hit_tote_ids", []) or [])]
+                    noise_totes = [int(tote_id) for tote_id in (getattr(task, "noise_tote_ids", []) or [])]
+                    carried_tote_ids = list(dict.fromkeys(target_totes or (hit_totes + noise_totes)))
                     selected_route_rows.append(
                         {
                             "slot_id": int(slot_id),
@@ -2634,7 +2651,7 @@ class GlobalXYZUSolver:
                                 float(getattr(task, "robot_service_time", 0.0) or 0.0),
                                 float(pickup_service_ub_by_node.get(int(pickup_node), 0.0) or 0.0),
                             ),
-                            "load": 1,
+                            "load": max(1, int(len(carried_tote_ids))),
                         }
                     )
 
@@ -2864,6 +2881,7 @@ class GlobalXYZUSolver:
         support_totes_by_order: Dict[int, List[int]] = prepared.get("support_totes_by_order", tote_ids_by_order)
         sort_intervals_by_stack: Dict[int, List[SortIntervalSpec]] = prepared["sort_intervals_by_stack"]
         tote_to_stack: Dict[int, int] = prepared["tote_to_stack"]
+        tote_position_in_stack: Dict[int, int] = prepared.get("tote_position_in_stack", {})
         tote_sku_qty: Dict[Tuple[int, int], int] = prepared["tote_sku_qty"]
         stack_station_dist: Dict[Tuple[int, int], float] = prepared["stack_station_dist"]
         depot_dist_by_stack: Dict[int, float] = prepared["depot_dist_by_stack"]
@@ -3315,7 +3333,7 @@ class GlobalXYZUSolver:
                 route_arcs=resource_route_arcs,
                 route_tau=route_tau,
                 route_start_node=min(route_start_nodes.values(), default=0),
-                pickup_neighbor_limit=int(getattr(cfg, "route_pickup_neighbor_limit", 5) or 5),
+                pickup_neighbor_limit=int(getattr(cfg, "route_pickup_neighbor_limit", 0) or 0),
                 protected_arcs=protected_route_arcs,
             )
             route_tau = {
@@ -3442,6 +3460,15 @@ class GlobalXYZUSolver:
             order_deadline_overrun = model.addVars(order_ids, lb=0.0, vtype=GRB.CONTINUOUS, name="order_deadline_overrun")
         order_deadline_intrinsic_lb_count = 0
         station_rank_prefix_process_lb_count = 0
+        robot_task_count_lex_count = 0
+        robot_finish_lex_count = 0
+        station_slot_count_lex_count = 0
+        station_global_lex_count = 0
+        stack_equivalence_lex_count = 0
+        slot_load_lex_count = 0
+        slot_station_lex_count = 0
+        tote_equivalence_lex_count = 0
+        global_routing_workload_cut_count = 0
 
         for unit in work_units:
             order_slots = slot_ids_by_order.get(int(unit.order_id), [])
@@ -3467,6 +3494,15 @@ class GlobalXYZUSolver:
                 )
             for idx in range(len(slot_ids) - 1):
                 model.addConstr(a[int(slot_ids[idx])] >= a[int(slot_ids[idx + 1])], name=f"SlotSym_{order_id}_{idx}")
+                if bool(getattr(cfg, "enable_slot_lex_symmetry", True)):
+                    left_slot = int(slot_ids[idx])
+                    right_slot = int(slot_ids[idx + 1])
+                    model.addConstr(
+                        gp.quicksum(sku_use[int(order_id), int(sku_id), left_slot] for sku_id in sku_ids)
+                        >= gp.quicksum(sku_use[int(order_id), int(sku_id), right_slot] for sku_id in sku_ids),
+                        name=f"SlotLoadLex_{order_id}_{idx}",
+                    )
+                    slot_load_lex_count += 1
 
         # -----------------------------
         # Y 层约束：每个激活槽位选择一个 station/rank，未激活槽位时间绑定为 0。
@@ -3487,6 +3523,32 @@ class GlobalXYZUSolver:
                 model.addGenConstrIndicator(a[sid], True, arrival[sid] <= order_arrival_ub[int(slot.order_id)], name=f"OrderArrivalUBLink_{int(slot.order_id)}_{sid}")
 
         # station/rank 唯一占用，并用 RankNoHole 防止站内排位出现空洞。
+        if bool(getattr(cfg, "enable_slot_lex_symmetry", True)) and station_ids:
+            station_rank_weight = max(1, int(max_rank) + 1)
+            station_rank_big_m = float((max(station_ids) + 1) * station_rank_weight + max_rank + 1)
+            for order_id, slot_ids in slot_ids_by_order.items():
+                sku_ids = unique_skus_by_order.get(int(order_id), [])
+                for idx in range(len(slot_ids) - 1):
+                    left_slot = int(slot_ids[idx])
+                    right_slot = int(slot_ids[idx + 1])
+                    left_load = gp.quicksum(sku_use[int(order_id), int(sku_id), left_slot] for sku_id in sku_ids)
+                    right_load = gp.quicksum(sku_use[int(order_id), int(sku_id), right_slot] for sku_id in sku_ids)
+                    left_station_rank = gp.quicksum(
+                        (int(station_id) * station_rank_weight + int(rank)) * y[left_slot, int(station_id), int(rank)]
+                        for station_id in station_ids
+                        for rank in range(max_rank)
+                    )
+                    right_station_rank = gp.quicksum(
+                        (int(station_id) * station_rank_weight + int(rank)) * y[right_slot, int(station_id), int(rank)]
+                        for station_id in station_ids
+                        for rank in range(max_rank)
+                    )
+                    model.addConstr(
+                        left_station_rank <= right_station_rank + station_rank_big_m * (left_load - right_load),
+                        name=f"SlotStationLex_{int(order_id)}_{idx}",
+                    )
+                    slot_station_lex_count += 1
+
         for station_id in station_ids:
             for rank in range(max_rank):
                 model.addConstr(gp.quicksum(y[int(slot.slot_id), int(station_id), int(rank)] for slot in slots) <= 1, name=f"RankUnique_{station_id}_{rank}")
@@ -3593,8 +3655,6 @@ class GlobalXYZUSolver:
         global_selected_route_workload_lb_count = 0
         global_selected_station_workload_lb_count = 0
         order_workload_lb_count = 0
-        robot_task_count_lex_count = 0
-        station_slot_count_lex_count = 0
         anchor_first_order_robot_count = 0
 
         # -----------------------------
@@ -3711,6 +3771,67 @@ class GlobalXYZUSolver:
                         sku_cover_cut_count += 1
 
         # 全局 tote 唯一使用：同一个 tote 不能被多个槽位同时选中。
+        if bool(getattr(cfg, "enable_tote_equivalence_symmetry", True)):
+            for order_id in sorted(int(v) for v in slot_ids_by_order.keys()):
+                order_skus = sorted(int(v) for v in unique_skus_by_order.get(int(order_id), []))
+                slot_ids = [int(v) for v in slot_ids_by_order.get(int(order_id), [])]
+                demand_hit_totes = [int(v) for v in demand_hit_totes_by_order.get(int(order_id), [])]
+                support_totes = [int(v) for v in support_totes_by_order.get(int(order_id), [])]
+
+                stack_groups: Dict[Tuple[Any, ...], List[int]] = defaultdict(list)
+                for stack_id in candidate_stacks_by_order.get(int(order_id), []):
+                    stack_id = int(stack_id)
+                    sku_capacity_sig = tuple(
+                        int(
+                            sum(
+                                int(tote_sku_qty.get((int(tote_id), int(sku_id)), 0) or 0)
+                                for tote_id in demand_hit_totes
+                                if int(tote_to_stack.get(int(tote_id), -1)) == stack_id
+                            )
+                        )
+                        for sku_id in order_skus
+                    )
+                    station_dist_sig = tuple(
+                        round(float(stack_station_dist.get((stack_id, int(station_id)), 0.0)), 6)
+                        for station_id in station_ids
+                    )
+                    stack_groups[(sku_capacity_sig, station_dist_sig)].append(stack_id)
+                for group in stack_groups.values():
+                    ordered = sorted(int(v) for v in group)
+                    for left_stack, right_stack in zip(ordered, ordered[1:]):
+                        for slot_id in slot_ids:
+                            left_expr = stack_use_expr_by_slot_stack.get((int(slot_id), int(left_stack)))
+                            right_expr = stack_use_expr_by_slot_stack.get((int(slot_id), int(right_stack)))
+                            if left_expr is not None and right_expr is not None:
+                                model.addConstr(
+                                    left_expr >= right_expr,
+                                    name=f"StackEquivLex_{int(order_id)}_{int(slot_id)}_{int(left_stack)}_{int(right_stack)}",
+                                )
+                                stack_equivalence_lex_count += 1
+
+                tote_groups: Dict[Tuple[Any, ...], List[int]] = defaultdict(list)
+                for tote_id in support_totes:
+                    stack_id = int(tote_to_stack.get(int(tote_id), -1))
+                    if stack_id < 0:
+                        continue
+                    sku_sig = tuple(int(tote_sku_qty.get((int(tote_id), int(sku_id)), 0) or 0) for sku_id in order_skus)
+                    if not any(int(v) > 0 for v in sku_sig):
+                        continue
+                    tote_groups[(stack_id, sku_sig)].append(int(tote_id))
+                for group in tote_groups.values():
+                    ordered = sorted(
+                        (int(tote_id) for tote_id in group),
+                        key=lambda tote_id: (-int(tote_position_in_stack.get(int(tote_id), -1)), int(tote_id)),
+                    )
+                    for left_tote, right_tote in zip(ordered, ordered[1:]):
+                        for slot_id in slot_ids:
+                            if (int(slot_id), int(left_tote)) in carry and (int(slot_id), int(right_tote)) in carry:
+                                model.addConstr(
+                                    carry[int(slot_id), int(left_tote)] >= carry[int(slot_id), int(right_tote)],
+                                    name=f"ToteEquivLex_{int(order_id)}_{int(slot_id)}_{int(left_tote)}_{int(right_tote)}",
+                                )
+                                tote_equivalence_lex_count += 1
+
         global_totes = sorted({int(tote_id) for tote_ids in tote_ids_by_order.values() for tote_id in tote_ids})
         for tote_id in global_totes:
             owners = [int(slot.slot_id) for slot in slots if (int(slot.slot_id), int(tote_id)) in carry]
@@ -3951,6 +4072,28 @@ class GlobalXYZUSolver:
                             name=f"StationSlotCountLex_{left}_{right}",
                         )
                         station_slot_count_lex_count += 1
+            if bool(getattr(cfg, "enable_station_global_lex_symmetry", True)):
+                all_candidate_stack_ids = sorted({
+                    int(stack_id)
+                    for stack_ids in candidate_stacks_by_order.values()
+                    for stack_id in stack_ids
+                })
+                station_signature_groups: Dict[Tuple[float, ...], List[int]] = defaultdict(list)
+                for station_id in station_ids:
+                    signature = tuple(
+                        round(float(stack_station_dist.get((int(stack_id), int(station_id)), 0.0)), 6)
+                        for stack_id in all_candidate_stack_ids
+                    )
+                    station_signature_groups[signature].append(int(station_id))
+                for group in station_signature_groups.values():
+                    ordered = sorted(int(v) for v in group)
+                    for left, right in zip(ordered, ordered[1:]):
+                        model.addConstr(
+                            gp.quicksum(y[int(slot.slot_id), int(left), int(rank)] for slot in slots for rank in range(max_rank))
+                            >= gp.quicksum(y[int(slot.slot_id), int(right), int(rank)] for slot in slots for rank in range(max_rank)),
+                            name=f"StationGlobalLex_{left}_{right}",
+                        )
+                        station_global_lex_count += 1
 
         if integrate_u_route and pass_x is not None and route_arc is not None and route_time is not None and route_load is not None:
             # -----------------------------
@@ -3977,6 +4120,25 @@ class GlobalXYZUSolver:
                 route_active_expr_by_node[int(spec.pickup_node)] = active_expr
                 route_active_expr_by_node[int(spec.delivery_node)] = active_expr
 
+            routing_workload_terms = []
+            for node_id in pickup_nodes:
+                inbound_times = [
+                    float(route_tau.get((int(src_id), int(node_id)), 0.0) or 0.0)
+                    for src_id in route_node_ids
+                    if int(src_id) != int(node_id) and (int(src_id), int(node_id)) in route_tau
+                ]
+                positive_inbound_times = [float(value) for value in inbound_times if float(value) > 0.0]
+                min_dist = float(min(positive_inbound_times)) if positive_inbound_times else 0.0
+                active_expr = route_active_expr_by_node.get(int(node_id), gp.LinExpr(0.0))
+                service_expr = route_service_expr_by_node.get(int(node_id), gp.LinExpr(0.0))
+                routing_workload_terms.append((float(min_dist) * active_expr) + service_expr)
+            if routing_workload_terms:
+                model.addConstr(
+                    cmax >= gp.quicksum(routing_workload_terms) / max(1, len(robot_ids)),
+                    name="Global_Routing_Workload_Cut",
+                )
+                global_routing_workload_cut_count += 1
+
             if bool(getattr(cfg, "enable_resource_lex_symmetry", True)):
                 robot_coord_groups: Dict[Tuple[float, float], List[int]] = defaultdict(list)
                 for robot_id in robot_ids:
@@ -3990,12 +4152,19 @@ class GlobalXYZUSolver:
                 for group in robot_coord_groups.values():
                     ordered = sorted(int(v) for v in group)
                     for left, right in zip(ordered, ordered[1:]):
+                        left_task_count = gp.quicksum(pass_x[int(node_id), int(left)] for node_id in pickup_nodes)
+                        right_task_count = gp.quicksum(pass_x[int(node_id), int(right)] for node_id in pickup_nodes)
                         model.addConstr(
-                            gp.quicksum(pass_x[int(node_id), int(left)] for node_id in pickup_nodes)
-                            >= gp.quicksum(pass_x[int(node_id), int(right)] for node_id in pickup_nodes),
+                            left_task_count >= right_task_count,
                             name=f"RobotTaskCountLex_{left}_{right}",
                         )
                         robot_task_count_lex_count += 1
+                        if bool(getattr(cfg, "enable_robot_finish_lex_symmetry", True)) and route_finish is not None:
+                            model.addConstr(
+                                route_finish[int(left)] >= route_finish[int(right)] - float(slot_time_ub) * (left_task_count - right_task_count),
+                                name=f"RobotFinishLex_{left}_{right}",
+                            )
+                            robot_finish_lex_count += 1
             if bool(getattr(cfg, "enable_anchor_first_order_robot", False)):
                 anchor_pickup_node = int(warm_prune_bound_diag.get("anchor_pickup_node", -1) or -1)
                 anchor_robot_id = int(warm_prune_bound_diag.get("anchor_robot_id", -1) or -1)
@@ -4378,6 +4547,10 @@ class GlobalXYZUSolver:
                 "enable_route_service_sec_cuts": bool(getattr(cfg, "enable_route_service_sec_cuts", False)),
                 "enable_tight_slot_upper_bound": bool(getattr(cfg, "enable_tight_slot_upper_bound", False)),
                 "enable_warm_candidate_stack_prune": bool(getattr(cfg, "enable_warm_candidate_stack_prune", False)),
+                "enable_slot_lex_symmetry": bool(getattr(cfg, "enable_slot_lex_symmetry", True)),
+                "enable_tote_equivalence_symmetry": bool(getattr(cfg, "enable_tote_equivalence_symmetry", True)),
+                "enable_station_global_lex_symmetry": bool(getattr(cfg, "enable_station_global_lex_symmetry", True)),
+                "enable_robot_finish_lex_symmetry": bool(getattr(cfg, "enable_robot_finish_lex_symmetry", True)),
                 "candidate_station_topk_per_stack": int(getattr(cfg, "candidate_station_topk_per_stack", 0) or 0),
                 "candidate_stack_topk": int(getattr(cfg, "candidate_stack_topk", 0) or 0),
                 "max_candidate_stacks_per_order": int(getattr(cfg, "max_candidate_stacks_per_order", 0) or 0),
@@ -4404,7 +4577,14 @@ class GlobalXYZUSolver:
                 "order_deadline_intrinsic_lb_count": int(order_deadline_intrinsic_lb_count),
                 "station_rank_prefix_process_lb_count": int(station_rank_prefix_process_lb_count),
                 "robot_task_count_lex_count": int(robot_task_count_lex_count),
+                "robot_finish_lex_count": int(robot_finish_lex_count),
                 "station_slot_count_lex_count": int(station_slot_count_lex_count),
+                "station_global_lex_count": int(station_global_lex_count),
+                "stack_equivalence_lex_count": int(stack_equivalence_lex_count),
+                "slot_load_lex_count": int(slot_load_lex_count),
+                "slot_station_lex_count": int(slot_station_lex_count),
+                "tote_equivalence_lex_count": int(tote_equivalence_lex_count),
+                "global_routing_workload_cut_count": int(global_routing_workload_cut_count),
                 "anchor_first_order_robot_count": int(anchor_first_order_robot_count),
             }
         )

@@ -705,6 +705,90 @@ def y_destroy_load_skew_release(opt, config: ResourceConfig, rng, degree: int) -
     return y_destroy_congested_station_block(opt, config, rng, degree)
 
 
+def _random_release_payload(config: ResourceConfig, rng, degree: int, preview: bool) -> Dict[str, object]:
+    rows = [row for row in config.subtasks.values() if int(row.station_id) >= 0]
+    if not rows:
+        return {"success": False}
+    rng.shuffle(rows)
+    move_n = max(1, min(int(degree), len(rows)))
+    released = _preview_release_rows(rows[:move_n], move_n) if bool(preview) else _release_rows(rows[:move_n], move_n)
+    return {
+        "success": bool(released),
+        "released_subtasks": released,
+        "source_station_ids": sorted({int(station_id) for station_id, _ in released.values() if int(station_id) >= 0}),
+        "trigger_reason": "random_release",
+    }
+
+
+def y_destroy_random_release(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
+    del opt
+    return _random_release_payload(config, rng, degree, preview=False)
+
+
+def _related_station_release_payload(config: ResourceConfig, rng, degree: int, preview: bool) -> Dict[str, object]:
+    station_rows: Dict[int, List[ResourceSubtask]] = defaultdict(list)
+    for row in config.subtasks.values():
+        if int(row.station_id) >= 0:
+            station_rows[int(row.station_id)].append(row)
+    candidates = [
+        ((-float(len(rows)), int(station_id)), int(station_id))
+        for station_id, rows in station_rows.items()
+        if rows
+    ]
+    if not candidates:
+        return {"success": False}
+    picked = pick_ranked_candidate(rng, sorted(candidates, key=lambda item: item[0]), None)
+    if picked is None:
+        return {"success": False}
+    _, station_id = picked
+    rows = sorted(station_rows[int(station_id)], key=lambda row: (int(row.station_rank), int(row.subtask_id)))
+    move_n = max(1, min(int(degree), len(rows)))
+    released = _preview_release_rows(rows[-move_n:], move_n) if bool(preview) else _release_rows(rows[-move_n:], move_n)
+    return {
+        "success": bool(released),
+        "released_subtasks": released,
+        "source_station_ids": [int(station_id)],
+        "trigger_reason": "related_station_release",
+    }
+
+
+def y_destroy_related_station_release(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
+    del opt
+    return _related_station_release_payload(config, rng, degree, preview=False)
+
+
+def _related_robot_release_payload(opt, config: ResourceConfig, rng, degree: int, preview: bool) -> Dict[str, object]:
+    metrics = _snapshot_subtask_metrics(opt)
+    robot_chains = _snapshot_robot_chains(opt)
+    if not metrics or not robot_chains:
+        return _random_release_payload(config, rng, degree, preview=preview)
+    candidates = []
+    for robot_id, chain in robot_chains.items():
+        ids = [int(subtask_id) for subtask_id in (chain or []) if int(subtask_id) in config.subtasks]
+        if not ids:
+            continue
+        finish = max(float(metrics.get(int(subtask_id), {}).get("completion_time", 0.0)) for subtask_id in ids)
+        candidates.append(((-float(finish), -float(len(ids)), int(robot_id)), int(robot_id), ids))
+    if not candidates:
+        return _random_release_payload(config, rng, degree, preview=preview)
+    candidates.sort(key=lambda item: item[0])
+    _, robot_id, chain = candidates[0]
+    release_ids = list(reversed(chain))[: max(1, int(degree))]
+    return _finalize_release_ids(
+        config=config,
+        release_ids=release_ids,
+        degree=int(degree),
+        priority_ids=release_ids,
+        metrics=metrics,
+        preview=bool(preview),
+        extra={"source_robot_ids": [int(robot_id)], "trigger_reason": "related_robot_release"},
+    )
+
+
+def y_destroy_related_robot_release(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
+    return _related_robot_release_payload(opt, config, rng, int(degree), preview=False)
+
+
 def _heavy_robot_release_payload(opt, config: ResourceConfig, rng, degree: int, preview: bool) -> Dict[str, object]:
     metrics = _snapshot_subtask_metrics(opt)
     robot_chains = _snapshot_robot_chains(opt)
@@ -963,6 +1047,20 @@ def y_plan_destroy_rank_window_release(opt, config: ResourceConfig, rng, degree:
 
 def y_plan_destroy_load_skew_release(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
     return y_plan_destroy_congested_station_block(opt, config, rng, degree)
+
+
+def y_plan_destroy_random_release(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
+    del opt
+    return _random_release_payload(config, rng, degree, preview=True)
+
+
+def y_plan_destroy_related_station_release(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
+    del opt
+    return _related_station_release_payload(config, rng, degree, preview=True)
+
+
+def y_plan_destroy_related_robot_release(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
+    return _related_robot_release_payload(opt, config, rng, int(degree), preview=True)
 
 
 def y_plan_destroy_heavy_robot_tail(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
@@ -1421,6 +1519,9 @@ def plan_y_candidate(opt, config: ResourceConfig, destroy_name: str, repair_name
         "y_destroy_cross_station_fragment": y_plan_destroy_cross_station_fragment,
         "y_destroy_rank_window_release": y_plan_destroy_rank_window_release,
         "y_destroy_load_skew_release": y_plan_destroy_load_skew_release,
+        "y_destroy_random_release": y_plan_destroy_random_release,
+        "y_destroy_related_station_release": y_plan_destroy_related_station_release,
+        "y_destroy_related_robot_release": y_plan_destroy_related_robot_release,
         "y_destroy_heavy_robot_tail": y_plan_destroy_heavy_robot_tail,
         "y_destroy_initial_idle_head": y_plan_destroy_initial_idle_head,
         "y_destroy_max_tardiness_blocker": y_plan_destroy_max_tardiness_blocker,
@@ -1603,6 +1704,9 @@ Y_DESTROY_OPERATORS = {
     "y_destroy_cross_station_fragment": y_destroy_cross_station_fragment,
     "y_destroy_rank_window_release": y_destroy_rank_window_release,
     "y_destroy_load_skew_release": y_destroy_load_skew_release,
+    "y_destroy_random_release": y_destroy_random_release,
+    "y_destroy_related_station_release": y_destroy_related_station_release,
+    "y_destroy_related_robot_release": y_destroy_related_robot_release,
     "y_destroy_heavy_robot_tail": y_destroy_heavy_robot_tail,
     "y_destroy_initial_idle_head": y_destroy_initial_idle_head,
     "y_destroy_max_tardiness_blocker": y_destroy_max_tardiness_blocker,

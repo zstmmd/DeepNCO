@@ -7,25 +7,20 @@ from typing import Callable, Dict, List, Tuple
 from .state import ResourceConfig, ResourceSubtask
 from .utils import pick_ranked_candidate
 
-
 def _order_subtasks(config: ResourceConfig, order_id: int) -> List[ResourceSubtask]:
     return sorted(
         [row for row in config.subtasks.values() if int(row.order_id) == int(order_id)],
         key=lambda row: (int(row.station_rank if row.station_rank >= 0 else 10**9), int(row.subtask_id)),
     )
 
-
 def _capacity_limit(config: ResourceConfig, order_id: int) -> int:
     return max(1, int(config.capacity_limits.get(int(order_id), 1)))
-
 
 def _sku_diversity(config: ResourceConfig, subtask: ResourceSubtask) -> int:
     return len({int(config.work_units[str(work_unit_id)].sku_id) for work_unit_id in (subtask.work_unit_ids or ()) if str(work_unit_id) in config.work_units})
 
-
 def _stack_span(subtask: ResourceSubtask) -> int:
     return len({int(task.stack_id) for task in (subtask.z_tasks or []) if int(task.stack_id) >= 0})
-
 
 def _remove_work_units(config: ResourceConfig, subtask_id: int, chosen_units: List[str]) -> None:
     subtask = config.subtasks.get(int(subtask_id))
@@ -36,22 +31,18 @@ def _remove_work_units(config: ResourceConfig, subtask_id: int, chosen_units: Li
     if not keep_units:
         config.subtasks.pop(int(subtask_id), None)
 
-
 def _score_insert_affinity(config: ResourceConfig, candidate: ResourceSubtask, work_unit_id: str) -> float:
     target_sku = int(config.work_units[str(work_unit_id)].sku_id)
     sku_counts = Counter(int(config.work_units[str(unit_id)].sku_id) for unit_id in (candidate.work_unit_ids or ()) if str(unit_id) in config.work_units)
     return float(-sku_counts.get(target_sku, 0) + 0.2 * _stack_span(candidate))
 
-
 def _score_insert_route_span(config: ResourceConfig, candidate: ResourceSubtask, work_unit_id: str) -> float:
     del work_unit_id
     return float(_stack_span(candidate) + 0.5 * _sku_diversity(config, candidate))
 
-
 def _score_insert_template(config: ResourceConfig, candidate: ResourceSubtask, work_unit_id: str, origin_station: int) -> float:
     del work_unit_id
     return float(0.0 if int(candidate.station_id) == int(origin_station) else 1.0) + 0.1 * float(_stack_span(candidate))
-
 
 def x_finalize_insert_or_new_group(
     config: ResourceConfig,
@@ -94,7 +85,6 @@ def x_finalize_insert_or_new_group(
         origin_group_ids=tuple(origin_group_ids),
     )
     return int(new_id)
-
 
 def _destroy_generic(config: ResourceConfig, ranked_rows: List[Tuple[Tuple[float, ...], int]], degree: int, rng, cfg) -> Dict[str, object]:
     budget_remaining = max(1, int(degree))
@@ -140,7 +130,6 @@ def _destroy_generic(config: ResourceConfig, ranked_rows: List[Tuple[Tuple[float
         }
     return {"success": False, "removed_units": []}
 
-
 def x_destroy_spatial_outliers(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
     ranked_rows = sorted(
         [((float(-_stack_span(row)), float(-len(row.work_unit_ids)), float(-_sku_diversity(config, row))), int(row.subtask_id)) for row in config.subtasks.values()],
@@ -148,14 +137,12 @@ def x_destroy_spatial_outliers(opt, config: ResourceConfig, rng, degree: int) ->
     )
     return _destroy_generic(config, ranked_rows, degree, rng, opt.cfg)
 
-
 def x_destroy_low_consolidation(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
     ranked_rows = sorted(
         [((float(-_sku_diversity(config, row)), float(-len(row.work_unit_ids))), int(row.subtask_id)) for row in config.subtasks.values()],
         key=lambda item: item[0],
     )
     return _destroy_generic(config, ranked_rows, degree, rng, opt.cfg)
-
 
 def x_destroy_group_boundary_release(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
     orders = defaultdict(list)
@@ -204,7 +191,6 @@ def x_destroy_group_boundary_release(opt, config: ResourceConfig, rng, degree: i
         }
     return {"success": False, "removed_units": []}
 
-
 def x_destroy_over_capacity_release(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
     ranked_rows = []
     for row in config.subtasks.values():
@@ -214,6 +200,33 @@ def x_destroy_over_capacity_release(opt, config: ResourceConfig, rng, degree: in
     ranked_rows.sort(key=lambda item: item[0])
     return _destroy_generic(config, ranked_rows, degree, rng, opt.cfg)
 
+def x_destroy_random_units(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
+    rows = [row for row in config.subtasks.values() if len(row.work_unit_ids or ()) > 1]
+    if not rows:
+        return {"success": False, "removed_units": []}
+    rng.shuffle(rows)
+    ranked_rows = [((float(idx), int(row.subtask_id)), int(row.subtask_id)) for idx, row in enumerate(rows)]
+    return _destroy_generic(config, ranked_rows, degree, rng, opt.cfg)
+
+def x_destroy_related_order(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
+    order_rows: Dict[int, List[ResourceSubtask]] = defaultdict(list)
+    for row in config.subtasks.values():
+        if len(row.work_unit_ids or ()) > 1:
+            order_rows[int(row.order_id)].append(row)
+    candidates = [
+        ((-float(sum(len(row.work_unit_ids or ()) for row in rows)), -float(len(rows)), int(order_id)), int(order_id))
+        for order_id, rows in order_rows.items()
+        if rows
+    ]
+    if not candidates:
+        return {"success": False, "removed_units": []}
+    picked = pick_ranked_candidate(rng, sorted(candidates, key=lambda item: item[0]), opt.cfg)
+    if picked is None:
+        return {"success": False, "removed_units": []}
+    _, order_id = picked
+    rows = sorted(order_rows[int(order_id)], key=lambda row: (-len(row.work_unit_ids or ()), int(row.subtask_id)))
+    ranked_rows = [((float(idx), int(row.subtask_id)), int(row.subtask_id)) for idx, row in enumerate(rows)]
+    return _destroy_generic(config, ranked_rows, degree, rng, opt.cfg)
 
 def _repair_generic(
     config: ResourceConfig,
@@ -242,16 +255,13 @@ def _repair_generic(
     config.rebuild_indices()
     return {"success": True, "affected_subtask_ids": affected_ids}
 
-
 def x_repair_affinity_pack(opt, config: ResourceConfig, ctx: Dict[str, object], rng) -> Dict[str, object]:
     del opt, rng
     return _repair_generic(config, ctx, _score_insert_affinity, prefer_new_group=False)
 
-
 def x_repair_route_span_min(opt, config: ResourceConfig, ctx: Dict[str, object], rng) -> Dict[str, object]:
     del opt, rng
     return _repair_generic(config, ctx, _score_insert_route_span, prefer_new_group=False)
-
 
 def x_repair_template_preserve(opt, config: ResourceConfig, ctx: Dict[str, object], rng) -> Dict[str, object]:
     del rng
@@ -261,22 +271,21 @@ def x_repair_template_preserve(opt, config: ResourceConfig, ctx: Dict[str, objec
         ctx["origin_station"] = int(rows[0].station_id)
     return _repair_generic(config, ctx, _score_insert_template, prefer_new_group=False)
 
-
 def x_repair_regret2_new_group(opt, config: ResourceConfig, ctx: Dict[str, object], rng) -> Dict[str, object]:
     del opt, rng
     return _repair_generic(config, ctx, _score_insert_affinity, prefer_new_group=True)
 
-
 def x_repair_greedy_fallback(opt, config: ResourceConfig, ctx: Dict[str, object], rng) -> Dict[str, object]:
     del opt, rng
     return _repair_generic(config, ctx, _score_insert_route_span, prefer_new_group=False)
-
 
 X_DESTROY_OPERATORS = {
     "x_destroy_spatial_outliers": x_destroy_spatial_outliers,
     "x_destroy_low_consolidation": x_destroy_low_consolidation,
     "x_destroy_group_boundary_release": x_destroy_group_boundary_release,
     "x_destroy_over_capacity_release": x_destroy_over_capacity_release,
+    "x_destroy_random_units": x_destroy_random_units,
+    "x_destroy_related_order": x_destroy_related_order,
 }
 
 X_REPAIR_OPERATORS = {

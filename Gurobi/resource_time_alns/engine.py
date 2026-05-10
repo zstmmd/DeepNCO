@@ -44,6 +44,7 @@ class ResourceTimeALNSEngine:
         self.validator = ResourceValidator(opt)
         self.scorer = ResourceSurrogateScorer(opt)
         self.current_config: ResourceConfig = build_initial_resource_config(opt)
+        self.initial_config: ResourceConfig = self.current_config.clone()
         self.current_eval = self.scorer.evaluate(self.current_config)
         initial_validation = self.validator.validate(self.current_config, 0)
         initial_hard_reject_reason = str(initial_validation.get("hard_reject_reason", "") or "")
@@ -83,14 +84,17 @@ class ResourceTimeALNSEngine:
         self.last_validation_f_raw = float(self.current_eval.F_raw)
         self.recent_validated_makespans: List[float] = list(initial_validated_makespans)
         self.temperature = float(getattr(self.cfg, "resource_sa_init_temp", max(1.0, 0.05 * float(self.current_eval.F_raw))))
-        self.layer_ema_improve = {"X": 1.0, "Y": 1.0, "Z": 1.0}
-        self.layer_stagnation = {"X": 0.0, "Y": 0.0, "Z": 0.0}
-        self.layer_exec_since_update = {"X": 0, "Y": 0, "Z": 0}
-        self.layer_last_update_iter = {"X": 0, "Y": 0, "Z": 0}
-        self.layer_cooldown_until_iter = {"X": 0, "Y": 0, "Z": 0}
-        self.layer_failure_cooldown_until_iter = {"X": 0, "Y": 0, "Z": 0}
-        self.layer_dynamic_multiplier = {"X": 1.0, "Y": 1.0, "Z": 1.0}
-        self.consecutive_fail_count = {"X": 0, "Y": 0, "Z": 0}
+        self.resource_layers = ["X", "Y", "Z"]
+        if bool(getattr(self.cfg, "resource_enable_xyz_operator", False)):
+            self.resource_layers.append("XYZ")
+        self.layer_ema_improve = {layer: 1.0 for layer in self.resource_layers}
+        self.layer_stagnation = {layer: 0.0 for layer in self.resource_layers}
+        self.layer_exec_since_update = {layer: 0 for layer in self.resource_layers}
+        self.layer_last_update_iter = {layer: 0 for layer in self.resource_layers}
+        self.layer_cooldown_until_iter = {layer: 0 for layer in self.resource_layers}
+        self.layer_failure_cooldown_until_iter = {layer: 0 for layer in self.resource_layers}
+        self.layer_dynamic_multiplier = {layer: 1.0 for layer in self.resource_layers}
+        self.consecutive_fail_count = {layer: 0 for layer in self.resource_layers}
         self.z_exact_fail_streak = 0
         self.z_operator_pick_count = 0
         self.forced_layer_queue: deque[str] = deque()
@@ -99,6 +103,11 @@ class ResourceTimeALNSEngine:
         self.no_best_z_change_rounds = 0.0
         self.validated_best_no_change_rounds = 0
         self.best_f_raw = float(self.current_eval.F_raw)
+        lahc_len = max(1, int(getattr(self.cfg, "resource_lahc_history_length", 20)))
+        self.lahc_history: List[float] = [float(self.current_eval.F_cal)] * lahc_len
+        self.lahc_index = 0
+        self.lahc_threshold = float(self.current_eval.F_cal)
+        self.multi_start_restart_count = 0
         self.consecutive_exact_cache_hit_count = 0
         self.adaptive_destroy_bonus = 0.0
         self.coverage_hard_reject_count = 0
@@ -107,8 +116,8 @@ class ResourceTimeALNSEngine:
         self.lkh_budget_consumed_by_rollback = 0
         self.operator_arms = self._init_operator_arms()
         history_size = max(1, int(getattr(self.cfg, "resource_action_signature_history_size", 30)))
-        self.action_signature_history = {layer: deque(maxlen=history_size) for layer in ["X", "Y", "Z"]}
-        self.action_signature_seen = {layer: set() for layer in ["X", "Y", "Z"]}
+        self.action_signature_history = {layer: deque(maxlen=history_size) for layer in self.resource_layers}
+        self.action_signature_seen = {layer: set() for layer in self.resource_layers}
         self.opt.candidate_iter_log = []
         self.opt.stop_reason = ""
         self.joint_colocated_sort_postprocess_stats = {
@@ -219,6 +228,11 @@ class ResourceTimeALNSEngine:
                 "repair": {name: OperatorArm(name=name) for name in list(Z_REPAIR_OPERATORS.keys()) + [Z_FALLBACK_OPERATOR]},
             },
         }
+        if "XYZ" in getattr(self, "resource_layers", []):
+            arms["XYZ"] = {
+                "destroy": {"xyz_destroy_sequential": OperatorArm(name="xyz_destroy_sequential")},
+                "repair": {"xyz_repair_sequential": OperatorArm(name="xyz_repair_sequential")},
+            }
         for name, weight in {
             "z_repair_gurobi_like_sort": 3.0,
             "z_repair_sort_range_shrink_first": 2.0,
@@ -282,7 +296,7 @@ class ResourceTimeALNSEngine:
         return str(rows[-1].name)
 
     def _available_layers(self, iter_id: int) -> List[str]:
-        all_layers = ["X", "Y", "Z"]
+        all_layers = list(getattr(self, "resource_layers", ["X", "Y", "Z"]))
         available = [
             layer
             for layer in all_layers
@@ -295,7 +309,7 @@ class ResourceTimeALNSEngine:
         return available if available else all_layers
 
     def _round_robin_next(self, available_layers: Optional[List[str]] = None) -> str:
-        order = ["X", "Y", "Z"]
+        order = list(getattr(self, "resource_layers", ["X", "Y", "Z"]))
         available = list(available_layers or order)
         if str(self.last_selected_layer) not in order:
             return available[0]
@@ -328,15 +342,18 @@ class ResourceTimeALNSEngine:
         wx = float(getattr(self.cfg, "resource_component_weight_x", 1.0))
         wy = float(getattr(self.cfg, "resource_component_weight_y", 1.0))
         wz = float(getattr(self.cfg, "resource_component_weight_z", 1.0))
+        wxyz = float(getattr(self.cfg, "resource_component_weight_xyz", 1.0))
         bx = float(getattr(self.cfg, "resource_layer_base_weight_x", 0.10))
         by = float(getattr(self.cfg, "resource_layer_base_weight_y", 0.45))
         bz = float(getattr(self.cfg, "resource_layer_base_weight_z", 0.45))
+        bxyz = float(getattr(self.cfg, "resource_layer_base_weight_xyz", 0.15))
         pressure = {
             "X": float(self.current_eval.Sx),
             "Y": float(self.current_eval.Sy),
             "Z": float(self.current_eval.Sz),
+            "XYZ": float((float(self.current_eval.Sx) + float(self.current_eval.Sy) + float(self.current_eval.Sz)) / 3.0),
         }
-        base_weight = {"X": float(bx * wx), "Y": float(by * wy), "Z": float(bz * wz)}
+        base_weight = {"X": float(bx * wx), "Y": float(by * wy), "Z": float(bz * wz), "XYZ": float(bxyz * wxyz)}
         boost = float(getattr(self.cfg, "resource_stagnation_boost", 0.15))
         eps = max(1e-9, float(getattr(self.cfg, "resource_layer_score_epsilon", 0.05)))
         if any(float(self.layer_stagnation[layer]) >= float(getattr(self.cfg, "resource_force_rotate_threshold", 20)) for layer in available_layers):
@@ -389,6 +406,14 @@ class ResourceTimeALNSEngine:
             return int(sum(len(row.work_unit_ids or ()) for row in self.current_config.subtasks.values()))
         if str(layer) == "Y":
             return int(len(self.current_config.subtasks))
+        if str(layer).upper() == "XYZ":
+            return int(
+                max(
+                    sum(len(row.work_unit_ids or ()) for row in self.current_config.subtasks.values()),
+                    len(self.current_config.subtasks),
+                    sum(len(row.z_tasks or []) for row in self.current_config.subtasks.values()),
+                )
+            )
         return int(sum(len(row.z_tasks or []) for row in self.current_config.subtasks.values()))
 
     def _effective_destroy_budget(self, layer: str, mu: float) -> int:
@@ -478,7 +503,25 @@ class ResourceTimeALNSEngine:
         return ("X", str(destroy_name), str(repair_name), self.current_config.validation_signature())
 
     def _apply_x_candidate(self, iter_id: int, destroy_name: str, repair_name: str, degree: int) -> Optional[Dict[str, object]]:
-        candidate = self.current_config.clone()
+        return self._apply_x_candidate_to_config(
+            base_config=self.current_config,
+            base_eval=self.current_eval,
+            iter_id=int(iter_id),
+            destroy_name=str(destroy_name),
+            repair_name=str(repair_name),
+            degree=int(degree),
+        )
+
+    def _apply_x_candidate_to_config(
+        self,
+        base_config: ResourceConfig,
+        base_eval,
+        iter_id: int,
+        destroy_name: str,
+        repair_name: str,
+        degree: int,
+    ) -> Optional[Dict[str, object]]:
+        candidate = base_config.clone()
         destroy_ctx = X_DESTROY_OPERATORS[str(destroy_name)](self.opt, candidate, self.rng, degree)
         if not bool(destroy_ctx.get("success", False)):
             return None
@@ -492,9 +535,9 @@ class ResourceTimeALNSEngine:
         affected_ids = set(int(x) for x in (repair_result.get("affected_subtask_ids", set()) or set()))
         candidate, score_cache, projection_meta = apply_projection_repair(
             opt=self.opt,
-            previous_config=self.current_config,
+            previous_config=base_config,
             candidate_config=candidate,
-            previous_eval=self.current_eval,
+            previous_eval=base_eval,
             affected_subtask_ids=sorted(affected_ids),
             iter_id=int(iter_id),
             rng=self.rng,
@@ -601,6 +644,157 @@ class ResourceTimeALNSEngine:
             "attempted_pairs": attempted_pairs,
             "penalized_pairs": penalized_pairs,
             "coverage_hard_reject_count": int(coverage_hard_reject_count),
+        }
+
+    def _build_xyz_exact_candidate(self, iter_id: int, budget: int) -> Optional[Dict[str, object]]:
+        x_destroy, x_repair = self._sample_operator_pair("X")
+        y_destroy, y_repair = self._sample_operator_pair("Y")
+        z_destroy, z_repair = self._sample_operator_pair("Z")
+        action_signature = (
+            "XYZ",
+            str(x_destroy),
+            str(x_repair),
+            str(y_destroy),
+            str(y_repair),
+            str(z_destroy),
+            str(z_repair),
+            self.current_config.validation_signature(),
+        )
+        if self._action_signature_known("XYZ", action_signature):
+            return None
+        self._remember_action_signature("XYZ", action_signature)
+
+        x_payload = self._apply_x_candidate_to_config(
+            base_config=self.current_config,
+            base_eval=self.current_eval,
+            iter_id=int(iter_id),
+            destroy_name=str(x_destroy),
+            repair_name=str(x_repair),
+            degree=max(1, int(budget)),
+        )
+        if x_payload is None:
+            return None
+        candidate = x_payload["config"]
+        touched_ids = set(int(x) for x in (x_payload.get("affected_ids", set()) or set()))
+        fallback_used = bool(x_payload.get("fallback_used", False))
+        projection_count = int(x_payload.get("projection_repaired_subtask_count", 0))
+        projection_mode = str(x_payload.get("projection_mode", ""))
+
+        y_plan = plan_y_candidate(self.opt, candidate, str(y_destroy), str(y_repair), self.rng, max(1, int(budget)))
+        if not bool(y_plan.get("success", False)):
+            return None
+        y_payload = apply_exact_y_plan(self.opt, candidate, y_plan, self.rng)
+        if not bool(y_payload.get("success", False)):
+            return None
+        candidate = y_payload["config"]
+        touched_ids.update(int(x) for x in (y_payload.get("affected_ids", set()) or set()))
+        fallback_used = bool(fallback_used or y_payload.get("fallback_used", False))
+
+        z_plan = plan_z_candidate(self.opt, candidate, str(z_destroy), str(z_repair), self.rng, max(1, int(budget)))
+        if not bool(z_plan.get("success", False)):
+            return None
+        z_payload = apply_exact_z_plan(self.opt, candidate, z_plan, self.rng)
+        if not bool(z_payload.get("success", False)):
+            return None
+        candidate = z_payload["config"]
+        touched_ids.update(int(x) for x in (z_payload.get("affected_ids", set()) or set()))
+        fallback_used = bool(fallback_used or z_payload.get("fallback_used", False))
+
+        payload = {
+            "config": candidate,
+            "score_cache": None,
+            "affected_ids": touched_ids,
+            "fallback_used": bool(fallback_used),
+            "projection_mode": projection_mode,
+            "projection_repaired_subtask_count": int(projection_count),
+        }
+        candidate_signature = candidate.validation_signature()
+        candidate_eval = self.scorer.evaluate(
+            config=candidate,
+            score_cache=None,
+            affected_subtask_ids=touched_ids,
+            fallback_penalty=0.20 if bool(fallback_used) else 0.0,
+            iterations_since_last_validation=int(iter_id) - int(self.last_validation_iter),
+            distance_to_last_validated=config_distance(candidate, self.last_validated_config),
+        )
+        candidate_eval.metadata.update(
+            {
+                "last_validation_iter": int(self.last_validation_iter),
+                "last_validation_f_raw": float(self.last_validation_f_raw),
+                "recent_validated_makespans": list(self.recent_validated_makespans),
+            }
+        )
+        return {
+            "iter": int(iter_id),
+            "layer": "XYZ",
+            "candidate_stage": "exact",
+            "candidate_rank": 0,
+            "destroy_operator": "xyz_destroy_sequential",
+            "repair_operator": "xyz_repair_sequential",
+            "fallback_used": bool(fallback_used),
+            "projection_mode": str(projection_mode),
+            "projection_repaired_subtask_count": int(projection_count),
+            "F_raw": float(candidate_eval.F_raw),
+            "F_cal": float(candidate_eval.F_cal),
+            "duplicate_tote_count": int(candidate_eval.duplicate_tote_count),
+            "duplicate_tote_penalty": float(candidate_eval.duplicate_tote_penalty),
+            "candidate_signature": self._candidate_signature_text(candidate_signature),
+            "candidate_signature_tuple": candidate_signature,
+            "candidate_payload": payload,
+            "candidate_eval": candidate_eval,
+            "selected_for_sa": False,
+            "action_signature": self._action_signature_text(action_signature),
+            "coverage_feasible": bool(candidate_eval.coverage_feasible),
+            "unmet_sku_total": int(candidate_eval.unmet_sku_total),
+            "xyz_x_operator": f"{x_destroy}+{x_repair}",
+            "xyz_y_operator": f"{y_destroy}+{y_repair}",
+            "xyz_z_operator": f"{z_destroy}+{z_repair}",
+        }
+
+    def _generate_xyz_candidate_pool(self, iter_id: int, budget: int, target_size: int) -> Dict[str, object]:
+        target = max(1, int(target_size))
+        max_attempts = max(target, int(getattr(self.cfg, "resource_candidate_pool_max_attempts", 12)))
+        attempts = 0
+        generated_count = 0
+        pool: List[Dict[str, object]] = []
+        attempted_pairs: List[Tuple[str, str]] = []
+        coverage_hard_reject_count = 0
+        seen_validation_signatures = set()
+        while attempts < max_attempts and len(pool) < target:
+            attempts += 1
+            attempted_pairs.append(("xyz_destroy_sequential", "xyz_repair_sequential"))
+            row = self._build_xyz_exact_candidate(int(iter_id), int(budget))
+            if row is None:
+                continue
+            generated_count += 1
+            if not bool(row.get("coverage_feasible", True)) or int(row.get("unmet_sku_total", 0) or 0) > 0:
+                coverage_hard_reject_count += 1
+                continue
+            if int(row["duplicate_tote_count"]) > 0:
+                continue
+            candidate_signature = row["candidate_signature_tuple"]
+            if candidate_signature in seen_validation_signatures:
+                continue
+            seen_validation_signatures.add(candidate_signature)
+            pool.append(row)
+        selected = self._select_best_candidate(pool)
+        if selected is not None:
+            selected["selected_for_sa"] = True
+        return {
+            "target_size": int(target),
+            "attempt_count": int(attempts),
+            "generated_count": int(generated_count),
+            "unique_count": int(len(pool)),
+            "exact_count": int(len(pool)),
+            "rows": pool,
+            "selected": selected,
+            "hard_reject_reason": "coverage_hard_reject" if int(coverage_hard_reject_count) > 0 and not pool else "",
+            "attempted_pairs": attempted_pairs,
+            "penalized_pairs": [],
+            "coverage_hard_reject_count": int(coverage_hard_reject_count),
+            "exact_fail_count": 0,
+            "exact_fail_reasons": {},
+            "duplicate_hard_reject_count": 0,
         }
 
     def _generate_yz_candidate_pool(self, layer: str, iter_id: int, budget: int, target_size: int) -> Dict[str, object]:
@@ -818,6 +1012,77 @@ class ResourceTimeALNSEngine:
         temp = max(1e-6, float(effective_temp))
         accept_prob = float(math.exp(-delta / temp))
         return bool(self.rng.random() < accept_prob), float(accept_prob), float(effective_temp)
+
+    def _accept_candidate(self, candidate_eval, layer: str) -> Tuple[bool, float, float, str, float]:
+        mode = str(getattr(self.cfg, "resource_acceptance_mode", "sa") or "sa").strip().lower()
+        if mode != "lahc":
+            accepted, prob, temp = self._sa_accept(candidate_eval, layer)
+            return bool(accepted), float(prob), float(temp), "sa", float("nan")
+        if not getattr(self, "lahc_history", []):
+            self.lahc_history = [float(self.current_eval.F_cal)]
+            self.lahc_index = 0
+        threshold = float(self.lahc_history[int(self.lahc_index) % len(self.lahc_history)])
+        current_value = float(self.current_eval.F_cal)
+        candidate_value = float(candidate_eval.F_cal)
+        greedy_when_best = bool(getattr(self.cfg, "resource_lahc_greedy_when_best", True))
+        best_gate = float(self.best_f_raw) if bool(greedy_when_best) else float("inf")
+        accepted = bool(
+            candidate_value <= current_value + 1e-9
+            or candidate_value <= threshold + 1e-9
+            or candidate_value <= best_gate + 1e-9
+        )
+        return bool(accepted), 1.0 if accepted else 0.0, 0.0, "lahc", float(threshold)
+
+    def _advance_lahc_history(self) -> None:
+        if not getattr(self, "lahc_history", []):
+            return
+        idx = int(self.lahc_index) % len(self.lahc_history)
+        self.lahc_history[idx] = float(self.current_eval.F_cal)
+        self.lahc_index = int(self.lahc_index) + 1
+        self.lahc_threshold = float(self.lahc_history[int(self.lahc_index) % len(self.lahc_history)])
+
+    def _restart_current_search_state(self, iter_id: int) -> None:
+        self.multi_start_restart_count = int(getattr(self, "multi_start_restart_count", 0)) + 1
+        self.current_config = getattr(self, "initial_config", self.current_config).clone()
+        self.current_eval = self.scorer.evaluate(
+            config=self.current_config,
+            iterations_since_last_validation=0,
+            distance_to_last_validated=config_distance(self.current_config, self.last_validated_config),
+        )
+        self.temperature = float(getattr(self.cfg, "resource_sa_init_temp", max(1.0, 0.05 * float(self.current_eval.F_raw))))
+        self.no_improve_rounds = 0.0
+        self.no_best_z_change_rounds = 0.0
+        self.validated_best_no_change_rounds = 0
+        self.layer_stagnation = {layer: 0.0 for layer in self.layer_stagnation}
+        self.consecutive_fail_count = {layer: 0 for layer in self.consecutive_fail_count}
+        self.layer_cooldown_until_iter = {layer: 0 for layer in self.layer_cooldown_until_iter}
+        self.layer_failure_cooldown_until_iter = {layer: 0 for layer in self.layer_failure_cooldown_until_iter}
+        self.lahc_history = [float(self.current_eval.F_cal)] * max(1, int(getattr(self.cfg, "resource_lahc_history_length", 20)))
+        self.lahc_index = 0
+        self.lahc_threshold = float(self.current_eval.F_cal)
+        shake_steps = max(0, int(getattr(self.cfg, "resource_multi_start_shake_steps", 3)))
+        for _ in range(shake_steps):
+            layer = str(self.rng.choice(["X", "Y", "Z"]))
+            destroy_name, repair_name = self._sample_operator_pair(layer)
+            budget = max(1, self._effective_destroy_budget(layer, float(getattr(self.cfg, "resource_destroy_mu_medium", 0.20))))
+            payload = None
+            if layer == "X":
+                payload = self._apply_x_candidate(int(iter_id), str(destroy_name), str(repair_name), int(budget))
+            else:
+                planner = plan_y_candidate if layer == "Y" else plan_z_candidate
+                applier = apply_exact_y_plan if layer == "Y" else apply_exact_z_plan
+                plan = planner(self.opt, self.current_config, str(destroy_name), str(repair_name), self.rng, int(budget))
+                if bool(plan.get("success", False)):
+                    payload = applier(self.opt, self.current_config, plan, self.rng)
+            if payload is not None and bool(payload.get("success", True)) and payload.get("config", None) is not None:
+                self.current_config = payload["config"]
+                self.current_eval = self.scorer.evaluate(
+                    config=self.current_config,
+                    affected_subtask_ids=payload.get("affected_ids", set()),
+                    fallback_penalty=0.15 if bool(payload.get("fallback_used", False)) else 0.0,
+                    iterations_since_last_validation=0,
+                    distance_to_last_validated=config_distance(self.current_config, self.last_validated_config),
+                )
 
     def _update_layer_progress(self, layer: str, accepted: bool, prev_f_raw: float, new_f_raw: float, stagnation_increment: float) -> None:
         improvement = max(0.0, float(prev_f_raw) - float(new_f_raw)) if bool(accepted) else 0.0
@@ -1123,6 +1388,8 @@ class ResourceTimeALNSEngine:
             accepted = False
             accept_prob = 0.0
             effective_sa_temperature = float(self.temperature)
+            acceptance_mode = str(getattr(self.cfg, "resource_acceptance_mode", "sa") or "sa")
+            lahc_threshold = float("nan")
             fallback_used = False
             projection_mode = ""
             projection_count = 0
@@ -1166,6 +1433,8 @@ class ResourceTimeALNSEngine:
             candidate_pool_target_size = int(getattr(self.cfg, "resource_candidate_pool_size", 3))
             if str(layer) == "X":
                 candidate_pool_info = self._generate_x_candidate_pool(iter_id, effective_destroy_budget, candidate_pool_target_size)
+            elif str(layer).upper() == "XYZ":
+                candidate_pool_info = self._generate_xyz_candidate_pool(iter_id, effective_destroy_budget, candidate_pool_target_size)
             else:
                 candidate_pool_info = self._generate_yz_candidate_pool(layer, iter_id, effective_destroy_budget, candidate_pool_target_size)
             candidate_rows = list(candidate_pool_info.get("rows", []) or [])
@@ -1206,7 +1475,7 @@ class ResourceTimeALNSEngine:
                             candidate_payload = selected_candidate["candidate_payload"]
                             candidate_config = candidate_payload["config"]
                             candidate_signature = candidate_payload["config"].validation_signature()
-                    accepted, accept_prob, effective_sa_temperature = self._sa_accept(candidate_eval, layer)
+                    accepted, accept_prob, effective_sa_temperature, acceptance_mode, lahc_threshold = self._accept_candidate(candidate_eval, layer)
                     x_temp_boost_used = bool(str(layer) == "X")
                 if accepted and not bool(coverage_hard_reject) and bool(getattr(self.cfg, "resource_joint_colocated_sort_on_accepted_only", True)):
                     selected_candidate, precomputed_validation, joint_postprocess_stats, joint_postprocess_time_sec = self._maybe_apply_joint_colocated_sort_postprocess(
@@ -1399,6 +1668,9 @@ class ResourceTimeALNSEngine:
                     "local_obj": float(candidate_eval.F_raw),
                     "sa_temperature": float(effective_sa_temperature),
                     "sa_accept_prob": float(accept_prob),
+                    "acceptance_mode": str(acceptance_mode),
+                    "lahc_threshold": float(lahc_threshold),
+                    "multi_start_restart_count": int(getattr(self, "multi_start_restart_count", 0)),
                     "iter_runtime_sec": float(iter_runtime_sec),
                     "global_eval_time_sec": float(val_time),
                     "operator_weight_snapshot": self._weight_snapshot(layer),
@@ -1467,6 +1739,7 @@ class ResourceTimeALNSEngine:
             self.opt.layer_runtime_sec_by_name[layer] = float(self.opt.layer_runtime_sec_by_name.get(layer, 0.0)) + float(iter_runtime_sec)
             self.opt.layer_trial_count_by_name[layer] = float(self.opt.layer_trial_count_by_name.get(layer, 0.0)) + 1.0
             self.temperature = float(max(1e-6, self.temperature * cooling))
+            self._advance_lahc_history()
             self._refresh_operator_stats_payload()
             if abs(float(self.best_validated.makespan) - float(best_z_before_iter)) > 1e-9:
                 self.no_best_z_change_rounds = 0.0
@@ -1480,6 +1753,12 @@ class ResourceTimeALNSEngine:
                 getattr(self.cfg, "resource_stop_if_best_z_no_change_rounds", 50),
             ))
             if int(hard_stop_rounds) > 0 and int(self.validated_best_no_change_rounds) >= int(hard_stop_rounds):
+                max_starts = max(1, int(getattr(self.cfg, "resource_multi_start_count", 1)))
+                patience = int(getattr(self.cfg, "resource_multi_start_patience", 0))
+                can_restart = int(getattr(self, "multi_start_restart_count", 0)) < int(max_starts - 1)
+                if bool(can_restart) and (patience <= 0 or int(self.validated_best_no_change_rounds) >= int(patience)):
+                    self._restart_current_search_state(int(iter_id))
+                    continue
                 self.opt.stop_reason = f"validated_best_no_change_{int(hard_stop_rounds)}"
                 break
 

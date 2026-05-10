@@ -132,6 +132,16 @@ class TRARunConfig:
     resource_sa_init_temp: float = 20.0
     resource_sa_cooling: float = 0.95
     resource_sa_reheat_factor: float = 1.25
+    resource_acceptance_mode: str = "sa"  # "sa" | "lahc"
+    resource_lahc_history_length: int = 20
+    resource_lahc_greedy_when_best: bool = True
+    resource_multi_start_count: int = 1
+    resource_multi_start_patience: int = 0
+    resource_multi_start_shake_steps: int = 3
+    resource_enable_xyz_operator: bool = False
+    resource_component_weight_xyz: float = 1.0
+    resource_layer_base_weight_xyz: float = 0.15
+    resource_destroy_degree_xyz: int = 1
     resource_weight_reaction: float = 0.2
     resource_operator_update_batch_size: int = 10
     resource_operator_update_max_stale_rounds: int = 15
@@ -633,7 +643,7 @@ class TRAOptimizer:
         self.last_shadow_chain_reset_reason: str = ""
         self.anchor_reference: Dict[str, Any] = {}
         self._z_detour_cache: Dict[int, float] = {}
-        self.layer_names: List[str] = ["X", "Y", "Z", "U"]
+        self.layer_names: List[str] = ["X", "Y", "Z", "XYZ", "U"]
         self.layer_lambda_weights: Dict[str, float] = {
             key: float(self.cfg.lambda_init)
             for key in ["x_affinity", "x_route", "x_time", "yx", "yz", "yu", "zx", "zy", "zu", "uy", "uz"]
@@ -1269,6 +1279,10 @@ class TRAOptimizer:
             "exact_eval_cache_hit_count": int(max((int(row.get("exact_eval_cache_hit_count", 0) or 0) for row in iter_rows), default=0)),
             "x_failure_decapitation_count": int(getattr(self, "x_failure_decapitation_count", 0)),
             "stop_reason": str(getattr(self, "stop_reason", "") or ""),
+            "resource_acceptance_mode": str(getattr(self.cfg, "resource_acceptance_mode", "sa")),
+            "resource_multi_start_count": int(getattr(self.cfg, "resource_multi_start_count", 1)),
+            "multi_start_restart_count": int(max((int(row.get("multi_start_restart_count", 0) or 0) for row in iter_rows), default=0)),
+            "resource_enable_xyz_operator": bool(getattr(self.cfg, "resource_enable_xyz_operator", False)),
             "resource_real_eval_period": int(getattr(self.cfg, "resource_real_eval_period", 8)),
             "joint_colocated_sort_postprocess_stats": joint_postprocess_stats,
             "validation_trigger_counts": dict(sorted(validation_trigger_counts.items())),
