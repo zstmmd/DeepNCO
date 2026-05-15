@@ -140,6 +140,7 @@ class GlobalXYZUConfig:
     enable_warm_start_route_repair: bool = True
     enable_scale_adaptive_candidate_prune: bool = False
     route_pickup_neighbor_limit: int = 5
+    forced_candidate_stacks_by_order: Optional[Dict[int, List[int]]] = None
 
 
 @dataclass
@@ -849,6 +850,12 @@ class GlobalXYZUSolver:
             stack_best_layer: Dict[int, int] = defaultdict(lambda: 10**6)
             warm_stack_ids = sorted(int(stack_id) for stack_id in warm_stack_ids_by_order.get(order_id, set()))
             warm_stack_set = set(warm_stack_ids)
+            forced_stack_ids = sorted(
+                int(stack_id)
+                for stack_id in dict(getattr(cfg, "forced_candidate_stacks_by_order", None) or {}).get(int(order_id), [])
+                if int(stack_id) in getattr(problem, "point_to_stack", {})
+            )
+            forced_stack_set = set(forced_stack_ids)
             required_cover_stack_ids: Set[int] = set()
 
             for sku_id in unique_skus_by_order.get(order_id, []):
@@ -907,7 +914,7 @@ class GlobalXYZUSolver:
             }
             protected_non_warm = {
                 int(stack_id)
-                for stack_id in required_cover_stack_ids
+                for stack_id in set(required_cover_stack_ids) | forced_stack_set
                 if int(stack_id) not in warm_stack_set
             }
             dominated_non_warm: Set[int] = set()
@@ -962,13 +969,13 @@ class GlobalXYZUSolver:
                     warm_neighbor_rows.sort(key=lambda row: (float(row[0]), float(row[1]), int(row[2])))
                     warm_neighbor_limit = max(0, int(getattr(cfg, "candidate_stack_topk", 3) or 0))
                     warm_neighbor_ids = [int(row[2]) for row in warm_neighbor_rows[:warm_neighbor_limit]]
-            stack_ids: List[int] = list(warm_ranked) + list(ranked_non_warm)
+            stack_ids: List[int] = list(warm_ranked) + list(forced_stack_ids) + list(ranked_non_warm)
             candidate_stack_count_before_by_order[int(order_id)] = int(len(dict.fromkeys(int(stack_id) for stack_id in stack_ids)))
             if bool(getattr(cfg, "enable_warm_candidate_stack_prune", False)):
                 keep_non_warm = max(0, int(getattr(cfg, "candidate_stack_topk", 3)))
                 required_non_warm = [
                     int(stack_id)
-                    for stack_id in sorted(required_cover_stack_ids)
+                    for stack_id in sorted(set(required_cover_stack_ids) | forced_stack_set)
                     if int(stack_id) not in warm_stack_set
                 ]
                 tail = [
@@ -980,7 +987,7 @@ class GlobalXYZUSolver:
             if int(cfg.max_candidate_stacks_per_order) > 0 and len(stack_ids) > int(cfg.max_candidate_stacks_per_order):
                 protected_stack_ids = list(dict.fromkeys(list(warm_ranked) + [
                     int(stack_id)
-                    for stack_id in sorted(required_cover_stack_ids)
+                    for stack_id in sorted(set(required_cover_stack_ids) | forced_stack_set)
                     if int(stack_id) not in warm_stack_set
                 ]))
                 remaining_budget = int(cfg.max_candidate_stacks_per_order) - len(protected_stack_ids)
@@ -3720,12 +3727,12 @@ class GlobalXYZUSolver:
             for sku_id in unique_skus_by_order.get(order_id, []):
                 unit_ids = units_by_order_sku.get((order_id, int(sku_id)), [])
                 cover_expr = gp.quicksum(
-                    int(tote_sku_qty[(int(tote_id), int(sku_id))]) * hit[sid, int(tote_id)]
+                    hit[sid, int(tote_id)]
                     for tote_id in demand_hit_totes
                     if (int(tote_id), int(sku_id)) in tote_sku_qty
                 )
                 demand_expr = gp.quicksum(
-                    int(demand_qty_by_order_sku.get((order_id, int(sku_id)), 0) or 0) * x[str(unit_id), sid]
+                    x[str(unit_id), sid]
                     for unit_id in unit_ids
                 )
                 model.addConstr(cover_expr >= demand_expr, name=f"DemandCover_{sid}_{sku_id}")
@@ -3747,15 +3754,16 @@ class GlobalXYZUSolver:
                 slot_ids = [int(v) for v in slot_ids_by_order.get(int(order_id), [])]
                 demand_hit_totes = demand_hit_totes_by_order.get(int(order_id), [])
                 for sku_id in unique_skus_by_order.get(int(order_id), []):
-                    demand_qty = int(demand_qty_by_order_sku.get((int(order_id), int(sku_id)), 0) or 0)
-                    if demand_qty <= 0:
+                    required_type_count = 1 if int(demand_qty_by_order_sku.get((int(order_id), int(sku_id)), 0) or 0) > 0 else 0
+                    if required_type_count <= 0:
                         continue
                     cover_terms = []
                     for stack_id in candidate_stacks_by_order.get(int(order_id), []):
                         stack_sku_cap = sum(
-                            int(tote_sku_qty.get((int(tote_id), int(sku_id)), 0) or 0)
+                            1
                             for tote_id in demand_hit_totes
                             if int(tote_to_stack.get(int(tote_id), -1)) == int(stack_id)
+                            and int(tote_sku_qty.get((int(tote_id), int(sku_id)), 0) or 0) > 0
                         )
                         if int(stack_sku_cap) <= 0:
                             continue
@@ -3765,7 +3773,7 @@ class GlobalXYZUSolver:
                                 cover_terms.append(float(stack_sku_cap) * expr)
                     if cover_terms:
                         model.addConstr(
-                            gp.quicksum(cover_terms) >= float(demand_qty),
+                            gp.quicksum(cover_terms) >= float(required_type_count),
                             name=f"OrderSkuStackCover_{order_id}_{sku_id}",
                         )
                         sku_cover_cut_count += 1

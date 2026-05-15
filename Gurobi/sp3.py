@@ -236,9 +236,7 @@ class SP3_Bin_Hitter:
                                   routing_costs: Dict[int, float]) -> Tuple[List[Task], List[int], float]:
 
         # 1. 需求统计
-        demand = defaultdict(int)
-        for sku in task.sku_list:
-            demand[sku.id] += 1
+        demand = {int(sku.id): 1 for sku in task.unique_sku_list}
 
         # 2. 候选堆垛与料箱
         candidate_stack_indices = set()
@@ -301,15 +299,15 @@ class SP3_Bin_Hitter:
         # --- C. 约束条件 ---
 
         # 1. 需求覆盖
-        for sku_id, qty in demand.items():
+        for sku_id in demand.keys():
             lhs = gp.LinExpr()
             sku_obj = self.problem.id_to_sku[sku_id]
             for tote_id in sku_obj.storeToteList:
                 if tote_id in u_use:
                     tote = self.problem.id_to_tote[tote_id]
-                    q = tote.sku_quantity_map.get(sku_id, 0)
-                    lhs += u_use[tote_id] * q
-            m.addConstr(lhs >= qty)
+                    if int(tote.sku_quantity_map.get(sku_id, 0) or 0) > 0:
+                        lhs += u_use[tote_id]
+            m.addConstr(lhs >= 1)
 
         total_load = gp.LinExpr()
 
@@ -394,7 +392,7 @@ class SP3_Bin_Hitter:
         total_sc_cost = 0.0
 
         # 追踪该 SubTask 的剩余需求，用于计算每个 Task 的 sku_pick_count
-        remaining_demand = demand.copy()
+        remaining_demand = {int(sku_id): 1 for sku_id in demand.keys()}
 
         if m.status in [GRB.OPTIMAL, GRB.TIME_LIMIT]:
             for u in U:
@@ -455,9 +453,8 @@ class SP3_Bin_Hitter:
                             for s_id, qty in tote.sku_quantity_map.items():
                                 if s_id in remaining_demand and remaining_demand[s_id] > 0:
                                     # 实际贡献量 = min(料箱库存, 剩余需求)
-                                    used = min(qty, remaining_demand[s_id])
-                                    current_task_pick_count += used
-                                    remaining_demand[s_id] -= used
+                                    current_task_pick_count += 1
+                                    remaining_demand[s_id] = 0
 
                         new_task = Task(
                             task_id=self._global_task_id,
@@ -564,9 +561,7 @@ class SP3_Bin_Hitter:
                 task.sp3_coverage_ok = True
 
                 # ✅ [新增] 追踪该 SubTask 的剩余需求
-                task_remaining_demand = defaultdict(int)
-                for sku in task.sku_list:
-                    task_remaining_demand[sku.id] += 1
+                task_remaining_demand = {int(sku.id): 1 for sku in task.unique_sku_list}
 
                 stack_plan = self._greedy_tote_selection_v2(task)
 
@@ -663,9 +658,8 @@ class SP3_Bin_Hitter:
                             if not tote: continue
                             for s_id, qty in tote.sku_quantity_map.items():
                                 if s_id in task_remaining_demand and task_remaining_demand[s_id] > 0:
-                                    contribution = min(qty, task_remaining_demand[s_id])
-                                    current_pick_count += contribution
-                                    task_remaining_demand[s_id] -= contribution
+                                    current_pick_count += 1
+                                    task_remaining_demand[s_id] = 0
 
                         # 生成 Task
                         new_task = Task(
@@ -798,9 +792,7 @@ class SP3_Bin_Hitter:
 
         def _greedy_tote_selection_v2(self, task: SubTask) -> Dict[int, List[Tote]]:
             # 需求使用 multiset（计数），避免把同 SKU 多件压成 set 造成漏选
-            pending_demand = defaultdict(int)
-            for sku in task.sku_list:
-                pending_demand[sku.id] += 1
+            pending_demand = {int(sku.id): 1 for sku in task.unique_sku_list}
             pending_skus_set = set(k for k, v in pending_demand.items() if v > 0)
             selected_stacks_map = defaultdict(list)
 
@@ -909,12 +901,8 @@ class SP3_Bin_Hitter:
                             continue
                         if pending_demand.get(s_id, 0) <= 0:
                             continue
-                        used = min(int(qty), int(pending_demand[s_id]))
-                        if used > 0:
-                            pending_demand[s_id] -= used
-                            used_any = True
-                            if pending_demand[s_id] <= 0:
-                                pending_demand.pop(s_id, None)
+                        pending_demand.pop(s_id, None)
+                        used_any = True
                     if used_any:
                         if t not in selected_stacks_map[best_stack_idx]:
                             selected_stacks_map[best_stack_idx].append(t)

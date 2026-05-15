@@ -40,6 +40,21 @@ SUMMARY_COLUMNS = [
 ]
 
 
+def _parse_forced_candidate_stacks(text: str) -> Dict[int, List[int]]:
+    out: Dict[int, List[int]] = {}
+    for item in str(text or "").replace(";", ",").split(","):
+        item = item.strip()
+        if not item:
+            continue
+        if ":" not in item:
+            raise ValueError(f"Invalid forced candidate stack entry: {item!r}; expected order_id:stack_id")
+        order_text, stack_text = item.split(":", 1)
+        order_id = int(order_text.strip())
+        stack_id = int(stack_text.strip())
+        out.setdefault(order_id, []).append(stack_id)
+    return {int(k): list(dict.fromkeys(int(v) for v in values)) for k, values in out.items()}
+
+
 def _finite_float(value: Any, default: float = float("nan")) -> float:
     try:
         out = float(value)
@@ -114,6 +129,12 @@ def main() -> None:
     parser.add_argument("--kitting-span-penalty-weight", type=float, default=5.0)
     parser.add_argument("--deadline-penalty-weight", type=float, default=1000.0)
     parser.add_argument("--scales", type=str, default=",".join(SCALES), help="Comma-separated scale list.")
+    parser.add_argument(
+        "--force-candidate-stacks",
+        type=str,
+        default="",
+        help="Comma/semicolon-separated order_id:stack_id entries to keep in the Gurobi candidate set.",
+    )
     parser.add_argument("--output-dir", type=str, default="")
     args = parser.parse_args()
 
@@ -121,6 +142,7 @@ def main() -> None:
     output_dir = args.output_dir or os.path.join(ROOT_DIR, "result", f"gurobi_scale_suite_{timestamp}")
     rows: List[Dict[str, Any]] = []
     details: List[Dict[str, Any]] = []
+    forced_candidate_stacks = _parse_forced_candidate_stacks(str(args.force_candidate_stacks or ""))
 
     scales = [str(item).strip().upper() for item in str(args.scales or "").split(",") if str(item).strip()]
     for scale in scales:
@@ -147,6 +169,7 @@ def main() -> None:
                 enable_sp4_fallback=False,
                 kitting_span_penalty_weight=float(args.kitting_span_penalty_weight),
                 deadline_penalty_weight=float(args.deadline_penalty_weight),
+                forced_candidate_stacks_by_order=forced_candidate_stacks,
             )
             result = GlobalXYZUSolver().solve(problem, cfg=cfg)
             diag = dict(result.diagnostics or {})

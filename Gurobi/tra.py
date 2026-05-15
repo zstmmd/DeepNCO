@@ -5829,7 +5829,7 @@ class TRAOptimizer:
         for sku in getattr(st, "sku_list", []) or []:
             sid = int(getattr(sku, "id", -1))
             if sid >= 0:
-                req[sid] += 1
+                req[sid] = 1
         for task in getattr(st, "execution_tasks", []) or []:
             for tote_id in getattr(task, "target_tote_ids", []) or []:
                 tote = tote_map.get(int(tote_id))
@@ -5837,9 +5837,9 @@ class TRAOptimizer:
                     continue
                 for sid, qty in getattr(tote, "sku_quantity_map", {}).items():
                     sid_i = int(sid)
-                    if sid_i in req:
-                        prov[sid_i] += int(qty)
-        return {sid: max(0, int(req[sid] - prov.get(sid, 0))) for sid in req}
+                    if sid_i in req and int(qty or 0) > 0:
+                        prov[sid_i] = 1
+        return {sid: 1 for sid in req if int(prov.get(sid, 0) or 0) <= 0}
 
     def _validate_z_subtask_candidate(self, st: Any) -> Tuple[bool, Dict[str, Any]]:
         if self.problem is None:
@@ -5967,7 +5967,7 @@ class TRAOptimizer:
         for sku in getattr(st, "sku_list", []) or []:
             sid = int(getattr(sku, "id", -1))
             if sid >= 0:
-                req[sid] += 1
+                req[sid] = 1
         return dict(req)
 
     def _z_used_tote_ids(self, st: Any, exclude_task_ids: Optional[Set[int]] = None) -> Set[int]:
@@ -5992,8 +5992,8 @@ class TRAOptimizer:
                     continue
                 for sku_id, qty in getattr(tote, "sku_quantity_map", {}).items():
                     sid = int(sku_id)
-                    if sid in req and req[sid] > 0:
-                        req[sid] = max(0, int(req[sid]) - int(qty))
+                    if sid in req and req[sid] > 0 and int(qty or 0) > 0:
+                        req[sid] = 0
         return {int(sid): int(qty) for sid, qty in req.items()}
 
     def _z_available_stack_totes(self, st: Any, stack_id: int, exclude_task_ids: Optional[Set[int]] = None) -> List[Any]:
@@ -6014,17 +6014,16 @@ class TRAOptimizer:
         for sku_id, qty in remaining.items():
             if int(qty) <= 0:
                 continue
-            stack_qty = sum(int(getattr(tote, "sku_quantity_map", {}).get(int(sku_id), 0)) for tote in available_totes)
-            if stack_qty > 0:
-                demanded_qty += int(qty)
-                available_qty += int(stack_qty)
+            has_sku = any(int(getattr(tote, "sku_quantity_map", {}).get(int(sku_id), 0) or 0) > 0 for tote in available_totes)
+            if has_sku:
+                demanded_qty += 1
+                available_qty += 1
         for tote in available_totes:
             tote_hit = False
             for sku_id, qty in getattr(tote, "sku_quantity_map", {}).items():
                 sid = int(sku_id)
-                use = min(int(remaining_local.get(sid, 0)), int(qty))
-                if use > 0:
-                    remaining_local[sid] = int(remaining_local.get(sid, 0)) - int(use)
+                if int(remaining_local.get(sid, 0)) > 0 and int(qty or 0) > 0:
+                    remaining_local[sid] = 0
                     hit_sku_ids.add(sid)
                     tote_hit = True
             if tote_hit:
@@ -6435,7 +6434,8 @@ class TRAOptimizer:
                         continue
                     gain = 0.0
                     for sku_id, qty in getattr(tote, "sku_quantity_map", {}).items():
-                        gain += float(min(int(summary.get("remaining_demand", {}).get(int(sku_id), 0)), int(qty)))
+                        if int(summary.get("remaining_demand", {}).get(int(sku_id), 0)) > 0 and int(qty or 0) > 0:
+                            gain += 1.0
                     if gain <= 0.0:
                         continue
                     plan = self._z_build_plan_from_hits(st, task, int(getattr(task, "target_stack_id", -1)), current_hits + [tote_id], "FLIP", {int(getattr(task, "task_id", -1))})
@@ -6542,7 +6542,8 @@ class TRAOptimizer:
                             continue
                         gain = 0.0
                         for sku_id, qty in getattr(tote, "sku_quantity_map", {}).items():
-                            gain += float(min(int(remaining.get(int(sku_id), 0)), int(qty)))
+                            if int(remaining.get(int(sku_id), 0)) > 0 and int(qty or 0) > 0:
+                                gain += 1.0
                         if gain <= 0.0:
                             continue
                         expanded_hits = list(dict.fromkeys(list(current_hit_ids) + [tote_id]))
@@ -8266,7 +8267,7 @@ class TRAOptimizer:
         for st in sub_tasks:
             req = defaultdict(int)
             for sku in st.sku_list:
-                req[sku.id] += 1
+                req[sku.id] = 1
             prov = defaultdict(int)
             hit_totes = []
             chosen_stacks = set()
@@ -8278,11 +8279,9 @@ class TRAOptimizer:
                 if not tote:
                     continue
                 for sid, qty in tote.sku_quantity_map.items():
-                    if req.get(sid, 0) > 0 and prov[sid] < req[sid]:
-                        use = min(int(qty), req[sid] - prov[sid])
-                        if use > 0:
-                            prov[sid] += use
-            unmet_skus = {sid: max(0, req[sid] - prov.get(sid, 0)) for sid in req.keys() if req[sid] - prov.get(sid, 0) > 0}
+                    if req.get(sid, 0) > 0 and int(qty or 0) > 0:
+                        prov[sid] = 1
+            unmet_skus = {sid: 1 for sid in req.keys() if int(prov.get(sid, 0) or 0) <= 0}
             this_unmet = int(sum(unmet_skus.values()))
             if this_unmet > 0:
                 unmet_subtasks += 1
@@ -8401,7 +8400,7 @@ class TRAOptimizer:
             for sku in getattr(st, "sku_list", []) or []:
                 sid = int(getattr(sku, "id", -1))
                 if sid >= 0:
-                    req[sid] = req.get(sid, 0) + 1
+                    req[sid] = 1
             prov: Dict[int, int] = {}
             for task in getattr(st, "execution_tasks", []) or []:
                 for tote_id in getattr(task, "target_tote_ids", []) or []:
@@ -8410,9 +8409,9 @@ class TRAOptimizer:
                         continue
                     for sid, qty in getattr(tote, "sku_quantity_map", {}).items():
                         sid_i = int(sid)
-                        if sid_i in req:
-                            prov[sid_i] = prov.get(sid_i, 0) + int(qty)
-            unmet = {sid: int(max(0, req[sid] - prov.get(sid, 0))) for sid in req if req[sid] - prov.get(sid, 0) > 0}
+                        if sid_i in req and int(qty or 0) > 0:
+                            prov[sid_i] = 1
+            unmet = {sid: 1 for sid in req if int(prov.get(sid, 0) or 0) <= 0}
             unmet_units = int(sum(unmet.values()))
             if unmet_units > 0:
                 unmet_total += unmet_units
@@ -8421,7 +8420,7 @@ class TRAOptimizer:
                 "subtask_id": int(getattr(st, "id", -1)),
                 "order_id": int(getattr(getattr(st, "parent_order", None), "order_id", -1)),
                 "required_sku_units": int(sum(req.values())),
-                "provided_sku_units": int(sum(min(req.get(sid, 0), prov.get(sid, 0)) for sid in req)),
+                "provided_sku_units": int(sum(1 for sid in req if int(prov.get(sid, 0) or 0) > 0)),
                 "unmet_sku_units": int(unmet_units),
                 "unmet_skus": unmet,
                 "coverage_ok": bool(unmet_units == 0),

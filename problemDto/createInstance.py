@@ -71,12 +71,12 @@ class CreateOFSProblem:
         configs = {
             "TEST": {"map_size": (2, 4), "resources": (2, 2, 100), "data": (1, 10), "bom_complexity": (10, 1), "exact_bom_sku_count": 10},
             "GUROBI-S1": {"map_size": (2, 4), "resources": (2, 2, 30), "data": (1, 10), "bom_complexity": (10, 1), "exact_bom_sku_count": 10, "exact_bom_sku_quantity_range": (3, 5)},
-            "GUROBI-S2": {"map_size": (2, 4), "resources": (2, 2, 50), "data": (2, 15), "bom_complexity": (8, 1), "bom_quantity_range": (3, 5)},
-            "GUROBI-S3": {"map_size": (2, 4), "resources": (2, 2, 65), "data": (2, 18), "bom_complexity": (8, 1), "bom_quantity_range": (6, 8)},
-            "GUROBI-S4": {"map_size": (3, 4), "resources": (3, 3, 80), "data": (3, 20), "bom_complexity": (8, 1), "bom_quantity_range": (8, 10)},
-            "GUROBI-S5": {"map_size": (3, 4), "resources": (3, 3, 95), "data": (3, 24), "bom_complexity": (8, 1), "bom_quantity_range": (8, 10)},
+            "GUROBI-S2": {"map_size": (2, 4), "resources": (2, 2, 50), "data": (2, 15), "bom_complexity": (8, 1), "target_stack_count": 3, "exact_order_sku_counts": (6, 7), "exact_order_sku_quantity_range": (3, 5), "bom_colocated_inventory": True, "bom_colocated_stack_counts": (1, 2), "bom_colocated_disjoint_stack_groups": True, "bom_colocated_support_multiplier": 1.2, "bom_colocated_sku_copy_count": 1, "bom_colocated_chunked_by_stack": True},
+            "GUROBI-S3": {"map_size": (2, 4), "resources": (2, 2, 65), "data": (2, 18), "bom_complexity": (8, 1), "target_stack_count": 4, "exact_order_sku_counts": (7, 7), "exact_order_sku_quantity_range": (8, 10), "bom_colocated_inventory": True, "bom_colocated_stack_counts": (2, 2), "bom_colocated_disjoint_stack_groups": True, "bom_colocated_support_multiplier": 1.2, "bom_colocated_sku_copy_count": 1, "bom_colocated_chunked_by_stack": True},
+            "GUROBI-S4": {"map_size": (3, 4), "resources": (3, 3, 80), "data": (3, 20), "bom_complexity": (8, 1), "target_stack_count": 5, "exact_order_sku_counts": (6, 7, 7), "exact_order_sku_quantity_range": (7, 9), "bom_colocated_inventory": True, "bom_colocated_stack_counts": (1, 2, 2), "bom_colocated_disjoint_stack_groups": True, "bom_colocated_support_multiplier": 1.2, "bom_colocated_sku_copy_count": 1, "bom_colocated_chunked_by_stack": True},
+            "GUROBI-S5": {"map_size": (3, 4), "resources": (3, 3, 95), "data": (3, 24), "bom_complexity": (8, 1), "target_stack_count": 6, "exact_order_sku_counts": (7, 7, 7), "exact_order_sku_quantity_range": (9, 11), "bom_colocated_inventory": True, "bom_colocated_stack_counts": (2, 2, 2), "bom_colocated_disjoint_stack_groups": True, "bom_colocated_support_multiplier": 1.2, "bom_colocated_sku_copy_count": 1, "bom_colocated_chunked_by_stack": True},
             "GUROBI-S6": {"map_size": (3, 4), "resources": (3, 3, 100), "data": (4, 25), "bom_complexity": (8, 1), "bom_quantity_range": (12, 14)},
-            "GUROBI-S7": {"map_size": (3, 5), "resources": (3, 3, 120), "data": (4, 30), "bom_complexity": (8, 1), "target_stack_count": 22, "inventory_cold_filler_probability": 0.25, "exact_order_sku_counts": (5, 6, 6, 6), "exact_order_sku_quantity_range": (6, 8), "bom_colocated_inventory": True, "bom_colocated_stack_counts": (2, 3, 3, 3), "bom_colocated_disjoint_stack_groups": True, "bom_colocated_support_multiplier": 1.2},
+            "GUROBI-S7": {"map_size": (3, 5), "resources": (3, 3, 120), "data": (4, 30), "bom_complexity": (8, 1), "target_stack_count": 22, "inventory_cold_filler_probability": 0.25, "exact_order_sku_counts": (5, 6, 6, 6), "exact_order_sku_quantity_range": (6, 8), "bom_colocated_inventory": True, "bom_colocated_stack_counts": (2, 3, 3, 2), "bom_colocated_disjoint_stack_groups": True, "bom_colocated_support_multiplier": 1.2},
             "GUROBI-S8": {"map_size": (3, 5), "resources": (4, 4, 120), "data": (5, 30), "bom_complexity": (8, 1), "target_stack_count": 22, "inventory_cold_filler_probability": 0.25, "exact_order_sku_counts": (5, 6, 6, 6, 6), "exact_order_sku_quantity_range": (9, 11), "bom_colocated_inventory": True, "bom_colocated_stack_counts": (2, 3, 3, 3, 3), "bom_colocated_disjoint_stack_groups": True, "bom_colocated_support_multiplier": 1.2},
             "GUROBI-S9": {"map_size": (3, 5), "resources": (4, 4, 145), "data": (5, 36), "bom_complexity": (8, 1), "target_stack_count": 26, "inventory_cold_filler_probability": 0.25, "exact_order_sku_counts": (5, 6, 6, 6, 6), "exact_order_sku_quantity_range": (11, 13), "bom_colocated_inventory": True, "bom_colocated_stack_counts": (2, 3, 3, 3, 3), "bom_colocated_disjoint_stack_groups": True, "bom_colocated_support_multiplier": 1.2},
             "GUROBI-SM1": {"map_size": (2, 4), "resources": (1, 1, 12), "data": (1, 8), "bom_complexity": (4, 1), "target_stack_count": 3, "inventory_cold_filler_probability": 0.0, "inventory_initial_unassigned_skus_per_tote": 1, "exact_bom_sku_count": 4, "exact_bom_sku_quantity_range": (5, 10), "exact_demand_sku_strategy": "redundancy_3_4"},
@@ -138,6 +138,8 @@ class CreateOFSProblem:
         bom_colocated_stack_counts = tuple(int(v) for v in (cfg.get("bom_colocated_stack_counts", ()) or ()))
         bom_colocated_support_multiplier = float(cfg.get("bom_colocated_support_multiplier", 2.5) or 2.5)
         bom_colocated_disjoint_stack_groups = bool(cfg.get("bom_colocated_disjoint_stack_groups", False))
+        bom_colocated_sku_copy_count = int(cfg.get("bom_colocated_sku_copy_count", 2) or 2)
+        bom_colocated_chunked_by_stack = bool(cfg.get("bom_colocated_chunked_by_stack", False))
 
         print(f">>> 生成 [{scale}] 规模实例 | Seed: {seed}")
         print(f"    Map: {map_L}x{map_W} blocks | Robots: {rob_n} | Stations: {st_n}")
@@ -179,6 +181,8 @@ class CreateOFSProblem:
             bom_colocated_stack_counts=bom_colocated_stack_counts,
             bom_colocated_disjoint_stack_groups=bool(bom_colocated_disjoint_stack_groups),
             bom_colocated_support_multiplier=float(bom_colocated_support_multiplier),
+            bom_colocated_sku_copy_count=int(bom_colocated_sku_copy_count),
+            bom_colocated_chunked_by_stack=bool(bom_colocated_chunked_by_stack),
             base_seed=int(seed),
         )
         problem.scale_name = scale_upper
@@ -222,6 +226,8 @@ class CreateOFSProblem:
             bom_colocated_stack_counts: Tuple[int, ...] = (),
             bom_colocated_disjoint_stack_groups: bool = False,
             bom_colocated_support_multiplier: float = 2.5,
+            bom_colocated_sku_copy_count: int = 2,
+            bom_colocated_chunked_by_stack: bool = False,
             base_seed: int = OFSConfig.RANDOM_SEED,
     ) -> OFSProblemDTO:
         """
@@ -363,6 +369,8 @@ class CreateOFSProblem:
                 disjoint_stack_groups=bool(bom_colocated_disjoint_stack_groups),
                 support_multiplier=float(bom_colocated_support_multiplier),
                 cold_filler_probability=float(inventory_cold_filler_probability),
+                sku_copy_count=int(bom_colocated_sku_copy_count),
+                chunked_by_stack=bool(bom_colocated_chunked_by_stack),
             )
         else:
             tote_list, final_stack_list = CreateOFSProblem._build_default_inventory(
@@ -928,6 +936,8 @@ class CreateOFSProblem:
             disjoint_stack_groups: bool = False,
             support_multiplier: float = 2.5,
             cold_filler_probability: float = 0.25,
+            sku_copy_count: int = 2,
+            chunked_by_stack: bool = False,
     ) -> Tuple[List[Tote], List[Stack], Dict[str, Any]]:
         active_stacks = (
             CreateOFSProblem._select_spread_stacks_for_inventory(stack_list, int(target_stack_count))
@@ -953,6 +963,9 @@ class CreateOFSProblem:
         stack_by_id = {int(stack.stack_id): stack for stack in active_stacks}
         home_stacks_by_sku: Dict[int, List[int]] = {}
         reserved_bom_stack_ids: Set[int] = set()
+        demand_sku_copy_count = max(1, int(sku_copy_count or 1))
+        demand_sku_copy_count = min(2, int(demand_sku_copy_count))
+        chunk_size = max(1, int(getattr(OFSConfig, "ROBOT_CAPACITY", 8)) - 2)
 
         def stack_sort_key(stack: Stack) -> Tuple[int, int, float, int]:
             return (
@@ -1022,8 +1035,12 @@ class CreateOFSProblem:
                     ]
                 else:
                     target_stack_ids = []
-                    for copy_idx in range(2):
-                        stack = candidate_stacks[int(idx + copy_idx) % len(candidate_stacks)]
+                    for copy_idx in range(demand_sku_copy_count):
+                        if bool(chunked_by_stack):
+                            stack_idx = min(len(candidate_stacks) - 1, int(idx // chunk_size) + int(copy_idx))
+                        else:
+                            stack_idx = int(idx + copy_idx) % len(candidate_stacks)
+                        stack = candidate_stacks[int(stack_idx)]
                         if int(getattr(stack, "current_height", 0)) >= int(getattr(stack, "max_height", 0)):
                             available_in_group = [
                                 item for item in candidate_stacks
@@ -1042,7 +1059,7 @@ class CreateOFSProblem:
                                 bom_stack_groups[int(order_id)] = [int(item.stack_id) for item in candidate_stacks]
                         target_stack_ids.append(int(stack.stack_id))
                     home_stacks_by_sku[sku_id] = list(dict.fromkeys(target_stack_ids))
-                for stack_id in list(dict.fromkeys(target_stack_ids))[:2]:
+                for stack_id in list(dict.fromkeys(target_stack_ids))[:demand_sku_copy_count]:
                     stack = stack_by_id.get(int(stack_id))
                     if stack is None:
                         continue
@@ -1056,7 +1073,7 @@ class CreateOFSProblem:
                     continue
                 pending = list(dict.fromkeys(int(sku_id) for sku_id in sku_ids))
                 while pending and int(getattr(stack, "current_height", 0)) < int(getattr(stack, "max_height", 0)):
-                    take = min(len(pending), random.randint(1, 3))
+                    take = min(len(pending), chunk_size if bool(chunked_by_stack) else random.randint(1, 3))
                     chunk = pending[:take]
                     pending = pending[take:]
                     sku_quantity_map = {
