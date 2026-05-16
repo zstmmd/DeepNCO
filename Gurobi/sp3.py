@@ -47,6 +47,31 @@ class SP3_Bin_Hitter:
         self.stack_snapshots: Dict[int, List[Tote]] = {}  # {stack_id: [current_totes]}
         self.layer_mapping: Dict[int, int] = {}  # {tote_id: virtual_layer}
 
+    @staticmethod
+    def _subtask_demand_counts(task: SubTask) -> Dict[int, int]:
+        sku_ids = {
+            int(getattr(sku, "id", -1))
+            for sku in getattr(task, "unique_sku_list", []) or []
+            if int(getattr(sku, "id", -1)) >= 0
+        }
+        if not sku_ids:
+            sku_ids = {
+                int(getattr(sku, "id", -1))
+                for sku in getattr(task, "sku_list", []) or []
+                if int(getattr(sku, "id", -1)) >= 0
+            }
+        counts: Dict[int, int] = defaultdict(int)
+        order = getattr(task, "parent_order", None)
+        for sku_id in getattr(order, "order_product_id_list", []) or []:
+            sku_id = int(sku_id)
+            if sku_id in sku_ids:
+                counts[sku_id] += 1
+        if counts:
+            return {int(k): int(v) for k, v in counts.items()}
+        for sku_id in sku_ids:
+            counts[int(sku_id)] = 1
+        return {int(k): int(v) for k, v in counts.items()}
+
     def solve(self,
               sub_tasks: List[SubTask],
               beta_congestion: float = 1.0,
@@ -392,7 +417,7 @@ class SP3_Bin_Hitter:
         total_sc_cost = 0.0
 
         # 追踪该 SubTask 的剩余需求，用于计算每个 Task 的 sku_pick_count
-        remaining_demand = {int(sku_id): 1 for sku_id in demand.keys()}
+        remaining_demand = self._subtask_demand_counts(task)
 
         if m.status in [GRB.OPTIMAL, GRB.TIME_LIMIT]:
             for u in U:
@@ -453,7 +478,7 @@ class SP3_Bin_Hitter:
                             for s_id, qty in tote.sku_quantity_map.items():
                                 if s_id in remaining_demand and remaining_demand[s_id] > 0:
                                     # 实际贡献量 = min(料箱库存, 剩余需求)
-                                    current_task_pick_count += 1
+                                    current_task_pick_count += int(remaining_demand[s_id])
                                     remaining_demand[s_id] = 0
 
                         new_task = Task(
@@ -519,6 +544,31 @@ class SP3_Bin_Hitter:
             self.require_positive_hit = getattr(OFSConfig, 'SP3_REQUIRE_POSITIVE_HIT', True)
             self.min_hit_ratio_sort = getattr(OFSConfig, 'SP3_MIN_HIT_RATIO_SORT', 0.0)
 
+        @staticmethod
+        def _subtask_demand_counts(task: SubTask) -> Dict[int, int]:
+            sku_ids = {
+                int(getattr(sku, "id", -1))
+                for sku in getattr(task, "unique_sku_list", []) or []
+                if int(getattr(sku, "id", -1)) >= 0
+            }
+            if not sku_ids:
+                sku_ids = {
+                    int(getattr(sku, "id", -1))
+                    for sku in getattr(task, "sku_list", []) or []
+                    if int(getattr(sku, "id", -1)) >= 0
+                }
+            counts: Dict[int, int] = defaultdict(int)
+            order = getattr(task, "parent_order", None)
+            for sku_id in getattr(order, "order_product_id_list", []) or []:
+                sku_id = int(sku_id)
+                if sku_id in sku_ids:
+                    counts[sku_id] += 1
+            if counts:
+                return {int(k): int(v) for k, v in counts.items()}
+            for sku_id in sku_ids:
+                counts[int(sku_id)] = 1
+            return {int(k): int(v) for k, v in counts.items()}
+
         def solve(self,
                   sub_tasks: List[SubTask],
                   beta_congestion: float = 1.0
@@ -561,7 +611,7 @@ class SP3_Bin_Hitter:
                 task.sp3_coverage_ok = True
 
                 # ✅ [新增] 追踪该 SubTask 的剩余需求
-                task_remaining_demand = {int(sku.id): 1 for sku in task.unique_sku_list}
+                task_remaining_demand = self._subtask_demand_counts(task)
 
                 stack_plan = self._greedy_tote_selection_v2(task)
 
@@ -658,7 +708,7 @@ class SP3_Bin_Hitter:
                             if not tote: continue
                             for s_id, qty in tote.sku_quantity_map.items():
                                 if s_id in task_remaining_demand and task_remaining_demand[s_id] > 0:
-                                    current_pick_count += 1
+                                    current_pick_count += int(task_remaining_demand[s_id])
                                     task_remaining_demand[s_id] = 0
 
                         # 生成 Task

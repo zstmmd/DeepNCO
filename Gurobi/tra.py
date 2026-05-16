@@ -1994,6 +1994,27 @@ class TRAOptimizer:
             return []
         return sorted({int(getattr(sku, "id", -1)) for sku in getattr(order, "unique_sku_list", []) or [] if int(getattr(sku, "id", -1)) >= 0})
 
+    def _subtask_demand_unit_count(self, st: Any) -> int:
+        sku_ids = {
+            int(getattr(sku, "id", -1))
+            for sku in getattr(st, "unique_sku_list", []) or []
+            if int(getattr(sku, "id", -1)) >= 0
+        }
+        if not sku_ids:
+            sku_ids = {
+                int(getattr(sku, "id", -1))
+                for sku in getattr(st, "sku_list", []) or []
+                if int(getattr(sku, "id", -1)) >= 0
+            }
+        order = getattr(st, "parent_order", None)
+        count = 0
+        for sku_id in getattr(order, "order_product_id_list", []) or []:
+            if int(sku_id) in sku_ids:
+                count += 1
+        if count > 0:
+            return int(count)
+        return max(1, int(len(getattr(st, "sku_list", []) or []) or len(sku_ids)))
+
     def _get_order_capacity_limit(self, order_id: int) -> int:
         default_cap = max(1, int(getattr(OFSConfig, "ROBOT_CAPACITY", 6)))
         if self.sp1 is None:
@@ -4541,7 +4562,7 @@ class TRAOptimizer:
                 if pick <= 1e-9:
                     pick = float(getattr(task, "picking_duration", 0.0)) + float(getattr(task, "station_service_time", 0.0))
                 if pick <= 1e-9:
-                    pick = len(getattr(st, "sku_list", []) or []) * float(OFSConfig.PICKING_TIME)
+                    pick = self._subtask_demand_unit_count(st) * float(OFSConfig.PICKING_TIME)
                 proc_val += pick
                 arr_val = max(arr_val, float(getattr(task, "arrival_time_at_station", 0.0)))
                 task_start = float(getattr(task, "start_process_time", 0.0))
@@ -4590,7 +4611,7 @@ class TRAOptimizer:
                 }
 
             if proc_val <= 1e-9:
-                proc_val = len(getattr(st, "sku_list", []) or []) * float(OFSConfig.PICKING_TIME)
+                proc_val = self._subtask_demand_unit_count(st) * float(OFSConfig.PICKING_TIME)
             slack_val = max(0.0, start_val - arr_val)
             dominant_robot_id = min(robot_counter.items(), key=lambda item: (-item[1], item[0]))[0] if robot_counter else -1
             completion_val = float(start_val + proc_val)
@@ -4738,14 +4759,14 @@ class TRAOptimizer:
         sid = int(getattr(st, "id", -1))
         oid = int(getattr(getattr(st, "parent_order", None), "order_id", -1))
         if sorting_costs and sid in sorting_costs:
-            return len(getattr(st, "sku_list", []) or []) * float(OFSConfig.PICKING_TIME) + float(sorting_costs[sid])
+            return self._subtask_demand_unit_count(st) * float(OFSConfig.PICKING_TIME) + float(sorting_costs[sid])
         if sid in self.anchor_reference.get("subtask_proc", {}):
             return float(self.anchor_reference["subtask_proc"][sid])
         if oid in self.anchor_reference.get("order_proc_avg", {}):
             return float(self.anchor_reference["order_proc_avg"][oid])
         if fallback is not None:
             return float(fallback)
-        return len(getattr(st, "sku_list", []) or []) * float(OFSConfig.PICKING_TIME)
+        return self._subtask_demand_unit_count(st) * float(OFSConfig.PICKING_TIME)
 
     def _estimate_subtask_arrival(self, st: Any) -> float:
         sid = int(getattr(st, "id", -1))

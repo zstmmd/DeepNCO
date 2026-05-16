@@ -696,6 +696,7 @@ def main() -> None:
     parser.add_argument("--deadline-penalty-weight", type=float, default=1000.0)
     parser.add_argument("--fix-cmax", action="store_true")
     parser.add_argument("--gurobi-output", action="store_true")
+    parser.add_argument("--no-prune", action="store_true")
     args = parser.parse_args()
 
     out_dir = _make_output_dir(args.output_dir or None)
@@ -714,6 +715,13 @@ def main() -> None:
         kitting_span_penalty_weight=float(args.kitting_span_penalty_weight),
         deadline_penalty_weight=float(args.deadline_penalty_weight),
     )
+    if bool(args.no_prune):
+        cfg.candidate_stack_topk = 999
+        cfg.candidate_station_topk_per_stack = 999
+        cfg.max_candidate_stacks_per_order = 0
+        cfg.enable_warm_candidate_stack_prune = False
+        cfg.enable_scale_adaptive_candidate_prune = False
+        cfg.route_arc_prune = False
     warm = solver._build_warm_start(problem, cfg)
     prepared = solver._prepare(problem, cfg, warm)
     prepared = _augment_prepared_with_alns_solution(prepared, parsed)

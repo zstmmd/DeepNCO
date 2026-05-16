@@ -55,6 +55,16 @@ def _parse_forced_candidate_stacks(text: str) -> Dict[int, List[int]]:
     return {int(k): list(dict.fromkeys(int(v) for v in values)) for k, values in out.items()}
 
 
+def _all_stack_candidates_by_order(problem: Any) -> Dict[int, List[int]]:
+    stack_ids = sorted(int(getattr(stack, "stack_id", -1)) for stack in getattr(problem, "stack_list", []) or [])
+    stack_ids = [sid for sid in stack_ids if sid >= 0]
+    return {
+        int(getattr(order, "order_id", -1)): list(stack_ids)
+        for order in getattr(problem, "order_list", []) or []
+        if int(getattr(order, "order_id", -1)) >= 0
+    }
+
+
 def _finite_float(value: Any, default: float = float("nan")) -> float:
     try:
         out = float(value)
@@ -124,6 +134,7 @@ def main() -> None:
     parser.add_argument("--quiet-gurobi", action="store_true", default=True)
     parser.add_argument("--show-gurobi", action="store_true", help="Enable Gurobi solver log output.")
     parser.add_argument("--candidate-stack-topk", type=int, default=3)
+    parser.add_argument("--candidate-station-topk-per-stack", type=int, default=2)
     parser.add_argument("--max-rank", type=int, default=0)
     parser.add_argument("--max-candidate-stacks-per-order", type=int, default=24)
     parser.add_argument("--kitting-span-penalty-weight", type=float, default=5.0)
@@ -135,6 +146,10 @@ def main() -> None:
         default="",
         help="Comma/semicolon-separated order_id:stack_id entries to keep in the Gurobi candidate set.",
     )
+    parser.add_argument("--force-all-candidate-stacks", action="store_true")
+    parser.add_argument("--disable-warm-candidate-stack-prune", action="store_true")
+    parser.add_argument("--disable-route-arc-prune", action="store_true")
+    parser.add_argument("--disable-scale-adaptive-candidate-prune", action="store_true")
     parser.add_argument("--output-dir", type=str, default="")
     args = parser.parse_args()
 
@@ -153,23 +168,29 @@ def main() -> None:
             print(f">>> Running {scale} seed={int(args.seed)} time_limit={float(args.time_limit):.0f}s")
             problem = CreateOFSProblem.generate_problem_by_scale(scale, seed=int(args.seed))
             row.update(_problem_summary(problem, scale))
+            scale_forced_candidate_stacks = dict(forced_candidate_stacks)
+            if bool(args.force_all_candidate_stacks):
+                scale_forced_candidate_stacks = _all_stack_candidates_by_order(problem)
             cfg = GlobalXYZUConfig(
                 time_limit_sec=float(args.time_limit),
                 mip_gap=float(args.mip_gap),
                 candidate_stack_topk=int(args.candidate_stack_topk),
+                candidate_station_topk_per_stack=int(args.candidate_station_topk_per_stack),
                 max_rank=int(args.max_rank),
                 enable_warm_start=True,
                 write_lp=False,
                 gurobi_output=bool(args.show_gurobi),
                 max_candidate_stacks_per_order=int(args.max_candidate_stacks_per_order),
                 integrate_u_route=True,
-                route_arc_prune=True,
+                route_arc_prune=not bool(args.disable_route_arc_prune),
                 u_same_slot_same_robot=True,
                 warm_start_use_sp4=True,
                 enable_sp4_fallback=False,
                 kitting_span_penalty_weight=float(args.kitting_span_penalty_weight),
                 deadline_penalty_weight=float(args.deadline_penalty_weight),
-                forced_candidate_stacks_by_order=forced_candidate_stacks,
+                forced_candidate_stacks_by_order=scale_forced_candidate_stacks,
+                enable_warm_candidate_stack_prune=not bool(args.disable_warm_candidate_stack_prune),
+                enable_scale_adaptive_candidate_prune=not bool(args.disable_scale_adaptive_candidate_prune),
             )
             result = GlobalXYZUSolver().solve(problem, cfg=cfg)
             diag = dict(result.diagnostics or {})
