@@ -1733,6 +1733,47 @@ def z_plan_destroy_related_stack_window(opt, config: ResourceConfig, rng, degree
     return _plan_destroy_windows(opt, config, rng, degree, _build, mode_sensitive=False)
 
 
+def _shared_stack_candidate_builder(opt, config: ResourceConfig, rng):
+    stack_rows: Dict[int, List[Tuple[float, int, int]]] = defaultdict(list)
+    for row in config.subtasks.values():
+        if not row.z_tasks:
+            continue
+        wait = float(_z_station_load(config, int(row.station_id))) if int(row.station_id) >= 0 else 0.0
+        for idx, descriptor in enumerate(row.z_tasks):
+            stack_id = int(getattr(descriptor, "stack_id", -1))
+            if stack_id < 0:
+                continue
+            detour = float(opt._z_best_insertion_detour(int(stack_id)))
+            stack_rows[int(stack_id)].append((float(wait + detour), int(row.subtask_id), int(idx)))
+    candidates = [
+        ((-float(len(rows)), -float(sum(item[0] for item in rows) / max(1, len(rows))), int(stack_id)), int(stack_id), rows)
+        for stack_id, rows in stack_rows.items()
+        if len({int(item[1]) for item in rows}) >= 2
+    ]
+    if not candidates:
+        return []
+    picked = pick_ranked_candidate(rng, sorted(candidates, key=lambda item: item[0]), getattr(opt, "cfg", None))
+    if picked is None:
+        return []
+    _, _stack_id, rows = picked
+    rows = sorted(rows, key=lambda item: (-float(item[0]), int(item[1]), int(item[2])))
+    return [((float(rank), int(subtask_id), int(idx)), int(subtask_id), int(idx)) for rank, (_score, subtask_id, idx) in enumerate(rows)]
+
+
+def z_destroy_shared_stack_window(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
+    def _build(config_obj: ResourceConfig, touched_subtasks: Set[int]):
+        return [item for item in _shared_stack_candidate_builder(opt, config_obj, rng) if int(item[1]) not in touched_subtasks]
+
+    return _destroy_windows(opt, config, rng, degree, _build, mode_sensitive=False)
+
+
+def z_plan_destroy_shared_stack_window(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
+    def _build(config_obj: ResourceConfig, touched_subtasks: Set[int]):
+        return [item for item in _shared_stack_candidate_builder(opt, config_obj, rng) if int(item[1]) not in touched_subtasks]
+
+    return _plan_destroy_windows(opt, config, rng, degree, _build, mode_sensitive=False)
+
+
 def _build_z_action_signature(destroy_name: str, repair_name: str, windows: Sequence[Dict[str, object]], target_stack_ids: Sequence[int], mode_summary: Sequence[str]) -> Tuple[object, ...]:
     window_sig = tuple(
         sorted(
@@ -1821,6 +1862,7 @@ def plan_z_candidate(opt, config: ResourceConfig, destroy_name: str, repair_name
         "z_destroy_spread_hotspot_window": z_plan_destroy_spread_hotspot_window,
         "z_destroy_random_window": z_plan_destroy_random_window,
         "z_destroy_related_stack_window": z_plan_destroy_related_stack_window,
+        "z_destroy_shared_stack_window": z_plan_destroy_shared_stack_window,
     }
     destroy_ctx = destroy_planners[str(destroy_name)](opt, config, rng, degree)
     if not bool(destroy_ctx.get("success", False)):
@@ -1834,13 +1876,14 @@ def plan_z_candidate(opt, config: ResourceConfig, destroy_name: str, repair_name
         if subtask is None:
             continue
         candidate_stacks = _candidate_stack_ids(opt, config, subtask, window_ctx.get("seed_stack_ids", []) or [])
-        for stack_id in candidate_stacks[:2]:
+        candidate_pick_topk = max(2, int(getattr(opt.cfg, "resource_z_plan_target_stack_topk", 3)))
+        for stack_id in candidate_stacks[:candidate_pick_topk]:
             if int(stack_id) not in target_stack_ids:
                 target_stack_ids.append(int(stack_id))
         removed_modes = [str(descriptor.mode).upper() for descriptor in (window_ctx.get("removed_window", []) or [])]
         mode_summary.append(
             "SORT"
-            if str(repair_name) in {"z_repair_sort_range_shrink_first", "z_repair_joint_sort_colocated_flip"}
+            if str(repair_name) in {"z_repair_sort_range_shrink_first", "z_repair_joint_sort_colocated_flip", "z_repair_cross_subtask_shared_stack"}
             else (removed_modes[0] if removed_modes else "FLIP")
         )
     return {
@@ -1985,6 +2028,14 @@ def z_repair_load_balance_idle_robot(opt, config: ResourceConfig, ctx: Dict[str,
     return _repair_window(opt, config, ctx, "z_repair_load_balance_idle_robot", allow_fallback=False, rng=rng)
 
 
+def z_repair_cross_subtask_shared_stack(opt, config: ResourceConfig, ctx: Dict[str, object], rng) -> Dict[str, object]:
+    return _repair_window(opt, config, ctx, "z_repair_joint_sort_colocated_flip", allow_fallback=False, rng=rng)
+
+
+def z_repair_multistack_cover_compact(opt, config: ResourceConfig, ctx: Dict[str, object], rng) -> Dict[str, object]:
+    return _repair_window(opt, config, ctx, "z_repair_gurobi_like_sort", allow_fallback=False, rng=rng)
+
+
 def z_repair_greedy_fallback(opt, config: ResourceConfig, ctx: Dict[str, object], rng) -> Dict[str, object]:
     return _repair_window(opt, config, ctx, "z_repair_greedy_fallback", allow_fallback=True, rng=rng)
 
@@ -1997,6 +2048,7 @@ Z_DESTROY_OPERATORS = {
     "z_destroy_spread_hotspot_window": z_destroy_spread_hotspot_window,
     "z_destroy_random_window": z_destroy_random_window,
     "z_destroy_related_stack_window": z_destroy_related_stack_window,
+    "z_destroy_shared_stack_window": z_destroy_shared_stack_window,
 }
 
 Z_REPAIR_OPERATORS = {
@@ -2008,6 +2060,8 @@ Z_REPAIR_OPERATORS = {
     "z_repair_joint_sort_colocated_flip": z_repair_joint_sort_colocated_flip,
     "z_repair_spread_region_balance": z_repair_spread_region_balance,
     "z_repair_load_balance_idle_robot": z_repair_load_balance_idle_robot,
+    "z_repair_cross_subtask_shared_stack": z_repair_cross_subtask_shared_stack,
+    "z_repair_multistack_cover_compact": z_repair_multistack_cover_compact,
 }
 
 Z_FALLBACK_OPERATOR = "z_repair_greedy_fallback"

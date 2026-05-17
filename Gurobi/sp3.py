@@ -462,7 +462,8 @@ class SP3_Bin_Hitter:
                         noise_totes = []
                         layer_range = None
                         station_time_val = cost_sc[u].X / beta
-                        robot_time_val = cost_rc[u].X / self.alpha
+                        # FLIP 的机器人动作时间建在 cost_fc，不在 cost_rc。
+                        robot_time_val = cost_fc[u].X / self.alpha
 
                     if physical_carried_totes:
                         # 若不允许 0 命中，则直接跳过

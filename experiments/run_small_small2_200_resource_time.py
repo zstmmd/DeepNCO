@@ -169,7 +169,7 @@ def _build_cfg(args, scale: str, seed: int, run_log_dir: str) -> TRARunConfig:
     sp4_limit = int(args.sp4_lkh_time_limit_seconds)
     if scale_idx >= 5 and sp4_limit <= 5:
         sp4_limit = 30
-    return TRARunConfig(
+    cfg = TRARunConfig(
         scale=str(scale).upper(),
         seed=int(seed),
         max_iters=int(args.max_iters),
@@ -180,6 +180,7 @@ def _build_cfg(args, scale: str, seed: int, run_log_dir: str) -> TRARunConfig:
         kitting_span_penalty_weight=float(args.kitting_span_penalty_weight),
         deadline_penalty_weight=float(args.deadline_penalty_weight),
         sp2_time_limit_sec=float(args.sp2_time_limit_sec),
+        sp3_use_mip=bool(args.sp3_use_mip),
         sp4_lkh_time_limit_seconds=int(sp4_limit),
         sp4_first_solution_strategies=tuple(str(x).strip().upper() for x in str(args.sp4_first_solution_strategies).split(",") if str(x).strip()),
         sp4_first_solution_slice_seconds=int(args.sp4_first_solution_slice_seconds),
@@ -196,6 +197,20 @@ def _build_cfg(args, scale: str, seed: int, run_log_dir: str) -> TRARunConfig:
         search_scheme="resource_time_alns",
         resource_real_eval_period=int(args.resource_real_eval_period),
     )
+    cfg.resource_candidate_pool_size = int(args.resource_candidate_pool_size)
+    cfg.resource_candidate_pool_max_attempts = int(args.resource_candidate_pool_max_attempts)
+    cfg.resource_exact_candidate_trial_limit = int(args.resource_exact_candidate_trial_limit)
+    cfg.resource_stop_if_best_z_no_change_rounds = int(args.resource_stop_if_best_z_no_change_rounds)
+    cfg.resource_stop_if_validated_best_no_change_rounds = int(args.resource_stop_if_validated_best_no_change_rounds)
+    cfg.z_f0_topk = int(args.z_f0_topk)
+    cfg.z_f1_topk = int(args.z_f1_topk)
+    cfg.z_f2_topk = int(args.z_f2_topk)
+    cfg.z_eval_all_candidates = bool(args.z_eval_all_candidates)
+    cfg.enable_z_positive_mining_verify = bool(args.enable_z_positive_mining_verify)
+    cfg.resource_multi_start_count = int(args.resource_multi_start_count)
+    cfg.resource_multi_start_patience = int(args.resource_multi_start_patience)
+    cfg.resource_enable_xyz_operator = bool(args.resource_enable_xyz_operator)
+    return cfg
 
 
 def _run_one(args, scale: str, run_idx: int, seed: int, batch_root: str) -> Dict[str, Any]:
@@ -228,8 +243,8 @@ def _run_one(args, scale: str, run_idx: int, seed: int, batch_root: str) -> Dict
     best_row = dict((summary or {}).get("best", {}) or {})
     config_row = dict((summary or {}).get("config", {}) or {})
     iter_rows = list((summary or {}).get("iters", []) or [])
-    layer_selected = {name: 0 for name in ["X", "Y", "Z"]}
-    layer_accepted = {name: 0 for name in ["X", "Y", "Z"]}
+    layer_selected = {name: 0 for name in ["X", "Y", "Z", "XYZ"]}
+    layer_accepted = {name: 0 for name in ["X", "Y", "Z", "XYZ"]}
     for iter_row in iter_rows:
         layer_name = str(iter_row.get("selected_resource_layer", iter_row.get("focus", "")) or "").upper()
         if layer_name in layer_selected:
@@ -274,9 +289,11 @@ def _run_one(args, scale: str, run_idx: int, seed: int, batch_root: str) -> Dict
         "layer_selected_x": int(layer_selected["X"]),
         "layer_selected_y": int(layer_selected["Y"]),
         "layer_selected_z": int(layer_selected["Z"]),
+        "layer_selected_xyz": int(layer_selected["XYZ"]),
         "layer_accepted_x": int(layer_accepted["X"]),
         "layer_accepted_y": int(layer_accepted["Y"]),
         "layer_accepted_z": int(layer_accepted["Z"]),
+        "layer_accepted_xyz": int(layer_accepted["XYZ"]),
         "coverage_ok": bool(audit.get("coverage_ok", False)),
         "unmet_sku_total": int(audit.get("unmet_sku_total", 0) or 0),
         "makespan_consistent": bool(audit.get("makespan_consistent", False)),
@@ -310,9 +327,11 @@ def _summarize(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         layer_selected_x_values = [int(row.get("layer_selected_x", 0) or 0) for row in ok_rows]
         layer_selected_y_values = [int(row.get("layer_selected_y", 0) or 0) for row in ok_rows]
         layer_selected_z_values = [int(row.get("layer_selected_z", 0) or 0) for row in ok_rows]
+        layer_selected_xyz_values = [int(row.get("layer_selected_xyz", 0) or 0) for row in ok_rows]
         layer_accepted_x_values = [int(row.get("layer_accepted_x", 0) or 0) for row in ok_rows]
         layer_accepted_y_values = [int(row.get("layer_accepted_y", 0) or 0) for row in ok_rows]
         layer_accepted_z_values = [int(row.get("layer_accepted_z", 0) or 0) for row in ok_rows]
+        layer_accepted_xyz_values = [int(row.get("layer_accepted_xyz", 0) or 0) for row in ok_rows]
         out.append({
             "scale": scale,
             "run_count": int(len(scale_rows)),
@@ -338,9 +357,11 @@ def _summarize(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             "layer_selected_x": _collapse_values(layer_selected_x_values),
             "layer_selected_y": _collapse_values(layer_selected_y_values),
             "layer_selected_z": _collapse_values(layer_selected_z_values),
+            "layer_selected_xyz": _collapse_values(layer_selected_xyz_values),
             "layer_accepted_x": _collapse_values(layer_accepted_x_values),
             "layer_accepted_y": _collapse_values(layer_accepted_y_values),
             "layer_accepted_z": _collapse_values(layer_accepted_z_values),
+            "layer_accepted_xyz": _collapse_values(layer_accepted_xyz_values),
             "coverage_ok_count": int(sum(1 for row in ok_rows if bool(row.get("coverage_ok", False)))),
             "makespan_consistent_count": int(sum(1 for row in ok_rows if bool(row.get("makespan_consistent", False)))),
             "unreasonable_solution_count": int(sum(1 for row in ok_rows if bool(row.get("has_unreasonable_solution", False)))),
@@ -354,7 +375,7 @@ def parse_args():
     parser.add_argument("--runs", type=int, default=1, help="Runs per case")
     parser.add_argument("--seed-base", type=int, default=42, help="Base seed")
     parser.add_argument("--same-seed", action="store_true", help="Reuse the same seed for every run")
-    parser.add_argument("--max-iters", type=int, default=200, help="ALNS max_iters")
+    parser.add_argument("--max-iters", type=int, default=300, help="ALNS max_iters")
     parser.add_argument("--no-improve-limit", type=int, default=3, help="TRA no_improve_limit")
     parser.add_argument("--epsilon", type=float, default=0.05, help="TRA epsilon")
     parser.add_argument("--bom-arrival-window-sec", type=float, default=60.0, help="BOM arrival window hard constraint; disable with <= 0")
@@ -362,6 +383,7 @@ def parse_args():
     parser.add_argument("--kitting-span-penalty-weight", type=float, default=5.0, help="Soft penalty weight for kitting span overruns")
     parser.add_argument("--deadline-penalty-weight", type=float, default=1000.0, help="Soft penalty weight for deadline overruns")
     parser.add_argument("--sp2-time-limit-sec", type=float, default=10.0, help="SP2 time limit")
+    parser.add_argument("--sp3-use-mip", action="store_true", help="Use SP3 MIP instead of heuristic")
     parser.add_argument("--sp4-lkh-time-limit-seconds", type=int, default=5, help="SP4 LKH time limit")
     parser.add_argument("--sp4-first-solution-strategies", type=str, default="PATH_CHEAPEST_ARC,SAVINGS,PARALLEL_CHEAPEST_INSERTION", help="Comma-separated OR-Tools first solution strategies")
     parser.add_argument("--sp4-first-solution-slice-seconds", type=int, default=10, help="Time slice for each SP4 first solution strategy")
@@ -371,6 +393,19 @@ def parse_args():
     parser.add_argument("--sp4-enable-greedy-fallback", action="store_true", help="Enable greedy fallback if SP4 exact routing fails")
     parser.add_argument("--sp4-raise-on-no-solution", action="store_true", help="Raise structured SP4 error on no-solution before fallback handling")
     parser.add_argument("--resource-real-eval-period", type=int, default=8, help="Validator period")
+    parser.add_argument("--resource-candidate-pool-size", type=int, default=8)
+    parser.add_argument("--resource-candidate-pool-max-attempts", type=int, default=40)
+    parser.add_argument("--resource-exact-candidate-trial-limit", type=int, default=8)
+    parser.add_argument("--resource-stop-if-best-z-no-change-rounds", type=int, default=40)
+    parser.add_argument("--resource-stop-if-validated-best-no-change-rounds", type=int, default=40)
+    parser.add_argument("--z-f0-topk", type=int, default=4)
+    parser.add_argument("--z-f1-topk", type=int, default=2)
+    parser.add_argument("--z-f2-topk", type=int, default=2)
+    parser.add_argument("--z-eval-all-candidates", action="store_true")
+    parser.add_argument("--enable-z-positive-mining-verify", action="store_true")
+    parser.add_argument("--resource-multi-start-count", type=int, default=1)
+    parser.add_argument("--resource-multi-start-patience", type=int, default=0)
+    parser.add_argument("--resource-enable-xyz-operator", action="store_true", default=False)
     parser.add_argument("--export-best-solution", action="store_true", help="Keep explicit export_best_solution=True")
     parser.add_argument("--write-iteration-logs", action="store_true", help="Keep explicit write_iteration_logs=True")
     return parser.parse_args()

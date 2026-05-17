@@ -1558,11 +1558,12 @@ class GlobalXYZUSolver:
 
         cross_slot = int(ni.slot_id) >= 0 and int(nj.slot_id) >= 0 and int(ni.slot_id) != int(nj.slot_id)
         affinity_arc = (ni.kind, nj.kind) in {("pickup", "pickup"), ("pickup", "delivery"), ("delivery", "delivery")}
-        if cross_slot and affinity_arc and int(ni.station_id) != int(nj.station_id):
+        if bool(route_arc_prune) and cross_slot and affinity_arc and int(ni.station_id) != int(nj.station_id):
             return False, "cross_slot_station_affinity"
 
         if ni.kind == "pickup" and nj.kind == "pickup":
-            if bool(route_arc_prune) and int(ni.slot_id) != int(nj.slot_id):
+            same_station = int(ni.station_id) >= 0 and int(ni.station_id) == int(nj.station_id)
+            if bool(route_arc_prune) and int(ni.slot_id) != int(nj.slot_id) and not same_station:
                 return False, "pickup_pickup_cross_slot_pruned"
             ni_task = route_tasks.get(int(ni.task_key))
             nj_task = route_tasks.get(int(nj.task_key))
@@ -1571,12 +1572,14 @@ class GlobalXYZUSolver:
                 return False, "pickup_pickup_capacity"
             return True, "pickup_pickup"
         if ni.kind == "pickup" and nj.kind == "delivery":
-            allowed = (not bool(route_arc_prune)) or int(ni.slot_id) == int(nj.slot_id)
+            same_station = int(ni.station_id) >= 0 and int(ni.station_id) == int(nj.station_id)
+            allowed = (not bool(route_arc_prune)) or int(ni.slot_id) == int(nj.slot_id) or same_station
             return allowed, ("pickup_delivery" if allowed else "pickup_delivery_cross_slot_pruned")
         if ni.kind == "delivery" and nj.kind == "pickup":
             return True, "delivery_pickup"
         if ni.kind == "delivery" and nj.kind == "delivery":
-            allowed = (not bool(route_arc_prune)) or int(ni.slot_id) == int(nj.slot_id)
+            same_station = int(ni.station_id) >= 0 and int(ni.station_id) == int(nj.station_id)
+            allowed = (not bool(route_arc_prune)) or int(ni.slot_id) == int(nj.slot_id) or same_station
             return allowed, ("delivery_delivery" if allowed else "delivery_delivery_cross_slot_pruned")
         return False, "kind_pair_blocked"
 
@@ -3081,9 +3084,11 @@ class GlobalXYZUSolver:
                 int(getattr(robot, "id", idx)): robot
                 for idx, robot in enumerate(getattr(problem, "robot_list", []) or [])
             }
+            shared_robot = (getattr(problem, "robot_list", []) or [None])[0]
+            shared_depot_pt = getattr(shared_robot, "start_point", None) if shared_robot is not None else None
             for robot_id in robot_ids:
                 robot_obj = robot_by_id.get(int(robot_id))
-                depot_pt = getattr(robot_obj, "start_point", None)
+                depot_pt = shared_depot_pt if shared_depot_pt is not None else getattr(robot_obj, "start_point", None)
                 depot_x = float(getattr(depot_pt, "x", 0.0) if depot_pt is not None else 0.0)
                 depot_y = float(getattr(depot_pt, "y", 0.0) if depot_pt is not None else 0.0)
                 start_node = int(next_node_id)

@@ -539,6 +539,7 @@ class SP4_Robot_Router:
             )
         result_times = {}
         result_assign = {}
+        route_sequences = []
 
         if solution:
             obj_val = solution.ObjectiveValue() / 10.0
@@ -571,6 +572,7 @@ class SP4_Robot_Router:
 
                     index = routing.Start(vehicle_id)
                     step_count = 0
+                    route_seq = 0
 
                     while not routing.IsEnd(index):
                         node_index = manager.IndexToNode(index)
@@ -585,6 +587,15 @@ class SP4_Robot_Router:
 
                         if n_type == 'depot':
                             line = f"  [{arr_time:>5.1f}s] Start @ Depot {coord} | Load: {current_load}/{self.robot_capacity}"
+                            route_sequences.append({
+                                "robot_id": int(robot_id),
+                                "seq": int(route_seq),
+                                "node_type": "start",
+                                "task_id": -1,
+                                "subtask_id": -1,
+                                "time": float(arr_time),
+                                "load": int(current_load),
+                            })
 
                         elif n_type == 'pickup':
                             demand_val = task_obj.total_load_count
@@ -596,7 +607,18 @@ class SP4_Robot_Router:
                             result_times[pt.idx] = arr_time
                             task_obj.arrival_time_at_stack = arr_time
                             task_obj.robot_id = robot_id
+                            task_obj.trip_id = 0
+                            task_obj.robot_visit_sequence = int(route_seq)
                             result_assign[task_obj.sub_task_id] = robot_id
+                            route_sequences.append({
+                                "robot_id": int(robot_id),
+                                "seq": int(route_seq),
+                                "node_type": "pickup",
+                                "task_id": int(task_obj.task_id),
+                                "subtask_id": int(task_obj.sub_task_id),
+                                "time": float(arr_time),
+                                "load": int(current_load),
+                            })
 
                         elif n_type == 'delivery':
                             demand_val = task_obj.total_load_count
@@ -606,6 +628,15 @@ class SP4_Robot_Router:
                                 f"@ Station {task_obj.target_station_id} {coord} | Load: -{demand_val} -> {current_load}/{self.robot_capacity}")
                             # 回填站点到达时间（优先使用 SP4 的实际到达时间）
                             task_obj.arrival_time_at_station = arr_time
+                            route_sequences.append({
+                                "robot_id": int(robot_id),
+                                "seq": int(route_seq),
+                                "node_type": "delivery",
+                                "task_id": int(task_obj.task_id),
+                                "subtask_id": int(task_obj.sub_task_id),
+                                "time": float(arr_time),
+                                "load": int(current_load),
+                            })
 
                         if verbose_console:
                             print(line)
@@ -614,6 +645,7 @@ class SP4_Robot_Router:
                         # 步进到下一个节点
                         index = solution.Value(routing.NextVar(index))
                         step_count += 1
+                        route_seq += 1
 
                     # 打印终点信息 (返回 Depot)
                     node_index = manager.IndexToNode(index)
@@ -621,6 +653,15 @@ class SP4_Robot_Router:
                     coord = f"({pt.x:.1f}, {pt.y:.1f})"
                     end_time = solution.Value(time_dimension.CumulVar(index)) / 10.0
                     final_load = solution.Value(capacity_dimension.CumulVar(index))
+                    route_sequences.append({
+                        "robot_id": int(robot_id),
+                        "seq": int(route_seq),
+                        "node_type": "end",
+                        "task_id": -1,
+                        "subtask_id": -1,
+                        "time": float(end_time),
+                        "load": int(final_load),
+                    })
 
                     end_line = f"  [{end_time:>5.1f}s] End @ Depot {coord}   | Load: {final_load}/{self.robot_capacity}"
                     summary_line = f"  -> Total tasks visited: {step_count - 1}, Return Time: {end_time:.1f}s\n"
@@ -633,6 +674,7 @@ class SP4_Robot_Router:
 
             if verbose_console:
                 print(f"  >>> [Log] Final results written to {result_log_path}")
+            self.problem.sp4_route_sequences = list(route_sequences)
             assigned_task_ids = {int(getattr(task, "task_id", -1)) for st in valid_tasks for task in (getattr(st, "execution_tasks", []) or []) if int(getattr(task, "robot_id", -1)) >= 0}
             expected_task_ids = {int(getattr(task, "task_id", -1)) for st in valid_tasks for task in (getattr(st, "execution_tasks", []) or []) if int(getattr(task, "task_id", -1)) >= 0}
             if assigned_task_ids != expected_task_ids or len(result_assign) < len(valid_tasks):

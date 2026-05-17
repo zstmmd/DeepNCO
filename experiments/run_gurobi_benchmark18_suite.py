@@ -222,6 +222,7 @@ def main() -> None:
     parser.add_argument("--route-pickup-neighbor-limit", type=int, default=5)
     parser.add_argument("--kitting-span-penalty-weight", type=float, default=5.0)
     parser.add_argument("--deadline-penalty-weight", type=float, default=1000.0)
+    parser.add_argument("--disable-all-prune", action="store_true", help="Disable all arc and candidate pruning.")
     parser.add_argument("--dry-run", action="store_true", help="Generate cases and summaries without solving Gurobi.")
     parser.add_argument("--output-dir", type=str, default="")
     args = parser.parse_args()
@@ -264,9 +265,9 @@ def main() -> None:
                     candidate_station_topk_per_stack=int(args.candidate_station_topk_per_stack),
                     route_pickup_neighbor_limit=int(args.route_pickup_neighbor_limit),
                     integrate_u_route=True,
-                    route_arc_prune=True,
-                    enable_route_time_window_arc_prune=True,
-                    enable_route_load_interval_arc_prune=True,
+                    route_arc_prune=not bool(args.disable_all_prune),
+                    enable_route_time_window_arc_prune=not bool(args.disable_all_prune),
+                    enable_route_load_interval_arc_prune=not bool(args.disable_all_prune),
                     u_same_slot_same_robot=True,
                     warm_start_use_sp4=True,
                     enable_sp4_fallback=False,

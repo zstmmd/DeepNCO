@@ -204,7 +204,7 @@ class ResourceTimeALNSEngine:
 
     def _candidate_validation_trigger(self, iter_id: int, candidate_eval, candidate_signature, precomputed_validation) -> str:
         if precomputed_validation is not None:
-            return "joint_colocated_sort_postprocess"
+            return str(precomputed_validation.get("_trigger_reason", "joint_colocated_sort_postprocess"))
         trigger = str(self._should_validate(iter_id, candidate_eval, candidate_signature) or "")
         if trigger:
             return trigger
@@ -233,19 +233,50 @@ class ResourceTimeALNSEngine:
                 "destroy": {"xyz_destroy_sequential": OperatorArm(name="xyz_destroy_sequential")},
                 "repair": {"xyz_repair_sequential": OperatorArm(name="xyz_repair_sequential")},
             }
+        if not bool(getattr(self.cfg, "resource_enable_experimental_z_shared_stack", False)):
+            arms["Z"]["destroy"].pop("z_destroy_shared_stack_window", None)
+            arms["Z"]["repair"].pop("z_repair_cross_subtask_shared_stack", None)
+            arms["Z"]["repair"].pop("z_repair_multistack_cover_compact", None)
+        # Keep the default Z search space aligned with the older 161626 baseline.
+        # Later-added diversification operators change the sampled operator pool and
+        # split probability mass away from the historical sort/flip repair path.
+        for name in (
+            "z_destroy_spread_hotspot_window",
+            "z_destroy_random_window",
+            "z_destroy_related_stack_window",
+        ):
+            arms["Z"]["destroy"].pop(name, None)
+        for name in (
+            "z_repair_same_stack_window",
+            "z_repair_load_balance_idle_robot",
+        ):
+            arms["Z"]["repair"].pop(name, None)
+        if not bool(getattr(self.cfg, "resource_enable_experimental_x_repartition", False)):
+            arms["X"]["destroy"].pop("x_destroy_order_repartition", None)
+            arms["X"]["repair"].pop("x_repair_partition_dp", None)
+            arms["X"]["repair"].pop("x_repair_station_balanced_partition", None)
         for name, weight in {
             "z_repair_gurobi_like_sort": 3.0,
             "z_repair_sort_range_shrink_first": 2.0,
             "z_repair_joint_sort_colocated_flip": 2.0,
             "z_repair_spread_region_balance": 2.5,
             "z_repair_load_balance_idle_robot": 2.5,
+            "z_repair_cross_subtask_shared_stack": 2.75,
+            "z_repair_multistack_cover_compact": 2.75,
         }.items():
             if name in arms["Z"]["repair"]:
                 arms["Z"]["repair"][name].weight = float(weight)
         if "z_destroy_spread_hotspot_window" in arms["Z"]["destroy"]:
             arms["Z"]["destroy"]["z_destroy_spread_hotspot_window"].weight = 2.5
+        if "z_destroy_shared_stack_window" in arms["Z"]["destroy"]:
+            arms["Z"]["destroy"]["z_destroy_shared_stack_window"].weight = 3.0
         if "y_destroy_heavy_robot_tail" in arms["Y"]["destroy"]:
             arms["Y"]["destroy"]["y_destroy_heavy_robot_tail"].weight = 2.0
+        if "x_destroy_order_repartition" in arms["X"]["destroy"]:
+            arms["X"]["destroy"]["x_destroy_order_repartition"].weight = 3.0
+        for name in ("x_repair_partition_dp", "x_repair_station_balanced_partition"):
+            if name in arms["X"]["repair"]:
+                arms["X"]["repair"][name].weight = 2.75
         self._apply_operator_weight_floors(arms)
         return arms
 
@@ -425,6 +456,14 @@ class ResourceTimeALNSEngine:
     def _sample_operator_pair(self, layer: str) -> Tuple[str, str]:
         if str(layer).upper() == "Z":
             self.z_operator_pick_count = int(getattr(self, "z_operator_pick_count", 0)) + 1
+            shared_period = max(0, int(getattr(self.cfg, "z_shared_stack_destroy_period", 5)))
+            if (
+                shared_period > 0
+                and self.z_operator_pick_count % shared_period == 0
+                and "z_destroy_shared_stack_window" in self.operator_arms["Z"]["destroy"]
+                and "z_repair_cross_subtask_shared_stack" in self.operator_arms["Z"]["repair"]
+            ):
+                return "z_destroy_shared_stack_window", "z_repair_cross_subtask_shared_stack"
             period = max(0, int(getattr(self.cfg, "resource_z_diversification_force_period", 5)))
             destroy_names, repair_names = self._z_diversification_names()
             if period > 0 and self.z_operator_pick_count % period == 0:
@@ -699,6 +738,9 @@ class ResourceTimeALNSEngine:
         candidate = z_payload["config"]
         touched_ids.update(int(x) for x in (z_payload.get("affected_ids", set()) or set()))
         fallback_used = bool(fallback_used or z_payload.get("fallback_used", False))
+        affected_cap = max(1, int(getattr(self.cfg, "resource_xyz_exact_validation_subtask_cap", 6)))
+        if len(touched_ids) > int(affected_cap):
+            return None
 
         payload = {
             "config": candidate,
@@ -749,11 +791,12 @@ class ResourceTimeALNSEngine:
             "xyz_x_operator": f"{x_destroy}+{x_repair}",
             "xyz_y_operator": f"{y_destroy}+{y_repair}",
             "xyz_z_operator": f"{z_destroy}+{z_repair}",
+            "repartition_mode": bool(str(x_destroy) == "x_destroy_order_repartition"),
         }
 
     def _generate_xyz_candidate_pool(self, iter_id: int, budget: int, target_size: int) -> Dict[str, object]:
-        target = max(1, int(target_size))
-        max_attempts = max(target, int(getattr(self.cfg, "resource_candidate_pool_max_attempts", 12)))
+        target = max(1, int(getattr(self.cfg, "resource_xyz_candidate_pool_size", target_size)))
+        max_attempts = max(target, int(getattr(self.cfg, "resource_xyz_candidate_pool_max_attempts", 12)))
         attempts = 0
         generated_count = 0
         pool: List[Dict[str, object]] = []
@@ -1115,12 +1158,14 @@ class ResourceTimeALNSEngine:
         return float(max(float(getattr(self.cfg, "resource_catastrophic_threshold_floor", 1.30)), 1.0 + float(getattr(self.cfg, "resource_catastrophic_cv_scale", 3.0)) * validated_cv))
 
     def _record_reward(self, layer: str, destroy_name: str, repair_name: str, reward: float, fallback_used: bool, iter_id: int) -> None:
-        self.operator_arms[layer]["destroy"][str(destroy_name)].record(float(reward), int(iter_id))
-        self.operator_arms[layer]["repair"][str(repair_name)].record(float(reward), int(iter_id))
+        layer_name = str(layer).upper()
+        self.operator_arms[layer_name]["destroy"][str(destroy_name)].record(float(reward), int(iter_id))
+        self.operator_arms[layer_name]["repair"][str(repair_name)].record(float(reward), int(iter_id))
         if bool(fallback_used):
-            fallback_name = {"X": X_FALLBACK_OPERATOR, "Y": Y_FALLBACK_OPERATOR, "Z": Z_FALLBACK_OPERATOR}[str(layer)]
-            self.operator_arms[layer]["repair"][str(fallback_name)].record(float(reward), int(iter_id))
-        self.layer_exec_since_update[layer] = int(self.layer_exec_since_update[layer]) + 1
+            fallback_name = {"X": X_FALLBACK_OPERATOR, "Y": Y_FALLBACK_OPERATOR, "Z": Z_FALLBACK_OPERATOR}.get(layer_name)
+            if fallback_name is not None and str(fallback_name) in self.operator_arms[layer_name]["repair"]:
+                self.operator_arms[layer_name]["repair"][str(fallback_name)].record(float(reward), int(iter_id))
+        self.layer_exec_since_update[layer_name] = int(self.layer_exec_since_update[layer_name]) + 1
 
     def _apply_empty_candidate_failure(self, layer: str, attempted_pairs: List[Tuple[str, str]], iter_id: int) -> bool:
         reward = float(getattr(self.cfg, "resource_empty_candidate_reward", -2.0))
@@ -1459,10 +1504,18 @@ class ResourceTimeALNSEngine:
                 exact_eval_cache_hit_count = int(candidate_eval.metadata.get("exact_eval_cache_hit_count", getattr(self.scorer, "exact_eval_cache_hit_count", 0)))
                 coverage_hard_reject = bool(not getattr(candidate_eval, "coverage_feasible", True))
                 unmet_sku_total = int(getattr(candidate_eval, "unmet_sku_total", 0) or 0)
+                force_validation_cap = max(1, int(getattr(self.cfg, "resource_force_exact_validation_subtask_cap", 6)))
                 if bool(coverage_hard_reject):
                     candidate_hard_reject_reason = "coverage_hard_reject"
                     reward = -6.0
                 else:
+                    if str(layer).upper() in {"X", "XYZ"} and len(set(int(x) for x in (candidate_payload.get("affected_ids", set()) or set()))) <= int(force_validation_cap):
+                        precomputed_validation = self.validator.validate(candidate_config, iter_id)
+                        precomputed_validation["_trigger_reason"] = "force_exact_validation"
+                        if str(precomputed_validation.get("hard_reject_reason", "") or ""):
+                            coverage_hard_reject = True
+                            candidate_hard_reject_reason = str(precomputed_validation.get("hard_reject_reason", "") or "pre_accept_validation_fail")
+                            reward = -6.0
                     if not bool(getattr(self.cfg, "resource_joint_colocated_sort_on_accepted_only", True)):
                         selected_candidate, precomputed_validation, joint_postprocess_stats, joint_postprocess_time_sec = self._maybe_apply_joint_colocated_sort_postprocess(
                             int(iter_id),

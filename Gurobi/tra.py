@@ -5,7 +5,7 @@ import math
 import random
 import sys
 import time
-from collections import defaultdict, deque
+from collections import OrderedDict, defaultdict, deque
 from dataclasses import dataclass, asdict
 from datetime import datetime
 import shutil
@@ -50,7 +50,7 @@ from entity.subTask import SubTask
 class TRARunConfig:
     scale: str = "SMALL"
     seed: int = 42
-    max_iters: int = 50
+    max_iters: int = 300
     no_improve_limit: int = 3
     epsilon: float = 0.05
     bom_arrival_window_sec: float = 60.0
@@ -71,6 +71,8 @@ class TRARunConfig:
     sp4_same_subtask_vehicle_threshold: int = 2
     sp4_enable_greedy_fallback: bool = True
     sp4_raise_on_no_solution: bool = True
+    sp4_route_cache_enabled: bool = True
+    sp4_route_cache_size: int = 256
 
     # “先启发式、后精确”切换（满足同一组约束：只改变求解策略/时间上限）
     switch_to_exact_iter: int = 999999  # 迭代号达到后，开启更精确策略
@@ -142,6 +144,11 @@ class TRARunConfig:
     resource_component_weight_xyz: float = 1.0
     resource_layer_base_weight_xyz: float = 0.15
     resource_destroy_degree_xyz: int = 1
+    resource_xyz_trigger_stagnation_rounds: int = 8
+    resource_xyz_candidate_pool_size: int = 4
+    resource_xyz_candidate_pool_max_attempts: int = 12
+    resource_xyz_exact_candidate_trial_limit: int = 4
+    resource_xyz_exact_validation_subtask_cap: int = 6
     resource_weight_reaction: float = 0.2
     resource_operator_update_batch_size: int = 10
     resource_operator_update_max_stale_rounds: int = 15
@@ -160,7 +167,7 @@ class TRARunConfig:
     resource_exact_candidate_trial_limit: int = 8
     resource_candidate_pool_log: bool = True
     resource_action_signature_history_size: int = 30
-    resource_destroy_degree_x: int = 2
+    resource_destroy_degree_x: int = 3
     resource_destroy_degree_y: int = 2
     resource_destroy_degree_z: int = 1
     resource_destroy_mu_base: float = 0.10
@@ -181,8 +188,8 @@ class TRARunConfig:
     resource_duplicate_tote_penalty: float = 100000.0
     resource_empty_candidate_reward: float = -2.0
     resource_empty_candidate_layer_cooldown: int = 3
-    resource_stop_if_best_z_no_change_rounds: int = 50
-    resource_stop_if_validated_best_no_change_rounds: int = 50
+    resource_stop_if_best_z_no_change_rounds: int = 40
+    resource_stop_if_validated_best_no_change_rounds: int = 40
     resource_cache_hit_stagnation_increment: float = 0.2
     resource_empty_candidate_stagnation_increment: float = 0.0
     resource_layer_fail_threshold: int = 3
@@ -196,8 +203,19 @@ class TRARunConfig:
     resource_catastrophic_threshold_floor: float = 1.30
     resource_catastrophic_cv_scale: float = 3.0
     resource_rollback_budget_ratio: float = 0.15
-    resource_z_window_size: int = 3
-    resource_z_candidate_stack_topk: int = 5
+    resource_z_window_size: int = 4
+    resource_z_candidate_stack_topk: int = 6
+    resource_z_plan_target_stack_topk: int = 3
+    resource_force_exact_validation_subtask_cap: int = 6
+    z_shared_stack_destroy_period: int = 5
+    x_repartition_beam_width: int = 6
+    x_repartition_force_period: int = 3
+    resource_enable_experimental_x_repartition: bool = True
+    resource_enable_experimental_y_rank_permutation: bool = False
+    resource_enable_experimental_z_shared_stack: bool = True
+    resource_enable_single_flip_sortify: bool = False
+    resource_enable_best_sortify_polish: bool = False
+    resource_enable_best_rank_sortify_polish: bool = False
     xz_evaluator_mode: str = "neural"
     enable_z_positive_mining_verify: bool = False
     z_positive_mining_verify_budget_base: int = 1
@@ -233,9 +251,9 @@ class TRARunConfig:
     acceptance_rho_min: float = 0.05
     acceptance_min_actual_improve: float = 1e-6
     operator_selection_mode: str = "ucb1"
-    layer_operator_budget_x: int = 4
+    layer_operator_budget_x: int = 6
     layer_operator_budget_y: int = 6
-    layer_operator_budget_z: int = 4
+    layer_operator_budget_z: int = 5
     layer_operator_budget_u: int = 4
     layer_restart_patience: int = 2
     layer_shake_strength_init: int = 1
@@ -258,7 +276,7 @@ class TRARunConfig:
     x_fast_arrival_shift_rel_cap: float = 0.35
     x_force_eval_period: int = 2
     x_eval_all_candidates: bool = False
-    x_global_eval_topk: int = 2
+    x_global_eval_topk: int = 3
     x_dual_eval_gap_ratio: float = 0.04
     x_f0_topk: int = 4
     x_f1_topk: int = 2
@@ -273,7 +291,7 @@ class TRARunConfig:
     x_random_destroy_prob_small: float = 0.15
     x_repair_temperature: float = 0.20
     x_min_unique_candidates_per_round: int = 2
-    x_changed_orders_cap: int = 2
+    x_changed_orders_cap: int = 1
     x_delta_subtask_cap: int = 1
     x_station_template_change_cap: int = 2
     x_robot_trip_template_change_cap: int = 2
@@ -827,6 +845,9 @@ class TRAOptimizer:
         self.z_operator_subtask_bans = set()
         self.z_operator_subtask_failure_iter = {}
         self.z_signature_reject_cache = set()
+        self.sp4_route_cache = OrderedDict()
+        self.sp4_route_cache_hit_count = 0
+        self.sp4_route_cache_miss_count = 0
 
     def _shadow_chain_enabled(self) -> bool:
         return bool(getattr(self.cfg, "enable_shadow_chain", False))
@@ -1153,6 +1174,227 @@ class TRAOptimizer:
                     })
         return rows
 
+    @staticmethod
+    def _sp4_cache_float(value: Any) -> float:
+        return round(float(value or 0.0), 6)
+
+    def _sp4_route_cache_enabled(self) -> bool:
+        return bool(getattr(self.cfg, "sp4_route_cache_enabled", True))
+
+    def _sp4_route_cache_size(self) -> int:
+        return max(1, int(getattr(self.cfg, "sp4_route_cache_size", 256) or 256))
+
+    def _sp4_task_signature(self, task: Any) -> Tuple[Any, ...]:
+        layer_range = getattr(task, "sort_layer_range", None)
+        layer_range_sig = None if layer_range is None else tuple(int(x) for x in layer_range)
+        return (
+            int(getattr(task, "task_id", -1)),
+            int(getattr(task, "sub_task_id", -1)),
+            int(getattr(task, "target_stack_id", -1)),
+            int(getattr(task, "target_station_id", -1)),
+            str(getattr(task, "operation_mode", "") or ""),
+            int(getattr(task, "station_sequence_rank", -1)),
+            tuple(int(x) for x in (getattr(task, "target_tote_ids", []) or [])),
+            tuple(int(x) for x in (getattr(task, "hit_tote_ids", []) or [])),
+            tuple(int(x) for x in (getattr(task, "noise_tote_ids", []) or [])),
+            layer_range_sig,
+            int(getattr(task, "sku_pick_count", 0) or 0),
+            self._sp4_cache_float(getattr(task, "robot_service_time", 0.0)),
+            self._sp4_cache_float(getattr(task, "station_service_time", 0.0)),
+            self._sp4_cache_float(getattr(task, "order_anchor_start_sec", 0.0)),
+            self._sp4_cache_float(getattr(task, "order_kitting_span_limit_sec", 0.0)),
+            self._sp4_cache_float(getattr(task, "order_time_window_lb_sec", 0.0)),
+            self._sp4_cache_float(getattr(task, "order_time_window_ub_sec", 0.0)),
+        )
+
+    def _sp4_subtask_signature(self, subtask: Any) -> Tuple[Any, ...]:
+        return (
+            int(getattr(subtask, "id", -1)),
+            int(getattr(subtask, "assigned_station_id", -1)),
+            int(getattr(subtask, "station_sequence_rank", -1)),
+            self._sp4_cache_float(getattr(subtask, "estimated_process_start_time", 0.0)),
+            tuple(
+                self._sp4_task_signature(task)
+                for task in sorted(
+                    list(getattr(subtask, "execution_tasks", []) or []),
+                    key=lambda t: int(getattr(t, "task_id", -1)),
+                )
+            ),
+        )
+
+    def _sp4_soft_window_signature(self, soft_windows: Optional[Dict[str, Dict[int, float]]]) -> Optional[Tuple[Any, ...]]:
+        if not soft_windows:
+            return None
+        latest_by_task = dict(soft_windows.get("latest_by_task", {}) or {})
+        return tuple(
+            (int(task_id), self._sp4_cache_float(latest))
+            for task_id, latest in sorted(latest_by_task.items(), key=lambda kv: int(kv[0]))
+        )
+
+    def _sp4_route_cache_key(
+        self,
+        mode_tag: str,
+        soft_windows: Optional[Dict[str, Dict[int, float]]],
+        mu: float,
+        allow_greedy_fallback: Optional[bool],
+        raise_on_failure: bool,
+    ) -> Tuple[Any, ...]:
+        return (
+            str(mode_tag),
+            bool(self.cfg.sp4_use_mip),
+            int(self.cfg.sp4_lkh_time_limit_seconds if not self.cfg.sp4_use_mip else -1),
+            self._sp4_soft_window_signature(soft_windows),
+            self._sp4_cache_float(mu),
+            tuple(str(x) for x in (getattr(self.cfg, "sp4_first_solution_strategies", ()) or ())),
+            int(getattr(self.cfg, "sp4_first_solution_slice_seconds", 10)),
+            bool(getattr(self.cfg, "sp4_enable_guided_local_search", True)),
+            str(getattr(self.cfg, "sp4_same_subtask_vehicle_mode", "strict")),
+            int(getattr(self.cfg, "sp4_same_subtask_vehicle_threshold", 2)),
+            bool(getattr(self.cfg, "sp4_enable_greedy_fallback", False)) if allow_greedy_fallback is None else bool(allow_greedy_fallback),
+            bool(getattr(self.cfg, "sp4_raise_on_no_solution", True)) or bool(raise_on_failure),
+            tuple(
+                self._sp4_subtask_signature(st)
+                for st in sorted(
+                    list(getattr(self.problem, "subtask_list", []) or []),
+                    key=lambda s: int(getattr(s, "id", -1)),
+                )
+            ),
+        )
+
+    def _capture_sp4_route_state(self) -> Dict[str, Any]:
+        task_rows: List[Dict[str, Any]] = []
+        for st in getattr(self.problem, "subtask_list", []) or []:
+            for task in getattr(st, "execution_tasks", []) or []:
+                task_rows.append({
+                    "task_id": int(getattr(task, "task_id", -1)),
+                    "subtask_id": int(getattr(task, "sub_task_id", getattr(st, "id", -1))),
+                    "robot_id": int(getattr(task, "robot_id", -1)),
+                    "arrival_time_at_stack": float(getattr(task, "arrival_time_at_stack", 0.0) or 0.0),
+                    "arrival_time_at_station": float(getattr(task, "arrival_time_at_station", 0.0) or 0.0),
+                    "robot_visit_sequence": int(getattr(task, "robot_visit_sequence", -1) or -1),
+                    "trip_id": int(getattr(task, "trip_id", 0) or 0),
+                })
+        return {"task_rows": task_rows}
+
+    def _apply_cached_sp4_route_state(self, route_state: Dict[str, Any]) -> None:
+        task_map = {
+            int(getattr(task, "task_id", -1)): task
+            for st in getattr(self.problem, "subtask_list", []) or []
+            for task in (getattr(st, "execution_tasks", []) or [])
+        }
+        for task in task_map.values():
+            task.robot_id = -1
+            task.arrival_time_at_stack = 0.0
+            task.arrival_time_at_station = 0.0
+            task.robot_visit_sequence = -1
+            task.trip_id = 0
+        for row in list(route_state.get("task_rows", []) or []):
+            task = task_map.get(int(row.get("task_id", -1)))
+            if task is None:
+                continue
+            task.robot_id = int(row.get("robot_id", -1))
+            task.arrival_time_at_stack = float(row.get("arrival_time_at_stack", 0.0) or 0.0)
+            task.arrival_time_at_station = float(row.get("arrival_time_at_station", 0.0) or 0.0)
+            task.robot_visit_sequence = int(row.get("robot_visit_sequence", -1) or -1)
+            task.trip_id = int(row.get("trip_id", 0) or 0)
+
+    def _store_sp4_route_cache_entry(self, key: Tuple[Any, ...], entry: Dict[str, Any]) -> None:
+        cache = getattr(self, "sp4_route_cache", None)
+        if cache is None:
+            cache = OrderedDict()
+            self.sp4_route_cache = cache
+        cache[str(key)] = copy.deepcopy(entry)
+        cache.move_to_end(str(key))
+        while len(cache) > self._sp4_route_cache_size():
+            cache.popitem(last=False)
+
+    def _lookup_sp4_route_cache_entry(self, key: Tuple[Any, ...]) -> Optional[Dict[str, Any]]:
+        cache = getattr(self, "sp4_route_cache", None)
+        if not cache:
+            return None
+        entry = cache.get(str(key))
+        if entry is None:
+            return None
+        cache.move_to_end(str(key))
+        return copy.deepcopy(entry)
+
+    def _run_sp4_with_cache(
+        self,
+        mode_tag: str,
+        hard_latest_by_task: Dict[int, float],
+        soft_windows: Optional[Dict[str, Dict[int, float]]],
+        mu: float,
+        allow_greedy_fallback: Optional[bool] = None,
+        raise_on_failure: bool = False,
+    ) -> None:
+        cache_key = self._sp4_route_cache_key(mode_tag, soft_windows, mu, allow_greedy_fallback, raise_on_failure)
+        if self._sp4_route_cache_enabled():
+            cached = self._lookup_sp4_route_cache_entry(cache_key)
+            if cached is not None:
+                self.sp4_route_cache_hit_count = int(getattr(self, "sp4_route_cache_hit_count", 0)) + 1
+                self._apply_cached_sp4_route_state(dict(cached.get("route_state", {}) or {}))
+                self.last_sp4_arrival_times = {int(k): float(v) for k, v in dict(cached.get("arrival_times", {}) or {}).items()}
+                self.last_sp4_lst_infeasible = self._collect_sp4_lst_violations(hard_latest_by_task)
+                if getattr(self, "sp4", None) is not None:
+                    self.sp4.last_infeasible_reason = str(cached.get("last_infeasible_reason", "") or "")
+                    self.sp4.last_conflict_summary = copy.deepcopy(dict(cached.get("last_conflict_summary", {}) or {}))
+                self._apply_sp4_robot_assignments(dict(cached.get("robot_assign", {}) or {}))
+                self._repair_station_ranks_by_arrival()
+                if bool(cached.get("raised_infeasible", False)) and bool(raise_on_failure):
+                    raise SP4RoutingInfeasibleError(copy.deepcopy(dict(cached.get("last_conflict_summary", {}) or {})))
+                return
+
+        self.sp4_route_cache_miss_count = int(getattr(self, "sp4_route_cache_miss_count", 0)) + 1
+        raised_infeasible = False
+        try:
+            arrival_times, robot_assign = self.sp4.solve(
+                self.problem.subtask_list,
+                use_mip=self.cfg.sp4_use_mip,
+                lkh_time_limit_seconds=self.cfg.sp4_lkh_time_limit_seconds if not self.cfg.sp4_use_mip else None,
+                soft_time_windows=soft_windows,
+                mu=mu,
+                first_solution_strategies=list(getattr(self.cfg, "sp4_first_solution_strategies", ()) or ()),
+                first_solution_slice_seconds=int(getattr(self.cfg, "sp4_first_solution_slice_seconds", 10)),
+                enable_guided_local_search=bool(getattr(self.cfg, "sp4_enable_guided_local_search", True)),
+                same_subtask_vehicle_mode=str(getattr(self.cfg, "sp4_same_subtask_vehicle_mode", "strict")),
+                same_subtask_vehicle_threshold=int(getattr(self.cfg, "sp4_same_subtask_vehicle_threshold", 2)),
+                enable_greedy_fallback=bool(getattr(self.cfg, "sp4_enable_greedy_fallback", False)) if allow_greedy_fallback is None else bool(allow_greedy_fallback),
+                raise_on_no_solution=bool(getattr(self.cfg, "sp4_raise_on_no_solution", True)) or bool(raise_on_failure),
+            )
+        except SP4RoutingInfeasibleError:
+            raised_infeasible = True
+            self.last_sp4_arrival_times = {}
+            if bool(raise_on_failure):
+                entry = {
+                    "arrival_times": {},
+                    "robot_assign": {},
+                    "route_state": self._capture_sp4_route_state(),
+                    "last_infeasible_reason": str(getattr(self.sp4, "last_infeasible_reason", "") or ""),
+                    "last_conflict_summary": copy.deepcopy(dict(getattr(self.sp4, "last_conflict_summary", {}) or {})),
+                    "raised_infeasible": True,
+                }
+                if self._sp4_route_cache_enabled():
+                    self._store_sp4_route_cache_entry(cache_key, entry)
+                raise
+            arrival_times, robot_assign = {}, {}
+
+        self.last_sp4_arrival_times = {int(k): float(v) for k, v in (arrival_times or {}).items()}
+        self.last_sp4_lst_infeasible = self._collect_sp4_lst_violations(hard_latest_by_task)
+        self._apply_sp4_robot_assignments(robot_assign or {})
+        self._repair_station_ranks_by_arrival()
+        if self._sp4_route_cache_enabled():
+            self._store_sp4_route_cache_entry(
+                cache_key,
+                {
+                    "arrival_times": dict(self.last_sp4_arrival_times or {}),
+                    "robot_assign": {int(k): int(v) for k, v in dict(robot_assign or {}).items()},
+                    "route_state": self._capture_sp4_route_state(),
+                    "last_infeasible_reason": str(getattr(self.sp4, "last_infeasible_reason", "") or ""),
+                    "last_conflict_summary": copy.deepcopy(dict(getattr(self.sp4, "last_conflict_summary", {}) or {})),
+                    "raised_infeasible": bool(raised_infeasible),
+                },
+            )
+
     def _apply_sp4_robot_assignments(self, robot_assign: Dict[int, int]) -> bool:
         st_map = {int(getattr(st, "id", -1)): st for st in getattr(self.problem, "subtask_list", []) or []}
         valid_assign = {int(st_id): int(robot_id) for st_id, robot_id in (robot_assign or {}).items() if int(st_id) in st_map and int(robot_id) >= 0}
@@ -1173,6 +1415,35 @@ class TRAOptimizer:
             for task in getattr(st, "execution_tasks", []) or []:
                 task.robot_id = int(robot_id)
         return len(self._unassigned_robot_task_rows()) == 0
+
+    def _repair_station_ranks_by_arrival(self) -> None:
+        station_rows: Dict[int, List[Any]] = defaultdict(list)
+        for st in getattr(self.problem, "subtask_list", []) or []:
+            station_id = int(getattr(st, "assigned_station_id", -1))
+            if station_id >= 0:
+                station_rows[station_id].append(st)
+        changed = False
+        for station_id, rows in station_rows.items():
+            ordered = sorted(
+                rows,
+                key=lambda st: (
+                    max(
+                        [
+                            float(getattr(task, "arrival_time_at_station", 0.0))
+                            for task in (getattr(st, "execution_tasks", []) or [])
+                        ] or [float(self._estimate_subtask_arrival(st))]
+                    ),
+                    int(getattr(st, "station_sequence_rank", 10 ** 6)),
+                    int(getattr(st, "id", -1)),
+                ),
+            )
+            for rank, st in enumerate(ordered):
+                if int(getattr(st, "station_sequence_rank", -1)) != int(rank):
+                    changed = True
+                st.assigned_station_id = int(station_id)
+                st.station_sequence_rank = int(rank)
+        if changed:
+            self._sync_task_assignments_from_subtasks()
 
     def _rebuild_problem_task_list(self):
         all_tasks: List[Any] = []
@@ -1435,6 +1706,39 @@ class TRAOptimizer:
                 "fast_x_penalty_max",
                 "fast_x_gate_margin",
             ],
+        }
+
+    def _best_structure_summary(self) -> Dict[str, Any]:
+        used_stack_ids = sorted({
+            int(getattr(task, "target_stack_id", -1))
+            for subtask in getattr(self.problem, "subtask_list", []) or []
+            for task in (getattr(subtask, "execution_tasks", []) or [])
+            if int(getattr(task, "target_stack_id", -1)) >= 0
+        })
+        subtask_count_by_order: Dict[int, int] = defaultdict(int)
+        station_task_counts: Dict[int, int] = defaultdict(int)
+        for subtask in getattr(self.problem, "subtask_list", []) or []:
+            order_id = int(getattr(getattr(subtask, "parent_order", None), "order_id", -1))
+            if order_id >= 0:
+                subtask_count_by_order[int(order_id)] += 1
+            for task in (getattr(subtask, "execution_tasks", []) or []):
+                station_id = int(getattr(task, "target_station_id", -1))
+                if station_id >= 0:
+                    station_task_counts[int(station_id)] += 1
+        best_reached_by_layer = ""
+        best_z = float(getattr(self.best, "z", float("inf")))
+        for row in list(getattr(self, "iter_log", []) or []):
+            z_val = row.get("best_z", None)
+            if isinstance(z_val, (int, float)) and not math.isnan(float(z_val)) and abs(float(z_val) - best_z) <= 1e-9:
+                best_reached_by_layer = str(row.get("focus", "")).upper()
+                break
+        return {
+            "best_used_stack_count": int(len(used_stack_ids)),
+            "best_used_stack_ids": list(used_stack_ids),
+            "best_subtask_count_by_order": {str(k): int(v) for k, v in sorted(subtask_count_by_order.items())},
+            "best_station_task_counts": {str(k): int(v) for k, v in sorted(station_task_counts.items())},
+            "best_reached_by_layer": str(best_reached_by_layer),
+            "best_xyz_trigger_count": int(sum(1 for row in (getattr(self, "iter_log", []) or []) if str(row.get("focus", "")).upper() == "XYZ")),
         }
 
     def _timing_breakdown_payload(self) -> Dict[str, Any]:
@@ -5366,29 +5670,15 @@ class TRAOptimizer:
             soft_time_windows_payload = {}
             if soft_windows:
                 soft_time_windows_payload["latest_by_task"] = dict(soft_windows)
-        try:
-            arrival_times, robot_assign = self.sp4.solve(
-                self.problem.subtask_list,
-                use_mip=self.cfg.sp4_use_mip,
-                lkh_time_limit_seconds=self.cfg.sp4_lkh_time_limit_seconds if not self.cfg.sp4_use_mip else None,
-                soft_time_windows=soft_time_windows_payload,
-                mu=mu,
-                first_solution_strategies=list(getattr(self.cfg, "sp4_first_solution_strategies", ()) or ()),
-                first_solution_slice_seconds=int(getattr(self.cfg, "sp4_first_solution_slice_seconds", 10)),
-                enable_guided_local_search=bool(getattr(self.cfg, "sp4_enable_guided_local_search", True)),
-                same_subtask_vehicle_mode=str(getattr(self.cfg, "sp4_same_subtask_vehicle_mode", "strict")),
-                same_subtask_vehicle_threshold=int(getattr(self.cfg, "sp4_same_subtask_vehicle_threshold", 2)),
-                enable_greedy_fallback=bool(getattr(self.cfg, "sp4_enable_greedy_fallback", False)) if allow_greedy_fallback is None else bool(allow_greedy_fallback),
-                raise_on_no_solution=bool(getattr(self.cfg, "sp4_raise_on_no_solution", True)) or bool(raise_on_failure),
-            )
-        except SP4RoutingInfeasibleError:
-            self.last_sp4_arrival_times = {}
-            if bool(raise_on_failure):
-                raise
-            arrival_times, robot_assign = {}, {}
-        self.last_sp4_arrival_times = {int(k): float(v) for k, v in (arrival_times or {}).items()}
-        self.last_sp4_lst_infeasible = self._collect_sp4_lst_violations(hard_latest_by_task)
-        self._apply_sp4_robot_assignments(robot_assign or {})
+        self._run_sp4_with_cache(
+            mode_tag="augmented",
+            hard_latest_by_task=hard_latest_by_task,
+            soft_windows=soft_time_windows_payload,
+            mu=mu,
+            allow_greedy_fallback=allow_greedy_fallback,
+            raise_on_failure=raise_on_failure,
+        )
+        self._repair_station_ranks_by_arrival()
 
     def _build_sp4_hard_latest_by_task(self) -> Dict[int, float]:
         hard_latest_by_task: Dict[int, float] = {}
@@ -7590,6 +7880,7 @@ class TRAOptimizer:
 
         # 回填 subtask 的 assigned_robot_id，供日志/仿真输出使用
         self._apply_sp4_robot_assignments(robot_assign or {})
+        self._repair_station_ranks_by_arrival()
 
     # ----------------------------
     # 主入口
@@ -8537,6 +8828,7 @@ class TRAOptimizer:
         summary_path = self._log_path("tra_summary.json")
         run_stats = self._runtime_stats_payload()
         scheme = self._current_search_scheme()
+        best_structure = self._best_structure_summary() if self.best else {}
         best_summary = None
         if self.best:
             best_summary = {
@@ -8547,11 +8839,13 @@ class TRAOptimizer:
                 "sp1_capacity_limits": dict(self.best.sp1_capacity_limits),
                 "sp1_incompatibility_pairs": list(self.best.sp1_incompatibility_pairs),
                 "task_count": int(len(self._iter_snapshot_tasks(self.best))),
+                **best_structure,
             }
         with open(summary_path, "w", encoding="utf-8") as f:
             json.dump({
                 "config": asdict(self.cfg),
                 "best": best_summary,
+                "best_structure": best_structure,
                 "run_stats": run_stats,
                 "iters": self.iter_log,
             }, f, ensure_ascii=False, indent=2)
@@ -8582,6 +8876,13 @@ class TRAOptimizer:
             f.write(f"scale={self.cfg.scale}, seed={self.cfg.seed}\n")
             f.write(f"total_runtime_sec={run_stats['run_total_time_sec']:.6f}\n")
             f.write(f"best_z={self.best.z:.3f}s @ iter={self.best.iter_id}\n\n")
+            if best_structure:
+                f.write(f"best_used_stack_count={int(best_structure.get('best_used_stack_count', 0))}\n")
+                f.write(f"best_used_stack_ids={list(best_structure.get('best_used_stack_ids', []))}\n")
+                f.write(f"best_subtask_count_by_order={dict(best_structure.get('best_subtask_count_by_order', {}))}\n")
+                f.write(f"best_station_task_counts={dict(best_structure.get('best_station_task_counts', {}))}\n")
+                f.write(f"best_reached_by_layer={str(best_structure.get('best_reached_by_layer', ''))}\n")
+                f.write(f"best_xyz_trigger_count={int(best_structure.get('best_xyz_trigger_count', 0))}\n\n")
             if scheme == "resource_time_alns":
                 f.write(f"stop_reason={str(run_stats.get('stop_reason', '') or '')}\n\n")
             f.write(f"exact_eval_cache_hit_count={int(run_stats.get('exact_eval_cache_hit_count', 0))}\n")
@@ -8715,6 +9016,7 @@ class TRAOptimizer:
         for st in self.problem.subtask_list:
             all_tasks.extend(getattr(st, "execution_tasks", []) or [])
         all_tasks.sort(key=lambda t: (int(getattr(t, "target_station_id", -1)), float(getattr(t, "start_process_time", 0.0)), int(getattr(t, "task_id", -1))))
+        used_stack_ids = sorted({int(getattr(task, "target_stack_id", -1)) for task in all_tasks if int(getattr(task, "target_stack_id", -1)) >= 0})
 
         with open(path, "w", encoding="utf-8") as f:
             f.write("[TRA Best Solution Dump]\n")
@@ -8723,6 +9025,8 @@ class TRAOptimizer:
             f.write(f"best_z={float(self.best.z):.6f}\n")
             f.write(f"recomputed_z={float(getattr(self.problem, 'global_objective', getattr(self.problem, 'global_makespan', 0.0))):.6f}\n")
             f.write(f"global_makespan={float(getattr(self.problem, 'global_makespan', 0.0)):.6f}\n")
+            f.write(f"used_stack_count={int(len(used_stack_ids))}\n")
+            f.write(f"used_stack_ids={list(used_stack_ids)}\n")
             f.write("\n[TRA Iter Log]\n")
             for row in self.iter_log:
                 f.write(
@@ -8736,9 +9040,18 @@ class TRAOptimizer:
             for st in sorted(self.problem.subtask_list, key=lambda x: int(x.id)):
                 sku_ids = [int(s.id) for s in getattr(st, "sku_list", []) or []]
                 unique_sku_ids = sorted({int(s.id) for s in getattr(st, "unique_sku_list", []) or []})
+                work_unit_ids = [str(getattr(sku, "work_unit_id", idx)) for idx, sku in enumerate(getattr(st, "sku_list", []) or [])]
+                candidate_stack_ids = []
+                for sku in getattr(st, "sku_list", []) or []:
+                    for stack_id in self._x_candidate_stack_ids_for_sku(int(getattr(sku, "id", -1))) or []:
+                        sid = int(stack_id)
+                        if sid >= 0 and sid not in candidate_stack_ids:
+                            candidate_stack_ids.append(sid)
                 f.write(
                     f"subtask_id={int(st.id)}, order_id={int(getattr(st.parent_order, 'order_id', -1))}, "
-                    f"sku_units={len(sku_ids)}, unique_skus={unique_sku_ids}, sku_list={sku_ids}\n"
+                    f"sku_units={len(sku_ids)}, unique_skus={unique_sku_ids}, sku_list={sku_ids}, "
+                    f"work_unit_ids={work_unit_ids}, candidate_stack_count={int(len(candidate_stack_ids))}, "
+                    f"candidate_stack_ids={list(candidate_stack_ids)}\n"
                 )
 
             f.write("\n[SP2 Decisions]\n")

@@ -195,12 +195,34 @@ def _parse_alns_export(export_dir: str) -> Dict[str, Any]:
             del trip_id
             trips_by_robot[int(robot_id)].append([int(task_id) for _, task_id in sorted(pairs, key=lambda item: (item[0], item[1]))])
 
+    route_nodes_by_robot: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+    for row in sections.get("SP4 Route Nodes", []):
+        robot_id = int(row.get("robot_id", -1))
+        if robot_id < 0:
+            continue
+        route_nodes_by_robot[int(robot_id)].append(
+            {
+                "robot_id": int(robot_id),
+                "seq": int(row.get("seq", 0) or 0),
+                "node_type": str(row.get("node_type", "")),
+                "task_id": int(row["task_id"]) if "task_id" in row and row.get("task_id") is not None else -1,
+                "subtask_id": int(row["subtask_id"]) if "subtask_id" in row and row.get("subtask_id") is not None else -1,
+                "time": float(row.get("time", 0.0) or 0.0),
+                "load": int(row.get("load", 0) or 0),
+            }
+        )
+    route_nodes_by_robot = {
+        int(robot_id): sorted(rows, key=lambda item: (int(item.get("seq", 0)), str(item.get("node_type", "")), int(item.get("task_id", -1))))
+        for robot_id, rows in route_nodes_by_robot.items()
+    }
+
     return {
         "header": header,
         "subtasks": subtasks,
         "tasks": tasks,
         "subtask_robot": subtask_robot,
         "trips_by_robot": {int(k): list(v) for k, v in trips_by_robot.items()},
+        "route_nodes_by_robot": route_nodes_by_robot,
     }
 
 
@@ -346,6 +368,8 @@ def _add_alns_fix_constraints(
 
     fixed_counts: Dict[str, int] = defaultdict(int)
     missing_route_tuples: List[Dict[str, Any]] = []
+    missing_selected_route_arcs: List[Dict[str, Any]] = []
+    selected_route_arcs_debug: List[Dict[str, Any]] = []
 
     for slot in slots:
         sid = int(slot.slot_id)
@@ -505,55 +529,99 @@ def _add_alns_fix_constraints(
         if route_arc is not None:
             selected_arcs: Set[Tuple[int, int]] = set()
             route_tau: Dict[Tuple[int, int], float] = payload.get("route_tau", {})
-            rows_by_robot_trip: Dict[Tuple[int, int], List[Dict[str, Any]]] = defaultdict(list)
-            for row in selected_route_rows:
-                rows_by_robot_trip[(int(row["robot_id"]), int(row["trip_id"]))].append(dict(row))
-            for (robot_id, _trip_id), rows in rows_by_robot_trip.items():
-                start_node = int(payload.get("route_start_nodes", {}).get(int(robot_id), -1))
-                end_node = int(payload.get("route_end_nodes", {}).get(int(robot_id), -1))
-                prev_node = start_node
-                for row in sorted(rows, key=lambda item: (float(item.get("arrival_stack", 0.0) or 0.0), int(item.get("task_id", -1)))):
-                    spec = route_tasks.get(int(row["route_key"]))
-                    if spec is None:
-                        continue
-                    pickup_node = int(spec.pickup_node)
-                    delivery_node = int(spec.delivery_node)
-                    if prev_node >= 0:
-                        selected_arcs.add((int(prev_node), int(pickup_node)))
-                    selected_arcs.add((int(pickup_node), int(delivery_node)))
-                    prev_node = delivery_node
-                if prev_node >= 0 and end_node >= 0:
-                    selected_arcs.add((int(prev_node), int(end_node)))
+            explicit_route_nodes = dict(parsed.get("route_nodes_by_robot", {}) or {})
+            task_route_key = {int(row["task_id"]): int(row["route_key"]) for row in selected_route_rows}
+            route_time_fixes: Dict[int, float] = {}
+            if explicit_route_nodes:
+                for robot_id, node_rows in explicit_route_nodes.items():
+                    prev_node = -1
+                    prev_desc = ""
+                    for node_row in sorted(node_rows, key=lambda item: int(item.get("seq", 0))):
+                        node_type = str(node_row.get("node_type", "")).strip().lower()
+                        task_id = int(node_row.get("task_id", -1))
+                        if node_type == "start":
+                            node_id = int(payload.get("route_start_nodes", {}).get(int(robot_id), -1))
+                        elif node_type == "end":
+                            node_id = int(payload.get("route_end_nodes", {}).get(int(robot_id), -1))
+                        else:
+                            route_key = int(task_route_key.get(int(task_id), -1))
+                            spec = route_tasks.get(route_key)
+                            if spec is None:
+                                continue
+                            node_id = int(spec.pickup_node if node_type == "pickup" else spec.delivery_node)
+                        if node_id < 0:
+                            continue
+                        route_time_fixes[int(node_id)] = float(node_row.get("time", 0.0) or 0.0)
+                        if prev_node >= 0:
+                            selected_arcs.add((int(prev_node), int(node_id)))
+                            arc_row = {
+                                "robot_id": int(robot_id),
+                                "from_node": int(prev_node),
+                                "to_node": int(node_id),
+                                "from": str(prev_desc),
+                                "to": f"{node_type}:task={task_id}",
+                            }
+                            selected_route_arcs_debug.append(arc_row)
+                            if (int(prev_node), int(node_id)) not in route_arc:
+                                missing_selected_route_arcs.append(dict(arc_row))
+                        prev_node = int(node_id)
+                        prev_desc = f"{node_type}:task={task_id}"
+            else:
+                rows_by_robot_trip: Dict[Tuple[int, int], List[Dict[str, Any]]] = defaultdict(list)
+                for row in selected_route_rows:
+                    rows_by_robot_trip[(int(row["robot_id"]), int(row["trip_id"]))].append(dict(row))
+                for (robot_id, _trip_id), rows in rows_by_robot_trip.items():
+                    start_node = int(payload.get("route_start_nodes", {}).get(int(robot_id), -1))
+                    end_node = int(payload.get("route_end_nodes", {}).get(int(robot_id), -1))
+                    prev_node = start_node
+                    for row in sorted(rows, key=lambda item: (float(item.get("arrival_stack", 0.0) or 0.0), int(item.get("task_id", -1)))):
+                        spec = route_tasks.get(int(row["route_key"]))
+                        if spec is None:
+                            continue
+                        pickup_node = int(spec.pickup_node)
+                        delivery_node = int(spec.delivery_node)
+                        if prev_node >= 0:
+                            selected_arcs.add((int(prev_node), int(pickup_node)))
+                        selected_arcs.add((int(pickup_node), int(delivery_node)))
+                        prev_node = delivery_node
+                    if prev_node >= 0 and end_node >= 0:
+                        selected_arcs.add((int(prev_node), int(end_node)))
             for key in list(route_arc.keys()):
                 arc = (int(key[0]), int(key[1]))
                 _add_fix(model, route_arc[key], 1.0 if arc in selected_arcs else 0.0, f"FixRouteArc_{phase}_{arc[0]}_{arc[1]}")
                 fixed_counts["route_arc"] += 1
             if route_time is not None:
-                for row in selected_route_rows:
-                    spec = route_tasks.get(int(row["route_key"]))
-                    if spec is None:
-                        continue
-                    _add_fix(model, route_time[int(spec.pickup_node)], float(row.get("arrival_stack", 0.0) or 0.0), f"FixRouteTimePickup_{phase}_{int(spec.pickup_node)}")
-                    _add_fix(model, route_time[int(spec.delivery_node)], float(row.get("arrival_station", 0.0) or 0.0), f"FixRouteTimeDelivery_{phase}_{int(spec.delivery_node)}")
-                    fixed_counts["route_time"] += 2
-                for robot_id in robot_ids:
-                    start_node = int(payload.get("route_start_nodes", {}).get(int(robot_id), -1))
-                    end_node = int(payload.get("route_end_nodes", {}).get(int(robot_id), -1))
-                    if start_node >= 0:
-                        _add_fix(model, route_time[start_node], 0.0, f"FixRouteTimeStart_{phase}_{start_node}")
-                        fixed_counts["route_time"] += 1
-                    incoming = [arc for arc in selected_arcs if int(arc[1]) == end_node]
-                    if end_node >= 0 and incoming:
-                        prev_node = int(incoming[0][0])
-                        prev_time = None
-                        for row in selected_route_rows:
-                            spec = route_tasks.get(int(row["route_key"]))
-                            if spec is not None and int(spec.delivery_node) == prev_node:
-                                prev_time = float(row.get("arrival_station", 0.0) or 0.0)
-                                break
-                        if prev_time is not None:
-                            _add_fix(model, route_time[end_node], float(prev_time) + float(route_tau.get((prev_node, end_node), 0.0) or 0.0), f"FixRouteTimeEnd_{phase}_{end_node}")
+                if route_time_fixes:
+                    for node_id, value in sorted(route_time_fixes.items()):
+                        if int(node_id) in route_time:
+                            _add_fix(model, route_time[int(node_id)], float(value), f"FixRouteTimeNode_{phase}_{int(node_id)}")
                             fixed_counts["route_time"] += 1
+                else:
+                    for row in selected_route_rows:
+                        spec = route_tasks.get(int(row["route_key"]))
+                        if spec is None:
+                            continue
+                        _add_fix(model, route_time[int(spec.pickup_node)], float(row.get("arrival_stack", 0.0) or 0.0), f"FixRouteTimePickup_{phase}_{int(spec.pickup_node)}")
+                        _add_fix(model, route_time[int(spec.delivery_node)], float(row.get("arrival_station", 0.0) or 0.0), f"FixRouteTimeDelivery_{phase}_{int(spec.delivery_node)}")
+                        fixed_counts["route_time"] += 2
+                    for robot_id in robot_ids:
+                        start_node = int(payload.get("route_start_nodes", {}).get(int(robot_id), -1))
+                        end_node = int(payload.get("route_end_nodes", {}).get(int(robot_id), -1))
+                        if start_node >= 0:
+                            _add_fix(model, route_time[start_node], 0.0, f"FixRouteTimeStart_{phase}_{start_node}")
+                            fixed_counts["route_time"] += 1
+                        incoming = [arc for arc in selected_arcs if int(arc[1]) == end_node]
+                        if end_node >= 0 and incoming:
+                            prev_node = int(incoming[0][0])
+                            prev_time = None
+                            for row in selected_route_rows:
+                                spec = route_tasks.get(int(row["route_key"]))
+                                if spec is not None and int(spec.delivery_node) == prev_node:
+                                    prev_time = float(row.get("arrival_station", 0.0) or 0.0)
+                                    break
+                            if prev_time is not None:
+                                _add_fix(model, route_time[end_node], float(prev_time) + float(route_tau.get((prev_node, end_node), 0.0) or 0.0), f"FixRouteTimeEnd_{phase}_{end_node}")
+                                fixed_counts["route_time"] += 1
 
     alns_cmax = float(parsed["header"].get("global_makespan", parsed["header"].get("best_z", 0.0)) or 0.0)
     if phase == "full":
@@ -585,6 +653,8 @@ def _add_alns_fix_constraints(
     return {
         "fixed_counts": dict(fixed_counts),
         "missing_route_tuples": missing_route_tuples,
+        "missing_selected_route_arcs": missing_selected_route_arcs,
+        "selected_route_arcs": selected_route_arcs_debug,
         "alns_cmax": float(alns_cmax),
         "fix_cmax": bool(fix_cmax and phase == "full"),
     }
@@ -667,6 +737,8 @@ def _run_phase(
         "obj_bound": float(model.ObjBound) if hasattr(model, "ObjBound") else None,
         "fixed_counts": fix_diag["fixed_counts"],
         "missing_route_tuples": fix_diag["missing_route_tuples"],
+        "missing_selected_route_arcs": fix_diag.get("missing_selected_route_arcs", []),
+        "selected_route_arcs": fix_diag.get("selected_route_arcs", []),
         "alns_cmax": float(fix_diag["alns_cmax"]),
         "fix_cmax": bool(fix_diag["fix_cmax"]),
         "model_cmax": float(payload["cmax"].X) if model.SolCount > 0 else None,
@@ -722,6 +794,12 @@ def main() -> None:
         cfg.enable_warm_candidate_stack_prune = False
         cfg.enable_scale_adaptive_candidate_prune = False
         cfg.route_arc_prune = False
+        cfg.enable_route_time_window_arc_prune = False
+        cfg.enable_route_load_interval_arc_prune = False
+        cfg.enable_route_directional_arc_prune = False
+        cfg.route_pickup_neighbor_limit = 0
+        cfg.enable_resource_lex_symmetry = False
+        cfg.enable_robot_finish_lex_symmetry = False
     warm = solver._build_warm_start(problem, cfg)
     prepared = solver._prepare(problem, cfg, warm)
     prepared = _augment_prepared_with_alns_solution(prepared, parsed)
@@ -778,6 +856,7 @@ def main() -> None:
                 f.write(f"cmax_gap_vs_alns={float(phase_result['cmax_gap_vs_alns']):.6f}\n")
             f.write(f"fixed_counts={phase_result['fixed_counts']}\n")
             f.write(f"missing_route_tuples={phase_result['missing_route_tuples']}\n")
+            f.write(f"missing_selected_route_arcs={phase_result.get('missing_selected_route_arcs', [])}\n")
             if phase_result.get("iis"):
                 f.write(f"iis_count={int(phase_result['iis']['count'])}\n")
                 f.write(f"iis_prefix_counts={phase_result['iis']['prefix_counts']}\n")
