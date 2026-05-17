@@ -1,0 +1,133 @@
+{
+  "best_iter": -1,
+  "best_z": 451.577,
+  "model_objective": 451.577,
+  "model_cmax": 451.0,
+  "global_makespan": 451.0,
+  "total_span_overrun": 0.0,
+  "total_deadline_overrun": 0.0,
+  "scale": "Gurobi-s9",
+  "seed": 42,
+  "status": "OPTIMAL",
+  "sp1": {
+    "subtask_count": 5
+  },
+  "sp2": {
+    "station_count": 4
+  },
+  "sp3": {
+    "task_count": 9
+  },
+  "sp4": {
+    "robot_count": 4
+  },
+  "coverage": {
+    "coverage_ok": true,
+    "unmet_sku_total": 0,
+    "unmet_subtask_count": 0,
+    "subtasks": [
+      {
+        "subtask_id": 0,
+        "order_id": 1,
+        "required_sku_units": 6,
+        "provided_sku_units": 6,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 1,
+        "order_id": 4,
+        "required_sku_units": 6,
+        "provided_sku_units": 6,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 2,
+        "order_id": 0,
+        "required_sku_units": 5,
+        "provided_sku_units": 5,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 3,
+        "order_id": 2,
+        "required_sku_units": 6,
+        "provided_sku_units": 6,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 4,
+        "order_id": 3,
+        "required_sku_units": 6,
+        "provided_sku_units": 6,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      }
+    ]
+  },
+  "order_time_windows": [
+    {
+      "order_id": 0,
+      "lst_sec": 235.0,
+      "unique_sku_count": 5,
+      "kitting_span_limit_sec": 40.0,
+      "effective_window_sec": 75.0,
+      "arrival_lb": 61.0,
+      "arrival_ub": 136.0,
+      "span_overrun": 0.0,
+      "deadline_overrun": 0.0
+    },
+    {
+      "order_id": 1,
+      "lst_sec": 269.0,
+      "unique_sku_count": 6,
+      "kitting_span_limit_sec": 48.0,
+      "effective_window_sec": 90.0,
+      "arrival_lb": 218.0,
+      "arrival_ub": 218.0,
+      "span_overrun": 0.0,
+      "deadline_overrun": 0.0
+    },
+    {
+      "order_id": 2,
+      "lst_sec": 265.0,
+      "unique_sku_count": 6,
+      "kitting_span_limit_sec": 48.0,
+      "effective_window_sec": 90.0,
+      "arrival_lb": 151.0,
+      "arrival_ub": 241.0,
+      "span_overrun": 0.0,
+      "deadline_overrun": 0.0
+    },
+    {
+      "order_id": 3,
+      "lst_sec": 266.0,
+      "unique_sku_count": 6,
+      "kitting_span_limit_sec": 48.0,
+      "effective_window_sec": 90.0,
+      "arrival_lb": 145.659999954734,
+      "arrival_ub": 235.659999954734,
+      "span_overrun": 0.0,
+      "deadline_overrun": 0.0
+    },
+    {
+      "order_id": 4,
+      "lst_sec": 267.0,
+      "unique_sku_count": 6,
+      "kitting_span_limit_sec": 48.0,
+      "effective_window_sec": 90.0,
+      "arrival_lb": 229.0,
+      "arrival_ub": 267.0,
+      "span_overrun": 0.0,
+      "deadline_overrun": 0.0
+    }
+  ]
+}

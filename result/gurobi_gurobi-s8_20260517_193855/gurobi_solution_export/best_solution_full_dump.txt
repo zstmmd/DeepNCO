@@ -1,0 +1,44 @@
+[Gurobi Best Solution Dump]
+seed=42
+status=OPTIMAL
+model_objective=367.541000
+model_cmax=367.000000
+global_makespan=367.000000
+total_span_overrun=0.000000
+total_deadline_overrun=0.000000
+
+[SP1 Decisions]
+subtask_id=0, order_id=4, sku_units=6, sku_list=[23, 24, 25, 26, 27, 28]
+subtask_id=1, order_id=0, sku_units=5, sku_list=[0, 1, 2, 3, 4]
+subtask_id=2, order_id=1, sku_units=6, sku_list=[5, 6, 7, 8, 9, 10]
+subtask_id=3, order_id=2, sku_units=6, sku_list=[11, 12, 13, 14, 15, 16]
+subtask_id=4, order_id=3, sku_units=6, sku_list=[17, 18, 19, 20, 21, 22]
+
+[SP2 Decisions]
+subtask_id=0, station_id=0, rank=0
+subtask_id=1, station_id=1, rank=0
+subtask_id=2, station_id=1, rank=1
+subtask_id=3, station_id=2, rank=0
+subtask_id=4, station_id=3, rank=0
+
+[SP3 Decisions]
+task_id=0, subtask_id=0, stack_id=1208, station_id=0, mode=SORT, target_totes=[30, 31], hit_totes=[30, 31], noise_totes=[], sort_range=(0, 1), robot_service_time=2.000000, station_service_time=0.000000
+task_id=1, subtask_id=0, stack_id=2236, station_id=0, mode=SORT, target_totes=[35, 36, 37], hit_totes=[35, 36], noise_totes=[37], sort_range=(0, 2), robot_service_time=2.000000, station_service_time=1.000000
+task_id=2, subtask_id=1, stack_id=763, station_id=1, mode=SORT, target_totes=[0, 1], hit_totes=[0, 1], noise_totes=[], sort_range=(0, 2), robot_service_time=2.000000, station_service_time=0.000000
+task_id=3, subtask_id=2, stack_id=498, station_id=1, mode=SORT, target_totes=[7, 8], hit_totes=[7, 8], noise_totes=[], sort_range=(0, 2), robot_service_time=2.000000, station_service_time=0.000000
+task_id=4, subtask_id=2, stack_id=952, station_id=1, mode=SORT, target_totes=[9, 10], hit_totes=[9, 10], noise_totes=[], sort_range=(0, 1), robot_service_time=2.000000, station_service_time=0.000000
+task_id=5, subtask_id=3, stack_id=250, station_id=2, mode=SORT, target_totes=[13, 14], hit_totes=[13, 14], noise_totes=[], sort_range=(0, 2), robot_service_time=2.000000, station_service_time=0.000000
+task_id=6, subtask_id=3, stack_id=288, station_id=2, mode=SORT, target_totes=[16], hit_totes=[16], noise_totes=[], sort_range=(0, 1), robot_service_time=2.000000, station_service_time=0.000000
+task_id=7, subtask_id=4, stack_id=796, station_id=3, mode=FLIP, target_totes=[21, 22, 23], hit_totes=[21, 22, 23], noise_totes=[], sort_range=None, robot_service_time=8.000000, station_service_time=0.000000
+task_id=8, subtask_id=4, stack_id=1549, station_id=3, mode=FLIP, target_totes=[24, 25], hit_totes=[24, 25], noise_totes=[], sort_range=None, robot_service_time=6.000000, station_service_time=0.000000
+
+[SP4 Decisions]
+task_id=0, robot_id=1, trip_id=0, arrival_stack=67.000000, arrival_station=180.000000, start_process=180.000000, end_process=303.000000
+task_id=1, robot_id=1, trip_id=0, arrival_stack=108.000000, arrival_station=180.000000, start_process=303.000000, end_process=367.000000
+task_id=2, robot_id=0, trip_id=0, arrival_stack=21.000000, arrival_station=46.000000, start_process=46.000000, end_process=196.000000
+task_id=3, robot_id=0, trip_id=0, arrival_stack=127.000000, arrival_station=196.000000, start_process=196.000000, end_process=313.000000
+task_id=4, robot_id=0, trip_id=0, arrival_stack=147.000000, arrival_station=196.000000, start_process=313.000000, end_process=367.000000
+task_id=5, robot_id=0, trip_id=0, arrival_stack=51.000000, arrival_station=115.000000, start_process=115.000000, end_process=235.000000
+task_id=6, robot_id=0, trip_id=0, arrival_stack=91.000000, arrival_station=115.000000, start_process=235.000000, end_process=289.000000
+task_id=7, robot_id=2, trip_id=0, arrival_stack=54.000000, arrival_station=187.000000, start_process=187.000000, end_process=304.000000
+task_id=8, robot_id=2, trip_id=0, arrival_stack=139.000000, arrival_station=187.000000, start_process=304.000000, end_process=367.000000

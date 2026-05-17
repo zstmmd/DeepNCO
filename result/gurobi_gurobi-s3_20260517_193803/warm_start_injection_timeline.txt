@@ -1,0 +1,21 @@
+[Warm Start Injection Timeline]
+warm_start_model_cmax=285.000000
+warm_start_route_end_max=158.000000
+warm_start_route_end_gap=158.000000
+time_violations:
+slot_times:
+route_steps:
+robot_id=0
+  {'node_id': 0, 'kind': 'start', 'time': 0.0, 'load': 0, 'service': 0.0, 'slot_id': -1, 'station_id': -1}
+  {'prev_node': 0, 'node_id': 4, 'kind': 'pickup', 'time': 3.0, 'load': 1, 'service': 0.0, 'arc_time': 3.0, 'slot_id': 0, 'station_id': 0}
+  {'prev_node': 4, 'node_id': 5, 'kind': 'delivery', 'time': 10.0, 'load': 0, 'service': 3.0, 'arc_time': 4.0, 'slot_id': 0, 'station_id': 0}
+  {'prev_node': 5, 'node_id': 34, 'kind': 'pickup', 'time': 78.0, 'load': 1, 'service': 0.0, 'arc_time': 68.0, 'slot_id': 3, 'station_id': 0}
+  {'prev_node': 34, 'node_id': 35, 'kind': 'delivery', 'time': 149.0, 'load': 0, 'service': 3.0, 'arc_time': 68.0, 'slot_id': 3, 'station_id': 0}
+  {'prev_node': 35, 'node_id': 1, 'kind': 'end', 'time': 150.0, 'load': 0, 'service': 0.0, 'arc_time': 1.0, 'slot_id': -1, 'station_id': -1}
+robot_id=1
+  {'node_id': 2, 'kind': 'start', 'time': 0.0, 'load': 0, 'service': 0.0, 'slot_id': -1, 'station_id': -1}
+  {'prev_node': 2, 'node_id': 18, 'kind': 'pickup', 'time': 35.0, 'load': 1, 'service': 0.0, 'arc_time': 35.0, 'slot_id': 1, 'station_id': 1}
+  {'prev_node': 18, 'node_id': 19, 'kind': 'delivery', 'time': 102.0, 'load': 0, 'service': 3.0, 'arc_time': 64.0, 'slot_id': 1, 'station_id': 1}
+  {'prev_node': 19, 'node_id': 20, 'kind': 'pickup', 'time': 110.0, 'load': 1, 'service': 0.0, 'arc_time': 8.0, 'slot_id': 2, 'station_id': 1}
+  {'prev_node': 20, 'node_id': 21, 'kind': 'delivery', 'time': 121.0, 'load': 0, 'service': 3.0, 'arc_time': 8.0, 'slot_id': 2, 'station_id': 1}
+  {'prev_node': 21, 'node_id': 3, 'kind': 'end', 'time': 158.0, 'load': 0, 'service': 0.0, 'arc_time': 37.0, 'slot_id': -1, 'station_id': -1}

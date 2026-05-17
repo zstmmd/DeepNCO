@@ -1,0 +1,97 @@
+{
+  "status": "PASS",
+  "task_count": 5,
+  "max_task_end": 222.0,
+  "global_makespan": 222.0,
+  "coverage": {
+    "coverage_ok": true,
+    "unmet_sku_total": 0,
+    "unmet_subtask_count": 0,
+    "subtasks": [
+      {
+        "subtask_id": 0,
+        "order_id": 0,
+        "required_sku_units": 6,
+        "provided_sku_units": 6,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 1,
+        "order_id": 0,
+        "required_sku_units": 1,
+        "provided_sku_units": 1,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 2,
+        "order_id": 1,
+        "required_sku_units": 6,
+        "provided_sku_units": 6,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 3,
+        "order_id": 1,
+        "required_sku_units": 1,
+        "provided_sku_units": 1,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      }
+    ]
+  },
+  "failures": [],
+  "station_task_rows": [
+    {
+      "station_id": 0,
+      "task_id": 0,
+      "start": 29.0,
+      "end": 191.0,
+      "wait": 0.0,
+      "pick": 162.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 0,
+      "task_id": 1,
+      "start": 191.0,
+      "end": 192.0,
+      "wait": 57.0,
+      "pick": 0.0,
+      "extra": 1.0
+    },
+    {
+      "station_id": 0,
+      "task_id": 2,
+      "start": 192.0,
+      "end": 222.0,
+      "wait": 58.0,
+      "pick": 30.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 1,
+      "task_id": 3,
+      "start": 45.0,
+      "end": 198.0,
+      "wait": 0.0,
+      "pick": 153.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 1,
+      "task_id": 4,
+      "start": 198.0,
+      "end": 222.0,
+      "wait": 48.0,
+      "pick": 24.0,
+      "extra": 0.0
+    }
+  ]
+}

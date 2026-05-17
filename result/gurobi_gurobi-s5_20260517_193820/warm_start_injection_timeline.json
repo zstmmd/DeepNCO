@@ -1,0 +1,280 @@
+{
+  "warm_start_route_steps": {
+    "0": [
+      {
+        "node_id": 0,
+        "kind": "start",
+        "time": 0.0,
+        "load": 0,
+        "service": 0.0,
+        "slot_id": -1,
+        "station_id": -1
+      },
+      {
+        "prev_node": 0,
+        "node_id": 40,
+        "kind": "pickup",
+        "time": 86.0,
+        "load": 1,
+        "service": 0.0,
+        "arc_time": 86.0,
+        "slot_id": 3,
+        "station_id": 1
+      },
+      {
+        "prev_node": 40,
+        "node_id": 41,
+        "kind": "delivery",
+        "time": 148.0,
+        "load": 0,
+        "service": 3.0,
+        "arc_time": 59.0,
+        "slot_id": 3,
+        "station_id": 1
+      },
+      {
+        "prev_node": 41,
+        "node_id": 1,
+        "kind": "end",
+        "time": 175.0,
+        "load": 0,
+        "service": 0.0,
+        "arc_time": 27.0,
+        "slot_id": -1,
+        "station_id": -1
+      }
+    ],
+    "1": [
+      {
+        "node_id": 2,
+        "kind": "start",
+        "time": 0.0,
+        "load": 0,
+        "service": 0.0,
+        "slot_id": -1,
+        "station_id": -1
+      },
+      {
+        "prev_node": 2,
+        "node_id": 56,
+        "kind": "pickup",
+        "time": 59.0,
+        "load": 1,
+        "service": 0.0,
+        "arc_time": 59.0,
+        "slot_id": 5,
+        "station_id": 2
+      },
+      {
+        "prev_node": 56,
+        "node_id": 57,
+        "kind": "delivery",
+        "time": 107.0,
+        "load": 0,
+        "service": 3.0,
+        "arc_time": 45.0,
+        "slot_id": 5,
+        "station_id": 2
+      },
+      {
+        "prev_node": 57,
+        "node_id": 18,
+        "kind": "pickup",
+        "time": 125.0,
+        "load": 1,
+        "service": 0.0,
+        "arc_time": 18.0,
+        "slot_id": 1,
+        "station_id": 1
+      },
+      {
+        "prev_node": 18,
+        "node_id": 19,
+        "kind": "delivery",
+        "time": 145.0,
+        "load": 0,
+        "service": 3.0,
+        "arc_time": 17.0,
+        "slot_id": 1,
+        "station_id": 1
+      },
+      {
+        "prev_node": 19,
+        "node_id": 6,
+        "kind": "pickup",
+        "time": 175.0,
+        "load": 1,
+        "service": 0.0,
+        "arc_time": 30.0,
+        "slot_id": 0,
+        "station_id": 0
+      },
+      {
+        "prev_node": 6,
+        "node_id": 7,
+        "kind": "delivery",
+        "time": 182.0,
+        "load": 0,
+        "service": 3.0,
+        "arc_time": 4.0,
+        "slot_id": 0,
+        "station_id": 0
+      },
+      {
+        "prev_node": 7,
+        "node_id": 3,
+        "kind": "end",
+        "time": 183.0,
+        "load": 0,
+        "service": 0.0,
+        "arc_time": 1.0,
+        "slot_id": -1,
+        "station_id": -1
+      }
+    ],
+    "2": [
+      {
+        "node_id": 4,
+        "kind": "start",
+        "time": 0.0,
+        "load": 0,
+        "service": 0.0,
+        "slot_id": -1,
+        "station_id": -1
+      },
+      {
+        "prev_node": 4,
+        "node_id": 26,
+        "kind": "pickup",
+        "time": 32.0,
+        "load": 1,
+        "service": 0.0,
+        "arc_time": 32.0,
+        "slot_id": 2,
+        "station_id": 2
+      },
+      {
+        "prev_node": 26,
+        "node_id": 27,
+        "kind": "delivery",
+        "time": 81.0,
+        "load": 0,
+        "service": 3.0,
+        "arc_time": 46.0,
+        "slot_id": 2,
+        "station_id": 2
+      },
+      {
+        "prev_node": 27,
+        "node_id": 44,
+        "kind": "pickup",
+        "time": 155.0,
+        "load": 1,
+        "service": 0.0,
+        "arc_time": 74.0,
+        "slot_id": 4,
+        "station_id": 1
+      },
+      {
+        "prev_node": 44,
+        "node_id": 45,
+        "kind": "delivery",
+        "time": 203.0,
+        "load": 0,
+        "service": 3.0,
+        "arc_time": 45.0,
+        "slot_id": 4,
+        "station_id": 1
+      },
+      {
+        "prev_node": 45,
+        "node_id": 5,
+        "kind": "end",
+        "time": 230.0,
+        "load": 0,
+        "service": 0.0,
+        "arc_time": 27.0,
+        "slot_id": -1,
+        "station_id": -1
+      }
+    ]
+  },
+  "warm_start_slot_times": [
+    {
+      "slot_id": 0,
+      "station_id": 0,
+      "rank": 0,
+      "arrival_lower": 182.0,
+      "arrival": 182.0,
+      "start": 182.0,
+      "finish": 362.0,
+      "unit_count": 60,
+      "noise_count": 0,
+      "slot_time_ub": 1137.0
+    },
+    {
+      "slot_id": 1,
+      "station_id": 1,
+      "rank": 0,
+      "arrival_lower": 145.0,
+      "arrival": 145.0,
+      "start": 145.0,
+      "finish": 178.0,
+      "unit_count": 11,
+      "noise_count": 0,
+      "slot_time_ub": 1137.0
+    },
+    {
+      "slot_id": 3,
+      "station_id": 1,
+      "rank": 1,
+      "arrival_lower": 148.0,
+      "arrival": 148.0,
+      "start": 178.0,
+      "finish": 205.0,
+      "unit_count": 9,
+      "noise_count": 0,
+      "slot_time_ub": 1137.0
+    },
+    {
+      "slot_id": 4,
+      "station_id": 1,
+      "rank": 2,
+      "arrival_lower": 203.0,
+      "arrival": 203.0,
+      "start": 205.0,
+      "finish": 379.0,
+      "unit_count": 58,
+      "noise_count": 0,
+      "slot_time_ub": 1137.0
+    },
+    {
+      "slot_id": 2,
+      "station_id": 2,
+      "rank": 0,
+      "arrival_lower": 81.0,
+      "arrival": 81.0,
+      "start": 81.0,
+      "finish": 252.0,
+      "unit_count": 57,
+      "noise_count": 0,
+      "slot_time_ub": 1137.0
+    },
+    {
+      "slot_id": 5,
+      "station_id": 2,
+      "rank": 1,
+      "arrival_lower": 107.0,
+      "arrival": 107.0,
+      "start": 252.0,
+      "finish": 282.0,
+      "unit_count": 10,
+      "noise_count": 0,
+      "slot_time_ub": 1137.0
+    }
+  ],
+  "warm_start_time_violations": [],
+  "warm_start_model_cmax": 379.0,
+  "warm_start_route_end_max": 230.0,
+  "warm_start_route_end_gap": 230.0
+}

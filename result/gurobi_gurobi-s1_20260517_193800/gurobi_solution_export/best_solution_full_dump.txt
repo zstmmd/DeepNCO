@@ -1,0 +1,24 @@
+[Gurobi Best Solution Dump]
+seed=42
+status=OPTIMAL
+model_objective=90.098000
+model_cmax=90.000000
+global_makespan=90.000000
+total_span_overrun=0.000000
+total_deadline_overrun=0.000000
+
+[SP1 Decisions]
+subtask_id=0, order_id=0, sku_units=6, sku_list=[0, 1, 4, 5, 7, 8]
+subtask_id=1, order_id=0, sku_units=4, sku_list=[2, 3, 6, 9]
+
+[SP2 Decisions]
+subtask_id=0, station_id=0, rank=0
+subtask_id=1, station_id=1, rank=0
+
+[SP3 Decisions]
+task_id=0, subtask_id=0, stack_id=118, station_id=0, mode=SORT, target_totes=[14, 16, 18], hit_totes=[14, 16, 18], noise_totes=[], sort_range=(3, 7), robot_service_time=2.000000, station_service_time=0.000000
+task_id=1, subtask_id=1, stack_id=118, station_id=1, mode=SORT, target_totes=[13, 15], hit_totes=[13, 15], noise_totes=[], sort_range=(1, 7), robot_service_time=2.000000, station_service_time=0.000000
+
+[SP4 Decisions]
+task_id=0, robot_id=1, trip_id=0, arrival_stack=3.000000, arrival_station=9.000000, start_process=9.000000, end_process=90.000000
+task_id=1, robot_id=0, trip_id=0, arrival_stack=3.000000, arrival_station=45.000000, start_process=45.000000, end_process=90.000000

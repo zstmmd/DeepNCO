@@ -1,0 +1,122 @@
+{
+  "warm_start_route_steps": {
+    "0": [
+      {
+        "node_id": 0,
+        "kind": "start",
+        "time": 0.0,
+        "load": 0,
+        "service": 0.0,
+        "slot_id": -1,
+        "station_id": -1
+      },
+      {
+        "prev_node": 0,
+        "node_id": 8,
+        "kind": "pickup",
+        "time": 23.0,
+        "load": 2,
+        "service": 0.0,
+        "arc_time": 23.0,
+        "slot_id": 0,
+        "station_id": 0
+      },
+      {
+        "prev_node": 8,
+        "node_id": 9,
+        "kind": "delivery",
+        "time": 49.0,
+        "load": 0,
+        "service": 2.0,
+        "arc_time": 24.0,
+        "slot_id": 0,
+        "station_id": 0
+      },
+      {
+        "prev_node": 9,
+        "node_id": 1,
+        "kind": "end",
+        "time": 50.0,
+        "load": 0,
+        "service": 0.0,
+        "arc_time": 1.0,
+        "slot_id": -1,
+        "station_id": -1
+      }
+    ],
+    "1": [
+      {
+        "node_id": 2,
+        "kind": "start",
+        "time": 0.0,
+        "load": 0,
+        "service": 0.0,
+        "slot_id": -1,
+        "station_id": -1
+      },
+      {
+        "prev_node": 2,
+        "node_id": 22,
+        "kind": "pickup",
+        "time": 3.0,
+        "load": 2,
+        "service": 0.0,
+        "arc_time": 3.0,
+        "slot_id": 1,
+        "station_id": 1
+      },
+      {
+        "prev_node": 22,
+        "node_id": 23,
+        "kind": "delivery",
+        "time": 46.0,
+        "load": 0,
+        "service": 3.0,
+        "arc_time": 40.0,
+        "slot_id": 1,
+        "station_id": 1
+      },
+      {
+        "prev_node": 23,
+        "node_id": 3,
+        "kind": "end",
+        "time": 83.0,
+        "load": 0,
+        "service": 0.0,
+        "arc_time": 37.0,
+        "slot_id": -1,
+        "station_id": -1
+      }
+    ]
+  },
+  "warm_start_slot_times": [
+    {
+      "slot_id": 0,
+      "station_id": 0,
+      "rank": 0,
+      "arrival_lower": 49.0,
+      "arrival": 49.0,
+      "start": 49.0,
+      "finish": 127.0,
+      "unit_count": 26,
+      "noise_count": 0,
+      "slot_time_ub": 381.0
+    },
+    {
+      "slot_id": 1,
+      "station_id": 1,
+      "rank": 0,
+      "arrival_lower": 46.0,
+      "arrival": 46.0,
+      "start": 46.0,
+      "finish": 94.0,
+      "unit_count": 16,
+      "noise_count": 0,
+      "slot_time_ub": 381.0
+    }
+  ],
+  "warm_start_time_violations": [],
+  "warm_start_model_cmax": 127.0,
+  "warm_start_route_end_max": 83.0,
+  "warm_start_route_end_gap": 83.0
+}
