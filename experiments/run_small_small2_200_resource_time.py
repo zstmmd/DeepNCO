@@ -13,6 +13,7 @@ if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
 from Gurobi.tra import TRAOptimizer, TRARunConfig
+from Gurobi.resource_time_alns.diagnostics import compare_solution_signatures, write_structure_compare_csv
 
 
 DEFAULT_ALL_CASES = [
@@ -71,6 +72,27 @@ def _write_txt(path: str, lines: List[str]) -> None:
     with open(path, "w", encoding="utf-8") as f:
         for line in lines:
             f.write(str(line).rstrip("\n") + "\n")
+
+
+def _case_target_cmax(scale: str) -> float:
+    targets = {
+        "GUROBI-S1": 90.0,
+        "GUROBI-S2": 164.0,
+        "GUROBI-S3": 223.0,
+        "GUROBI-S4": 237.0,
+        "GUROBI-S5": 281.0,
+        "GUROBI-S6": 299.0,
+        "GUROBI-S7": 307.0,
+        "GUROBI-S8": 367.0,
+        "GUROBI-S9": 451.0,
+    }
+    return float(targets.get(str(scale).upper(), float("nan")))
+
+
+def _gurobi_export_dir(args, scale: str) -> str:
+    case_name = str(scale).upper()
+    root = str(args.gurobi_s6_reference_root if case_name == "GUROBI-S6" else args.gurobi_reference_root)
+    return os.path.join(root, case_name, "gurobi_solution_export")
 
 
 def _normalize_jsonable(value: Any) -> Any:
@@ -210,12 +232,30 @@ def _build_cfg(args, scale: str, seed: int, run_log_dir: str) -> TRARunConfig:
     cfg.resource_multi_start_count = int(args.resource_multi_start_count)
     cfg.resource_multi_start_patience = int(args.resource_multi_start_patience)
     cfg.resource_enable_xyz_operator = bool(args.resource_enable_xyz_operator)
+    cfg.resource_enable_critical_path_xyz = bool(args.resource_enable_critical_path_xyz)
+    cfg.resource_enable_best_y_assignment_polish = bool(args.resource_enable_best_y_assignment_polish)
+    cfg.resource_enable_best_z_sortify_polish = bool(args.resource_enable_best_z_sortify_polish)
+    cfg.resource_y_polish_candidate_limit = int(args.resource_y_polish_candidate_limit)
+    cfg.resource_xyz_stagnation_gate = not bool(args.disable_resource_xyz_stagnation_gate)
+    cfg.resource_assert_sp4_ortools_only = not bool(args.allow_sp4_mip)
+    if bool(cfg.resource_assert_sp4_ortools_only):
+        cfg.sp4_use_mip = False
+        cfg.exact_sp4_use_mip = False
     return cfg
 
 
-def _run_one(args, scale: str, run_idx: int, seed: int, batch_root: str) -> Dict[str, Any]:
+def _run_variant(
+    args,
+    scale: str,
+    run_idx: int,
+    seed: int,
+    batch_root: str,
+    variant_name: str,
+    force_sp3_mip: bool | None = None,
+    emit_artifacts: bool = True,
+) -> Dict[str, Any]:
     case_root = _ensure_dir(os.path.join(batch_root, str(scale).upper()))
-    run_root = os.path.join(case_root, f"run_{run_idx:03d}_seed_{seed}")
+    run_root = os.path.join(case_root, f"run_{run_idx:03d}_seed_{seed}", str(variant_name))
     t0 = time.perf_counter()
     status = "ok"
     best_z = float("nan")
@@ -227,6 +267,11 @@ def _run_one(args, scale: str, run_idx: int, seed: int, batch_root: str) -> Dict
 
     try:
         cfg = _build_cfg(args, scale=scale, seed=seed, run_log_dir=run_root)
+        if force_sp3_mip is not None:
+            cfg.sp3_use_mip = bool(force_sp3_mip)
+        if not bool(emit_artifacts):
+            cfg.export_best_solution = False
+            cfg.write_iteration_logs = False
         opt = TRAOptimizer(cfg)
         opt.initialize()
         init_metrics = _collect_init_metrics(opt)
@@ -299,8 +344,71 @@ def _run_one(args, scale: str, run_idx: int, seed: int, batch_root: str) -> Dict
         "makespan_consistent": bool(audit.get("makespan_consistent", False)),
         "has_unreasonable_solution": bool(audit.get("has_unreasonable_solution", False)),
         "result_root": result_root,
+        "variant_name": str(variant_name),
+        "variant_sp3_use_mip": bool(force_sp3_mip if force_sp3_mip is not None else bool(args.sp3_use_mip)),
         **init_metrics,
     }
+
+
+def _run_one(args, scale: str, run_idx: int, seed: int, batch_root: str) -> Dict[str, Any]:
+    portfolio_modes = ["heuristic"]
+    if bool(args.enable_sp3_init_portfolio):
+        portfolio_modes.append("mip")
+    variant_rows: List[Dict[str, Any]] = []
+    for variant_name in portfolio_modes:
+        force_sp3_mip = None
+        if str(variant_name) == "heuristic":
+            force_sp3_mip = False
+        elif str(variant_name) == "mip":
+            force_sp3_mip = True
+        variant_rows.append(
+            _run_variant(
+                args,
+                scale,
+                run_idx,
+                seed,
+                batch_root,
+                variant_name,
+                force_sp3_mip=force_sp3_mip,
+                emit_artifacts=False,
+            )
+        )
+
+    ok_rows = [row for row in variant_rows if str(row.get("status", "")).lower() == "ok" and math.isfinite(float(row.get("best_z", float("nan"))))]
+    if ok_rows:
+        best_row = min(ok_rows, key=lambda row: (float(row.get("best_z", float("inf"))), float(row.get("runtime_sec", float("inf")))))
+    else:
+        best_row = variant_rows[0]
+    best_variant_name = str(best_row.get("variant_name", "heuristic"))
+    best_force_sp3_mip = False if best_variant_name == "heuristic" else True if best_variant_name == "mip" else None
+    final_row = _run_variant(
+        args,
+        scale,
+        run_idx,
+        seed,
+        batch_root,
+        best_variant_name,
+        force_sp3_mip=best_force_sp3_mip,
+        emit_artifacts=True,
+    )
+    best_row = dict(final_row)
+    best_row["portfolio_variant_count"] = int(len(variant_rows))
+    best_row["portfolio_variants"] = json.dumps(
+        [
+            {
+                "variant_name": str(row.get("variant_name", "")),
+                "status": str(row.get("status", "")),
+                "best_z": _safe_float(row.get("best_z", float("nan"))),
+                "runtime_sec": _safe_float(row.get("runtime_sec", float("nan"))),
+            }
+            for row in variant_rows
+        ],
+        ensure_ascii=False,
+    )
+    target_cmax = _case_target_cmax(scale)
+    best_row["target_cmax"] = target_cmax
+    best_row["delta_to_target"] = float(best_row.get("best_z", float("nan")) - target_cmax) if math.isfinite(target_cmax) and math.isfinite(float(best_row.get("best_z", float("nan")))) else float("nan")
+    return best_row
 
 
 def _summarize(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -406,6 +514,16 @@ def parse_args():
     parser.add_argument("--resource-multi-start-count", type=int, default=1)
     parser.add_argument("--resource-multi-start-patience", type=int, default=0)
     parser.add_argument("--resource-enable-xyz-operator", action="store_true", default=False)
+    parser.add_argument("--resource-enable-critical-path-xyz", action="store_true", default=False)
+    parser.add_argument("--resource-enable-best-y-assignment-polish", action="store_true", default=False)
+    parser.add_argument("--resource-enable-best-z-sortify-polish", action="store_true", default=False)
+    parser.add_argument("--resource-y-polish-candidate-limit", type=int, default=64)
+    parser.add_argument("--disable-resource-xyz-stagnation-gate", action="store_true", default=False)
+    parser.add_argument("--enable-sp3-init-portfolio", action="store_true", default=False, help="Run both SP3 heuristic and SP3 MIP initializations, then keep the better result")
+    parser.add_argument("--allow-sp4-mip", action="store_true", default=False, help="Unsafe escape hatch; default forbids SP4 MIP and forces OR-Tools.")
+    parser.add_argument("--gurobi-reference-root", type=str, default=os.path.join(ROOT_DIR, "result", "gurobi_s1_s9_no_scale_adapt_300s_001_20260517"))
+    parser.add_argument("--gurobi-s6-reference-root", type=str, default=os.path.join(ROOT_DIR, "result", "gurobi_s6_tune_20260517_try3"))
+    parser.add_argument("--write-structure-compare", action="store_true", default=False)
     parser.add_argument("--export-best-solution", action="store_true", help="Keep explicit export_best_solution=True")
     parser.add_argument("--write-iteration-logs", action="store_true", help="Keep explicit write_iteration_logs=True")
     return parser.parse_args()
@@ -429,8 +547,27 @@ def main():
             all_rows.append(row)
 
     summary_rows = _summarize(all_rows)
+    structure_rows: List[Dict[str, Any]] = []
+    if bool(args.write_structure_compare):
+        for row in all_rows:
+            scale = str(row.get("scale", "")).upper()
+            tra_export_dir = os.path.join(str(row.get("result_root", "")), "best_solution_export")
+            gurobi_export_dir = _gurobi_export_dir(args, scale)
+            cmp_row = compare_solution_signatures(
+                case_name=scale,
+                tra_export_dir=tra_export_dir,
+                gurobi_export_dir=gurobi_export_dir,
+                target_cmax=_case_target_cmax(scale),
+            )
+            cmp_row["runtime_sec"] = _safe_float(row.get("runtime_sec", float("nan")))
+            cmp_row["status"] = str(row.get("status", ""))
+            cmp_row["variant_name"] = str(row.get("variant_name", ""))
+            structure_rows.append(cmp_row)
     _write_csv(os.path.join(batch_root, "batch_runs.csv"), all_rows)
     _write_csv(os.path.join(batch_root, "batch_summary.csv"), summary_rows)
+    if structure_rows:
+        write_structure_compare_csv(os.path.join(batch_root, "structure_compare.csv"), structure_rows)
+        write_structure_compare_csv(os.path.join(batch_root, "route_compare.csv"), structure_rows)
     _write_json(
         os.path.join(batch_root, "batch_meta.json"),
         {

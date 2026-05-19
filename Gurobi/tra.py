@@ -73,6 +73,8 @@ class TRARunConfig:
     sp4_raise_on_no_solution: bool = True
     sp4_route_cache_enabled: bool = True
     sp4_route_cache_size: int = 256
+    resource_validation_cache_enabled: bool = True
+    resource_validation_cache_size: int = 1024
 
     # “先启发式、后精确”切换（满足同一组约束：只改变求解策略/时间上限）
     switch_to_exact_iter: int = 999999  # 迭代号达到后，开启更精确策略
@@ -149,6 +151,7 @@ class TRARunConfig:
     resource_xyz_candidate_pool_max_attempts: int = 12
     resource_xyz_exact_candidate_trial_limit: int = 4
     resource_xyz_exact_validation_subtask_cap: int = 6
+    resource_critical_xyz_exact_validation_subtask_cap: int = 16
     resource_weight_reaction: float = 0.2
     resource_operator_update_batch_size: int = 10
     resource_operator_update_max_stale_rounds: int = 15
@@ -213,6 +216,15 @@ class TRARunConfig:
     resource_enable_experimental_x_repartition: bool = True
     resource_enable_experimental_y_rank_permutation: bool = False
     resource_enable_experimental_z_shared_stack: bool = True
+    resource_enable_experimental_z_joint_polish: bool = False
+    resource_enable_critical_path_xyz: bool = False
+    resource_enable_best_y_assignment_polish: bool = False
+    resource_enable_best_z_sortify_polish: bool = False
+    resource_y_polish_subtask_cap: int = 6
+    resource_y_polish_candidate_limit: int = 64
+    resource_xyz_stagnation_gate: bool = True
+    resource_critical_path_window_size: int = 4
+    resource_assert_sp4_ortools_only: bool = True
     resource_enable_single_flip_sortify: bool = False
     resource_enable_best_sortify_polish: bool = False
     resource_enable_best_rank_sortify_polish: bool = False
@@ -518,6 +530,7 @@ class SolutionSnapshot:
     last_sp3_sorting_costs: Optional[Dict[int, float]] = None
     last_station_start_times: Optional[Dict[int, float]] = None
     last_beta_value: Optional[float] = None
+    sp4_route_sequences: Optional[List[Dict[str, Any]]] = None
 
 
 @dataclass
@@ -1274,7 +1287,10 @@ class TRAOptimizer:
                     "robot_visit_sequence": int(getattr(task, "robot_visit_sequence", -1) or -1),
                     "trip_id": int(getattr(task, "trip_id", 0) or 0),
                 })
-        return {"task_rows": task_rows}
+        return {
+            "task_rows": task_rows,
+            "route_sequences": copy.deepcopy(list(getattr(self.problem, "sp4_route_sequences", []) or [])),
+        }
 
     def _apply_cached_sp4_route_state(self, route_state: Dict[str, Any]) -> None:
         task_map = {
@@ -1297,6 +1313,7 @@ class TRAOptimizer:
             task.arrival_time_at_station = float(row.get("arrival_time_at_station", 0.0) or 0.0)
             task.robot_visit_sequence = int(row.get("robot_visit_sequence", -1) or -1)
             task.trip_id = int(row.get("trip_id", 0) or 0)
+        self.problem.sp4_route_sequences = copy.deepcopy(list(route_state.get("route_sequences", []) or []))
 
     def _store_sp4_route_cache_entry(self, key: Tuple[Any, ...], entry: Dict[str, Any]) -> None:
         cache = getattr(self, "sp4_route_cache", None)
@@ -1327,6 +1344,8 @@ class TRAOptimizer:
         allow_greedy_fallback: Optional[bool] = None,
         raise_on_failure: bool = False,
     ) -> None:
+        if bool(getattr(self.cfg, "resource_assert_sp4_ortools_only", True)) and bool(getattr(self.cfg, "sp4_use_mip", False)):
+            raise RuntimeError("SP4 MIP is forbidden for TRA resource_time_alns; set sp4_use_mip=False to use OR-Tools.")
         cache_key = self._sp4_route_cache_key(mode_tag, soft_windows, mu, allow_greedy_fallback, raise_on_failure)
         if self._sp4_route_cache_enabled():
             cached = self._lookup_sp4_route_cache_entry(cache_key)
@@ -1407,13 +1426,15 @@ class TRAOptimizer:
             return False
         for st in st_map.values():
             st.assigned_robot_id = -1
-            for task in getattr(st, "execution_tasks", []) or []:
-                task.robot_id = -1
         for st_id, robot_id in valid_assign.items():
             st = st_map[int(st_id)]
             st.assigned_robot_id = int(robot_id)
             for task in getattr(st, "execution_tasks", []) or []:
-                task.robot_id = int(robot_id)
+                # SP4/OR-Tools writes task-level robot_id, arrival times, and
+                # visit sequence while walking the solved route. Do not collapse
+                # that route back to a subtask-level assignment here.
+                if int(getattr(task, "robot_id", -1)) < 0:
+                    task.robot_id = int(robot_id)
         return len(self._unassigned_robot_task_rows()) == 0
 
     def _repair_station_ranks_by_arrival(self) -> None:
@@ -1548,6 +1569,10 @@ class TRAOptimizer:
             "coverage_hard_reject_count": int(getattr(self, "coverage_hard_reject_count", sum(1 for row in iter_rows if bool(row.get("coverage_hard_reject", False))))),
             "kitting_span_hard_reject_count": int(sum(1 for row in iter_rows if str(row.get("candidate_hard_reject_reason", "") or "") == "kitting_span_hard_reject")),
             "exact_eval_cache_hit_count": int(max((int(row.get("exact_eval_cache_hit_count", 0) or 0) for row in iter_rows), default=0)),
+            "validation_cache_hit_count": int(getattr(getattr(self, "resource_engine", None), "validator", None).validation_cache_hit_count if getattr(getattr(self, "resource_engine", None), "validator", None) is not None else 0),
+            "validation_cache_miss_count": int(getattr(getattr(self, "resource_engine", None), "validator", None).validation_cache_miss_count if getattr(getattr(self, "resource_engine", None), "validator", None) is not None else 0),
+            "sp4_route_cache_hit_count": int(getattr(self, "sp4_route_cache_hit_count", 0)),
+            "sp4_route_cache_miss_count": int(getattr(self, "sp4_route_cache_miss_count", 0)),
             "x_failure_decapitation_count": int(getattr(self, "x_failure_decapitation_count", 0)),
             "stop_reason": str(getattr(self, "stop_reason", "") or ""),
             "resource_acceptance_mode": str(getattr(self.cfg, "resource_acceptance_mode", "sa")),
@@ -1556,6 +1581,8 @@ class TRAOptimizer:
             "resource_enable_xyz_operator": bool(getattr(self.cfg, "resource_enable_xyz_operator", False)),
             "resource_real_eval_period": int(getattr(self.cfg, "resource_real_eval_period", 8)),
             "joint_colocated_sort_postprocess_stats": joint_postprocess_stats,
+            "best_y_assignment_polish_stats": copy.deepcopy(getattr(self, "best_y_assignment_polish_stats", {}) or {}),
+            "best_z_sortify_polish_stats": copy.deepcopy(getattr(self, "best_z_sortify_polish_stats", {}) or {}),
             "validation_trigger_counts": dict(sorted(validation_trigger_counts.items())),
             "operator_stats": copy.deepcopy(getattr(self, "operator_stats", {}) or {}),
             "timing_breakdown": self._timing_breakdown_payload(),
@@ -7706,6 +7733,7 @@ class TRAOptimizer:
             last_sp3_sorting_costs={int(k): float(v) for k, v in (self.last_sp3_sorting_costs or {}).items()},
             last_station_start_times=dict(self.last_station_start_times or {}),
             last_beta_value=None if self.last_beta_value is None else float(self.last_beta_value),
+            sp4_route_sequences=copy.deepcopy(list(getattr(self.problem, "sp4_route_sequences", []) or [])),
         )
         self.snapshot_time_sec += float(time.perf_counter() - t0)
         if lightweight:
@@ -7732,6 +7760,7 @@ class TRAOptimizer:
             self.last_sp2_local_result = None
             self.last_station_start_times = dict(snap.last_station_start_times or {})
             self.last_beta_value = None if snap.last_beta_value is None else float(snap.last_beta_value)
+            self.problem.sp4_route_sequences = copy.deepcopy(list(snap.sp4_route_sequences or []))
             self.restore_time_sec += float(time.perf_counter() - t0)
             return
 
@@ -7754,6 +7783,7 @@ class TRAOptimizer:
             self.last_sp2_local_result = None
             self.last_station_start_times = dict(snap.last_station_start_times or {})
             self.last_beta_value = None if snap.last_beta_value is None else float(snap.last_beta_value)
+            self.problem.sp4_route_sequences = copy.deepcopy(list(snap.sp4_route_sequences or []))
             self.restore_time_sec += float(time.perf_counter() - t0)
             return
 
@@ -7836,6 +7866,8 @@ class TRAOptimizer:
         allow_greedy_fallback: Optional[bool] = None,
         raise_on_failure: bool = False,
     ):
+        if bool(getattr(self.cfg, "resource_assert_sp4_ortools_only", True)) and bool(getattr(self.cfg, "sp4_use_mip", False)):
+            raise RuntimeError("SP4 MIP is forbidden for TRA resource_time_alns; set sp4_use_mip=False to use OR-Tools.")
         # soft + hard time windows
         hard_latest_by_task = self._build_sp4_hard_latest_by_task()
         order_window_latest_by_task = self._build_sp4_order_window_latest_by_task()
@@ -7886,6 +7918,9 @@ class TRAOptimizer:
     # 主入口
     # ----------------------------
     def initialize(self):
+        if bool(getattr(self.cfg, "resource_assert_sp4_ortools_only", True)):
+            if bool(getattr(self.cfg, "sp4_use_mip", False)) or bool(getattr(self.cfg, "exact_sp4_use_mip", False)):
+                raise RuntimeError("SP4 MIP is forbidden; sp4_use_mip and exact_sp4_use_mip must both be False.")
         self._reset_runtime_caches()
         self._resolved_log_dir = None
         self.run_start_time_sec = float(time.perf_counter())
@@ -8543,6 +8578,7 @@ class TRAOptimizer:
             raise NotImplementedError("layer_augmented has been retired; use resource_time_alns")
 
         engine = ResourceTimeALNSEngine(self)
+        self.resource_engine = engine
         z_final = float(engine.run())
         self.run_total_time_sec = float(self._runtime_elapsed_sec())
         if self.best is not None and math.isfinite(float(getattr(self.best, "z", float("inf")))):
@@ -9023,7 +9059,7 @@ class TRAOptimizer:
             f.write(f"best_iter={int(self.best.iter_id)}\n")
             f.write(f"seed={int(self.best.seed)}\n")
             f.write(f"best_z={float(self.best.z):.6f}\n")
-            f.write(f"recomputed_z={float(getattr(self.problem, 'global_objective', getattr(self.problem, 'global_makespan', 0.0))):.6f}\n")
+            f.write(f"recomputed_z={float(z):.6f}\n")
             f.write(f"global_makespan={float(getattr(self.problem, 'global_makespan', 0.0)):.6f}\n")
             f.write(f"used_stack_count={int(len(used_stack_ids))}\n")
             f.write(f"used_stack_ids={list(used_stack_ids)}\n")
@@ -9109,6 +9145,99 @@ class TRAOptimizer:
                     f"station_ids={[int(getattr(t, 'target_station_id', -1)) for t in ordered]}, "
                     f"stack_ids={[int(getattr(t, 'target_stack_id', -1)) for t in ordered]}\n"
                 )
+
+            f.write("\n[SP4 Full Node Sequence By Robot]\n")
+            task_by_id = {int(getattr(t, "task_id", -1)): t for t in all_tasks}
+            route_sequence_rows = list(getattr(self.problem, "sp4_route_sequences", []) or [])
+            route_sequence_consistent = True
+            route_sequence_inconsistency = ""
+            def _route_row_int(row: Dict[str, Any], key: str, default: int = -1) -> int:
+                value = row.get(key, default)
+                if value is None:
+                    return int(default)
+                try:
+                    return int(value)
+                except (TypeError, ValueError):
+                    return int(default)
+
+            for row in route_sequence_rows:
+                task_id = _route_row_int(row, "task_id", -1)
+                node_type = str(row.get("node_type", "") or "")
+                if task_id < 0 or node_type in {"start", "end"}:
+                    continue
+                task = task_by_id.get(task_id)
+                if task is None or _route_row_int(row, "robot_id", -1) != int(getattr(task, "robot_id", -1)):
+                    route_sequence_consistent = False
+                    route_sequence_inconsistency = (
+                        f"task_id={task_id}, node_type={node_type}, row_robot={_route_row_int(row, 'robot_id', -1)}, "
+                        f"task_robot={int(getattr(task, 'robot_id', -1)) if task is not None else -1}"
+                    )
+                    break
+                expected_t = float(getattr(task, "arrival_time_at_stack" if node_type == "pickup" else "arrival_time_at_station", 0.0) or 0.0)
+                if abs(float(row.get("time", 0.0) or 0.0) - expected_t) > 1e-6:
+                    route_sequence_consistent = False
+                    route_sequence_inconsistency = (
+                        f"task_id={task_id}, node_type={node_type}, row_time={float(row.get('time', 0.0) or 0.0):.6f}, "
+                        f"task_time={expected_t:.6f}"
+                    )
+                    break
+            f.write(f"route_sequence_source={'ortools' if route_sequence_rows else 'task_rows_fallback'}, consistent_with_task_rows={route_sequence_consistent}")
+            if route_sequence_inconsistency:
+                f.write(f", inconsistency={route_sequence_inconsistency}")
+            f.write("\n")
+            if route_sequence_rows:
+                by_robot: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+                for row in route_sequence_rows:
+                    by_robot[_route_row_int(row, "robot_id", -1)].append(dict(row))
+                for robot_id, rows in sorted(by_robot.items(), key=lambda item: int(item[0])):
+                    ordered_rows = sorted(rows, key=lambda row: (_route_row_int(row, "seq", 0), float(row.get("time", 0.0) or 0.0)))
+                    events: List[str] = []
+                    for row in ordered_rows:
+                        node_type = str(row.get("node_type", "") or "")
+                        task_id = _route_row_int(row, "task_id", -1)
+                        task = task_by_id.get(task_id)
+                        t_value = float(row.get("time", 0.0) or 0.0)
+                        if node_type == "start":
+                            events.append(f"start(t={t_value:.6f})")
+                        elif node_type == "end":
+                            events.append(f"end(t={t_value:.6f})")
+                        elif node_type == "pickup":
+                            stack_id = int(getattr(task, "target_stack_id", -1)) if task is not None else -1
+                            events.append(f"pickup(task={task_id},stack={stack_id},t={t_value:.6f})")
+                        elif node_type == "delivery":
+                            station_id = int(getattr(task, "target_station_id", -1)) if task is not None else -1
+                            events.append(f"delivery(task={task_id},station={station_id},t={t_value:.6f})")
+                    f.write(f"robot_id={robot_id}, sequence={' -> '.join(events)}\n")
+            else:
+                robot_rows: Dict[int, List[Any]] = defaultdict(list)
+                for t in all_tasks:
+                    robot_id = int(getattr(t, "robot_id", -1))
+                    if robot_id >= 0:
+                        robot_rows[int(robot_id)].append(t)
+                for robot_id, rows in sorted(robot_rows.items(), key=lambda item: int(item[0])):
+                    ordered = sorted(
+                        rows,
+                        key=lambda t: (
+                            int(getattr(t, "trip_id", 0) or 0),
+                            int(getattr(t, "robot_visit_sequence", 10**9) if int(getattr(t, "robot_visit_sequence", -1) or -1) >= 0 else 10**9),
+                            float(getattr(t, "arrival_time_at_stack", 0.0) or 0.0),
+                            float(getattr(t, "arrival_time_at_station", 0.0) or 0.0),
+                            int(getattr(t, "task_id", -1)),
+                        ),
+                    )
+                    events = ["start"]
+                    for t in ordered:
+                        task_id = int(getattr(t, "task_id", -1))
+                        stack_id = int(getattr(t, "target_stack_id", -1))
+                        station_id = int(getattr(t, "target_station_id", -1))
+                        events.append(
+                            f"pickup(task={task_id},stack={stack_id},t={float(getattr(t, 'arrival_time_at_stack', 0.0) or 0.0):.6f})"
+                        )
+                        events.append(
+                            f"delivery(task={task_id},station={station_id},t={float(getattr(t, 'arrival_time_at_station', 0.0) or 0.0):.6f})"
+                        )
+                    events.append("end")
+                    f.write(f"robot_id={robot_id}, sequence={' -> '.join(events)}\n")
 
             f.write("\n[Z Reproduction Fields]\n")
             f.write("z = max(task.end_process_time)\n")

@@ -335,6 +335,55 @@ def x_destroy_order_repartition(opt, config: ResourceConfig, rng, degree: int) -
     _, order_id = picked
     return _build_repartition_context(config, int(order_id))
 
+
+def _critical_order_ids(opt, config: ResourceConfig) -> List[int]:
+    snapshot = getattr(getattr(opt, "best_validated", None), "snapshot", None)
+    if snapshot is None:
+        snapshot = getattr(opt, "work", None)
+    completion_by_order: Dict[int, float] = defaultdict(float)
+    subtask_to_order = {int(row.subtask_id): int(row.order_id) for row in config.subtasks.values()}
+    for subtask in list(getattr(snapshot, "subtask_state", []) or []):
+        subtask_id = int(getattr(subtask, "id", -1))
+        order_id = int(subtask_to_order.get(int(subtask_id), -1))
+        if order_id < 0:
+            parent_order = getattr(subtask, "parent_order", None)
+            order_id = int(getattr(parent_order, "order_id", getattr(parent_order, "id", -1))) if parent_order is not None else -1
+        if order_id < 0:
+            continue
+        task_rows = list(getattr(subtask, "execution_tasks", []) or [])
+        if not task_rows:
+            continue
+        completion = max(float(getattr(task, "end_process_time", 0.0) or 0.0) for task in task_rows)
+        completion_by_order[int(order_id)] = max(float(completion_by_order.get(int(order_id), 0.0)), float(completion))
+    return [
+        int(order_id)
+        for order_id, _completion in sorted(completion_by_order.items(), key=lambda item: (-float(item[1]), int(item[0])))
+    ]
+
+
+def x_destroy_critical_order_cluster(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
+    del degree
+    ranked_order_ids = _critical_order_ids(opt, config)
+    if not ranked_order_ids:
+        return x_destroy_order_repartition(opt, config, rng, 1)
+    candidates = []
+    for idx, order_id in enumerate(ranked_order_ids):
+        rows = [row for row in config.subtasks.values() if int(row.order_id) == int(order_id)]
+        unit_count = sum(len(row.work_unit_ids or ()) for row in rows)
+        if unit_count <= 1:
+            continue
+        candidates.append(((float(idx), -float(unit_count), int(order_id)), int(order_id)))
+    if not candidates:
+        return {"success": False, "removed_units": []}
+    picked = pick_ranked_candidate(rng, candidates, opt.cfg)
+    if picked is None:
+        return {"success": False, "removed_units": []}
+    _, order_id = picked
+    ctx = _build_repartition_context(config, int(order_id))
+    if bool(ctx.get("success", False)):
+        ctx["critical_path_operator_used"] = True
+    return ctx
+
 def _repair_generic(
     config: ResourceConfig,
     ctx: Dict[str, object],
@@ -558,6 +607,11 @@ def x_repair_station_balanced_partition(opt, config: ResourceConfig, ctx: Dict[s
     del rng
     return _repair_partition_beam(opt, config, ctx, station_balance_weight=1.0)
 
+
+def x_repair_sku_cluster_beam(opt, config: ResourceConfig, ctx: Dict[str, object], rng) -> Dict[str, object]:
+    del rng
+    return _repair_partition_beam(opt, config, ctx, station_balance_weight=0.35)
+
 X_DESTROY_OPERATORS = {
     "x_destroy_spatial_outliers": x_destroy_spatial_outliers,
     "x_destroy_low_consolidation": x_destroy_low_consolidation,
@@ -566,6 +620,7 @@ X_DESTROY_OPERATORS = {
     "x_destroy_random_units": x_destroy_random_units,
     "x_destroy_related_order": x_destroy_related_order,
     "x_destroy_order_repartition": x_destroy_order_repartition,
+    "x_destroy_critical_order_cluster": x_destroy_critical_order_cluster,
 }
 
 X_REPAIR_OPERATORS = {
@@ -575,6 +630,7 @@ X_REPAIR_OPERATORS = {
     "x_repair_regret2_new_group": x_repair_regret2_new_group,
     "x_repair_partition_dp": x_repair_partition_dp,
     "x_repair_station_balanced_partition": x_repair_station_balanced_partition,
+    "x_repair_sku_cluster_beam": x_repair_sku_cluster_beam,
 }
 
 X_FALLBACK_OPERATOR = "x_repair_greedy_fallback"

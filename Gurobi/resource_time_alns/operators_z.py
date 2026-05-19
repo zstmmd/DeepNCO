@@ -929,6 +929,70 @@ def apply_joint_colocated_sort_postprocess(
     return candidate, stats
 
 
+def apply_single_flip_sortify_polish(opt, config: ResourceConfig) -> Tuple[ResourceConfig, Dict[str, float]]:
+    candidate = config.clone()
+    stats = {
+        "triggered": 1.0,
+        "attempted": 0.0,
+        "applied": 0.0,
+        "rejected_invalid": 0.0,
+        "rejected_capacity": 0.0,
+        "rejected_duplicate_tote": 0.0,
+    }
+    for subtask_id in sorted(candidate.subtasks.keys()):
+        subtask = candidate.subtasks.get(int(subtask_id))
+        if subtask is None or not subtask.z_tasks:
+            continue
+        external_used = global_used_totes(candidate, exclude_subtask_ids={int(subtask_id)})
+        updated: List[ZTaskDescriptor] = []
+        local_used: Set[int] = set()
+        changed = False
+        for descriptor in list(subtask.z_tasks or []):
+            if str(getattr(descriptor, "mode", "")).upper() != "FLIP":
+                updated.append(descriptor)
+                local_used.update(int(tid) for tid in (descriptor.target_tote_ids or ()) if int(tid) >= 0)
+                continue
+            stats["attempted"] += 1.0
+            hit_ids = _dedupe_ints(descriptor.hit_tote_ids or descriptor.target_tote_ids or ())
+            if not hit_ids:
+                updated.append(descriptor)
+                stats["rejected_invalid"] += 1.0
+                continue
+            temp_subtask = _build_temp_subtask(opt, candidate, subtask, [descriptor])
+            dummy_task = _descriptor_to_task(subtask, descriptor)
+            plan = opt._z_build_plan_from_hits(
+                temp_subtask,
+                dummy_task,
+                int(descriptor.stack_id),
+                hit_ids,
+                "SORT",
+                {int(descriptor.task_id)},
+            )
+            if not bool(plan.get("valid", False)):
+                updated.append(descriptor)
+                stats["rejected_invalid"] += 1.0
+                continue
+            plan = _canonicalize_z_plan(opt, plan)
+            if not _sort_plan_within_capacity(plan):
+                updated.append(descriptor)
+                stats["rejected_capacity"] += 1.0
+                continue
+            target_ids = _dedupe_ints(plan.get("target_tote_ids", []) or [])
+            if any(int(tid) in external_used or int(tid) in local_used for tid in target_ids):
+                updated.append(descriptor)
+                stats["rejected_duplicate_tote"] += 1.0
+                continue
+            replacement = _descriptor_from_plan(opt, subtask, plan, int(descriptor.task_id), int(max(1, descriptor.sku_pick_count)))
+            updated.append(replacement)
+            local_used.update(int(tid) for tid in (replacement.target_tote_ids or ()) if int(tid) >= 0)
+            changed = True
+            stats["applied"] += 1.0
+        if changed:
+            subtask.z_tasks = updated
+    candidate.rebuild_indices()
+    return candidate, stats
+
+
 def _joint_sort_seed_hit_map(removed_window: Sequence[ZTaskDescriptor]) -> Dict[int, List[int]]:
     stack_to_rows: Dict[int, List[ZTaskDescriptor]] = defaultdict(list)
     for descriptor in removed_window or ():
@@ -1774,6 +1838,54 @@ def z_plan_destroy_shared_stack_window(opt, config: ResourceConfig, rng, degree:
     return _plan_destroy_windows(opt, config, rng, degree, _build, mode_sensitive=False)
 
 
+def _critical_z_candidate_builder(opt, config: ResourceConfig, touched_subtasks: Set[int]):
+    snapshot = getattr(getattr(opt, "best_validated", None), "snapshot", None)
+    if snapshot is None:
+        snapshot = getattr(opt, "work", None)
+    critical_by_subtask: Dict[int, float] = {}
+    for subtask in list(getattr(snapshot, "subtask_state", []) or []):
+        subtask_id = int(getattr(subtask, "id", -1))
+        task_rows = list(getattr(subtask, "execution_tasks", []) or [])
+        if subtask_id < 0 or not task_rows:
+            continue
+        critical_by_subtask[int(subtask_id)] = max(
+            float(getattr(task, "end_process_time", 0.0) or getattr(task, "arrival_time_at_station", 0.0) or 0.0)
+            for task in task_rows
+        )
+    candidates = []
+    for row in config.subtasks.values():
+        if int(row.subtask_id) in touched_subtasks or not row.z_tasks:
+            continue
+        critical_time = float(critical_by_subtask.get(int(row.subtask_id), 0.0))
+        if critical_time <= 0.0:
+            continue
+        center_idx = max(
+            range(len(row.z_tasks)),
+            key=lambda idx: (
+                float(getattr(row.z_tasks[idx], "robot_service_time", 0.0) or 0.0)
+                + float(opt._z_best_insertion_detour(int(row.z_tasks[idx].stack_id))),
+                len(row.z_tasks[idx].target_tote_ids or ()),
+                -idx,
+            ),
+        )
+        candidates.append(((-critical_time, int(row.subtask_id)), int(row.subtask_id), int(center_idx)))
+    return sorted(candidates, key=lambda item: item[0])
+
+
+def z_destroy_critical_path_window(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
+    def _build(config_obj: ResourceConfig, touched_subtasks: Set[int]):
+        return _critical_z_candidate_builder(opt, config_obj, touched_subtasks)
+
+    return _destroy_windows(opt, config, rng, degree, _build, mode_sensitive=False)
+
+
+def z_plan_destroy_critical_path_window(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
+    def _build(config_obj: ResourceConfig, touched_subtasks: Set[int]):
+        return _critical_z_candidate_builder(opt, config_obj, touched_subtasks)
+
+    return _plan_destroy_windows(opt, config, rng, degree, _build, mode_sensitive=False)
+
+
 def _build_z_action_signature(destroy_name: str, repair_name: str, windows: Sequence[Dict[str, object]], target_stack_ids: Sequence[int], mode_summary: Sequence[str]) -> Tuple[object, ...]:
     window_sig = tuple(
         sorted(
@@ -1863,6 +1975,7 @@ def plan_z_candidate(opt, config: ResourceConfig, destroy_name: str, repair_name
         "z_destroy_random_window": z_plan_destroy_random_window,
         "z_destroy_related_stack_window": z_plan_destroy_related_stack_window,
         "z_destroy_shared_stack_window": z_plan_destroy_shared_stack_window,
+        "z_destroy_critical_path_window": z_plan_destroy_critical_path_window,
     }
     destroy_ctx = destroy_planners[str(destroy_name)](opt, config, rng, degree)
     if not bool(destroy_ctx.get("success", False)):
@@ -1915,6 +2028,8 @@ def apply_exact_z_plan(opt, config: ResourceConfig, plan: Dict[str, object], rng
             return {"success": False, "reason": "exact_destroy_window_fail"}
         exact_windows.append(exact_ctx)
     exact_ctx = {"success": True, "windows": exact_windows}
+    if str(plan.get("strategy", "")) == "z_repair_stack_mode_joint_polish":
+        return _apply_joint_z_repair_strategies(opt, candidate, exact_ctx, rng=rng)
     repair_result = _repair_window(opt, candidate, exact_ctx, str(plan.get("strategy", "z_repair_same_stack_window")), allow_fallback=False, rng=rng)
     fallback_used = False
     if not bool(repair_result.get("success", False)):
@@ -1996,6 +2111,71 @@ def _repair_window(opt, config: ResourceConfig, ctx: Dict[str, object], strategy
     }
 
 
+def _z_assignment_proxy(opt, config: ResourceConfig, affected_subtask_ids: Sequence[int]) -> float:
+    total = 0.0
+    for subtask_id in affected_subtask_ids or ():
+        subtask = config.subtasks.get(int(subtask_id))
+        if subtask is None:
+            continue
+        rough_ok, rough_penalty, rough_meta = _rough_route_feasibility(opt, config, subtask, subtask.z_tasks or [])
+        structural_score = float(rough_meta.get("choke_over", 0.0) or 0.0)
+        structural_score += 0.05 * float(_z_station_load(config, int(subtask.station_id)))
+        structural_score += float(_z_robot_region_load(opt, int(subtask.station_id)))
+        noise_total = float(sum(len(list(descriptor.noise_tote_ids or ())) for descriptor in (subtask.z_tasks or [])))
+        flip_total = float(sum(1 for descriptor in (subtask.z_tasks or []) if str(descriptor.mode).upper() == "FLIP"))
+        robot_service = float(sum(float(getattr(descriptor, "robot_service_time", 0.0) or 0.0) for descriptor in (subtask.z_tasks or [])))
+        station_service = float(sum(float(getattr(descriptor, "station_service_time", 0.0) or 0.0) for descriptor in (subtask.z_tasks or [])))
+        stack_count = float(len({int(descriptor.stack_id) for descriptor in (subtask.z_tasks or []) if int(descriptor.stack_id) >= 0}))
+        total += float(rough_penalty)
+        total += float(getattr(opt.cfg, "resource_z_structural_score_weight", 0.08)) * structural_score
+        total += 1.75 * noise_total + 0.50 * flip_total + 0.40 * robot_service + 0.20 * station_service + 0.75 * stack_count
+        if not rough_ok:
+            total += 1000.0
+    return float(total)
+
+
+def _apply_joint_z_repair_strategies(opt, candidate: ResourceConfig, exact_ctx: Dict[str, object], rng=None) -> Dict[str, object]:
+    affected_ids = sorted(
+        {
+            int(window_ctx.get("subtask_id", -1))
+            for window_ctx in (exact_ctx.get("windows", []) or [])
+            if int(window_ctx.get("subtask_id", -1)) >= 0
+        }
+    )
+    best_result = None
+    best_proxy = float("inf")
+    for strategy_name in (
+        "z_repair_gurobi_like_sort",
+        "z_repair_multistack_cover_compact",
+        "z_repair_sort_range_shrink_first",
+        "z_repair_mode_toggle_contextual",
+        "z_repair_joint_sort_colocated_flip",
+    ):
+        trial = candidate.clone()
+        trial_ctx = copy.deepcopy(exact_ctx)
+        repair_result = _repair_window(opt, trial, trial_ctx, str(strategy_name), allow_fallback=False, rng=rng)
+        if not bool(repair_result.get("success", False)):
+            continue
+        trial.rebuild_indices()
+        proxy_value = _z_assignment_proxy(opt, trial, affected_ids)
+        if proxy_value + 1e-9 < best_proxy:
+            best_proxy = float(proxy_value)
+            best_result = {
+                "success": True,
+                "config": trial,
+                "score_cache": None,
+                "affected_ids": set(int(x) for x in (repair_result.get("affected_subtask_ids", set()) or set())),
+                "fallback_used": bool(repair_result.get("fallback_used", False)),
+                "projection_mode": "",
+                "projection_repaired_subtask_count": 0,
+                "validation_signature": trial.validation_signature(),
+                "selected_joint_strategy": str(strategy_name),
+            }
+    if best_result is not None:
+        return best_result
+    return {"success": False, "reason": "joint_z_repair_fail"}
+
+
 def z_repair_same_stack_window(opt, config: ResourceConfig, ctx: Dict[str, object], rng) -> Dict[str, object]:
     return _repair_window(opt, config, ctx, "z_repair_same_stack_window", allow_fallback=False, rng=rng)
 
@@ -2036,6 +2216,10 @@ def z_repair_multistack_cover_compact(opt, config: ResourceConfig, ctx: Dict[str
     return _repair_window(opt, config, ctx, "z_repair_gurobi_like_sort", allow_fallback=False, rng=rng)
 
 
+def z_repair_stack_mode_joint_polish(opt, config: ResourceConfig, ctx: Dict[str, object], rng) -> Dict[str, object]:
+    return _repair_window(opt, config, ctx, "z_repair_gurobi_like_sort", allow_fallback=False, rng=rng)
+
+
 def z_repair_greedy_fallback(opt, config: ResourceConfig, ctx: Dict[str, object], rng) -> Dict[str, object]:
     return _repair_window(opt, config, ctx, "z_repair_greedy_fallback", allow_fallback=True, rng=rng)
 
@@ -2049,6 +2233,7 @@ Z_DESTROY_OPERATORS = {
     "z_destroy_random_window": z_destroy_random_window,
     "z_destroy_related_stack_window": z_destroy_related_stack_window,
     "z_destroy_shared_stack_window": z_destroy_shared_stack_window,
+    "z_destroy_critical_path_window": z_destroy_critical_path_window,
 }
 
 Z_REPAIR_OPERATORS = {
@@ -2062,6 +2247,7 @@ Z_REPAIR_OPERATORS = {
     "z_repair_load_balance_idle_robot": z_repair_load_balance_idle_robot,
     "z_repair_cross_subtask_shared_stack": z_repair_cross_subtask_shared_stack,
     "z_repair_multistack_cover_compact": z_repair_multistack_cover_compact,
+    "z_repair_stack_mode_joint_polish": z_repair_stack_mode_joint_polish,
 }
 
 Z_FALLBACK_OPERATOR = "z_repair_greedy_fallback"

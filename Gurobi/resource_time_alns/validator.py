@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+from collections import OrderedDict
 import math
 from typing import Dict, List
 
@@ -13,6 +15,47 @@ from .state import ResourceConfig, ResourceSubtask, ZTaskDescriptor
 class ResourceValidator:
     def __init__(self, opt):
         self.opt = opt
+        self.validation_cache: OrderedDict[str, Dict[str, object]] = OrderedDict()
+        self.validation_cache_hit_count = 0
+        self.validation_cache_miss_count = 0
+
+    def _validation_cache_enabled(self) -> bool:
+        return bool(getattr(getattr(self, "opt", None), "cfg", None).resource_validation_cache_enabled)
+
+    def _validation_cache_size(self) -> int:
+        return max(1, int(getattr(getattr(self, "opt", None), "cfg", None).resource_validation_cache_size or 1024))
+
+    def _validation_cache_key(self, config: ResourceConfig) -> str:
+        return repr(config.validation_signature())
+
+    def _lookup_validation_cache(self, config: ResourceConfig) -> Dict[str, object] | None:
+        if not self._validation_cache_enabled():
+            return None
+        key = self._validation_cache_key(config)
+        entry = self.validation_cache.get(key)
+        if entry is None:
+            return None
+        self.validation_cache.move_to_end(key)
+        self.validation_cache_hit_count = int(self.validation_cache_hit_count) + 1
+        cached = copy.deepcopy(entry)
+        snapshot = cached.get("snapshot", None)
+        if snapshot is not None:
+            self.opt.restore_snapshot(snapshot)
+        cached["lkh_call_count"] = 0
+        cached["validation_call_count"] = 0
+        cached["validation_cache_hit"] = True
+        return cached
+
+    def _store_validation_cache(self, config: ResourceConfig, result: Dict[str, object]) -> None:
+        if not self._validation_cache_enabled():
+            return
+        key = self._validation_cache_key(config)
+        cached = copy.deepcopy(dict(result or {}))
+        cached["validation_cache_hit"] = False
+        self.validation_cache[key] = cached
+        self.validation_cache.move_to_end(key)
+        while len(self.validation_cache) > self._validation_cache_size():
+            self.validation_cache.popitem(last=False)
 
     def _unassigned_robot_summary(self) -> Dict[str, object]:
         subtask_rows: List[Dict[str, int]] = []
@@ -170,9 +213,13 @@ class ResourceValidator:
 
     def validate(self, config: ResourceConfig, iter_id: int) -> Dict[str, object]:
         self.current_config = config
+        cached = self._lookup_validation_cache(config)
+        if cached is not None:
+            return cached
+        self.validation_cache_miss_count = int(self.validation_cache_miss_count) + 1
         coverage = config.coverage_summary(dict(getattr(getattr(self.opt, "problem", None), "id_to_tote", {}) or {}))
         if not bool(coverage.get("coverage_ok", False)):
-            return {
+            result = {
                 "makespan": float("inf"),
                 "snapshot": None,
                 "coverage_hard_reject": True,
@@ -182,7 +229,10 @@ class ResourceValidator:
                 "unassigned_robot_task_count": 0,
                 "unassigned_robot_tasks": [],
                 "lkh_call_count": 0,
+                "validation_call_count": 1,
             }
+            self._store_validation_cache(config, result)
+            return result
         self.materialize(config)
         try:
             try:
@@ -193,7 +243,7 @@ class ResourceValidator:
             conflict_summary = dict(exc.summary or {})
             if not conflict_summary:
                 conflict_summary = dict(getattr(getattr(self.opt, "sp4", None), "last_conflict_summary", {}) or {})
-            return {
+            result = {
                 "makespan": float("inf"),
                 "snapshot": None,
                 "coverage_hard_reject": False,
@@ -203,11 +253,14 @@ class ResourceValidator:
                 "unassigned_robot_task_count": int(len(list(conflict_summary.get("failed_task_ids", []) or []))),
                 "unassigned_robot_tasks": [{"task_id": int(task_id), "subtask_id": -1} for task_id in (conflict_summary.get("failed_task_ids", []) or [])],
                 "lkh_call_count": 1,
+                "validation_call_count": 1,
             }
+            self._store_validation_cache(config, result)
+            return result
         unassigned = self._unassigned_robot_summary()
         if int(unassigned.get("task_count", 0) or 0) > 0:
             conflict_summary = self._build_conflict_summary(config, unassigned)
-            return {
+            result = {
                 "makespan": float("inf"),
                 "snapshot": None,
                 "coverage_hard_reject": False,
@@ -217,14 +270,17 @@ class ResourceValidator:
                 "unassigned_robot_task_count": int(unassigned.get("task_count", 0) or 0),
                 "unassigned_robot_tasks": list(unassigned.get("tasks", []) or []),
                 "lkh_call_count": 1,
+                "validation_call_count": 1,
             }
+            self._store_validation_cache(config, result)
+            return result
         bom_arrival_window = self.opt._evaluate_bom_arrival_window()
         time_window_metrics = self.opt._evaluate_order_time_window_metrics()
         makespan = float(self.opt.evaluate())
         self.opt._harvest_station_start_times()
         self.opt._update_beta_from_station()
         snapshot = self.opt.snapshot(makespan, iter_id=int(iter_id), lightweight=True)
-        return {
+        result = {
             "makespan": float(makespan),
             "validated_true_makespan": float(makespan),
             "snapshot": snapshot,
@@ -238,4 +294,7 @@ class ResourceValidator:
             "bom_arrival_window_violations": list(bom_arrival_window.get("violations", []) or []),
             "order_time_window_metrics": dict(time_window_metrics or {}),
             "lkh_call_count": 1,
+            "validation_call_count": 1,
         }
+        self._store_validation_cache(config, result)
+        return result

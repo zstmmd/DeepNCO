@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+import itertools
 import math
 import random
 import statistics
@@ -26,6 +27,7 @@ from .operators_z import (
     Z_FALLBACK_OPERATOR,
     Z_REPAIR_OPERATORS,
     apply_joint_colocated_sort_postprocess,
+    apply_single_flip_sortify_polish,
     apply_exact_z_plan,
     plan_z_candidate,
 )
@@ -99,6 +101,11 @@ class ResourceTimeALNSEngine:
         self.z_operator_pick_count = 0
         self.forced_layer_queue: deque[str] = deque()
         self.last_selected_layer = ""
+        self.last_available_layers: List[str] = list(self.resource_layers)
+        self.last_selected_layer_source = ""
+        self.last_xyz_skip_reason = ""
+        self.last_x_repartition_iter = -10**9
+        self.last_critical_path_subtask_ids: List[int] = []
         self.no_improve_rounds = 0.0
         self.no_best_z_change_rounds = 0.0
         self.validated_best_no_change_rounds = 0
@@ -253,8 +260,25 @@ class ResourceTimeALNSEngine:
             arms["Z"]["repair"].pop(name, None)
         if not bool(getattr(self.cfg, "resource_enable_experimental_x_repartition", False)):
             arms["X"]["destroy"].pop("x_destroy_order_repartition", None)
+            arms["X"]["destroy"].pop("x_destroy_critical_order_cluster", None)
             arms["X"]["repair"].pop("x_repair_partition_dp", None)
             arms["X"]["repair"].pop("x_repair_station_balanced_partition", None)
+            arms["X"]["repair"].pop("x_repair_sku_cluster_beam", None)
+        if not bool(getattr(self.cfg, "resource_enable_critical_path_xyz", False)):
+            arms["X"]["destroy"].pop("x_destroy_critical_order_cluster", None)
+            arms["X"]["repair"].pop("x_repair_sku_cluster_beam", None)
+            arms["Y"]["destroy"].pop("y_destroy_critical_path_block", None)
+            arms["Y"]["repair"].pop("y_repair_ejection_chain_balance", None)
+            arms["Z"]["destroy"].pop("z_destroy_critical_path_window", None)
+        large_case_polish_enabled = bool(
+            bool(getattr(self.cfg, "resource_enable_experimental_y_rank_permutation", False))
+            and len(list(getattr(getattr(self.opt, "problem", None), "station_list", []) or [])) >= 4
+            and len(list(getattr(getattr(self.opt, "problem", None), "subtask_list", []) or [])) >= 5
+        )
+        if not large_case_polish_enabled:
+            arms["Y"]["repair"].pop("y_repair_station_rank_permutation", None)
+        if not bool(getattr(self.cfg, "resource_enable_experimental_z_joint_polish", False)):
+            arms["Z"]["repair"].pop("z_repair_stack_mode_joint_polish", None)
         for name, weight in {
             "z_repair_gurobi_like_sort": 3.0,
             "z_repair_sort_range_shrink_first": 2.0,
@@ -263,9 +287,17 @@ class ResourceTimeALNSEngine:
             "z_repair_load_balance_idle_robot": 2.5,
             "z_repair_cross_subtask_shared_stack": 2.75,
             "z_repair_multistack_cover_compact": 2.75,
+            "z_repair_stack_mode_joint_polish": 3.0,
         }.items():
             if name in arms["Z"]["repair"]:
                 arms["Z"]["repair"][name].weight = float(weight)
+        if "y_repair_station_rank_permutation" in arms["Y"]["repair"]:
+            arms["Y"]["repair"]["y_repair_station_rank_permutation"].weight = 3.0
+        if "y_repair_station_rank_permutation" in arms["Y"]["repair"] and "y_destroy_rank_window_release" in arms["Y"]["destroy"]:
+            arms["Y"]["destroy"]["y_destroy_rank_window_release"].weight = max(
+                float(arms["Y"]["destroy"]["y_destroy_rank_window_release"].weight),
+                2.5,
+            )
         if "z_destroy_spread_hotspot_window" in arms["Z"]["destroy"]:
             arms["Z"]["destroy"]["z_destroy_spread_hotspot_window"].weight = 2.5
         if "z_destroy_shared_stack_window" in arms["Z"]["destroy"]:
@@ -277,6 +309,16 @@ class ResourceTimeALNSEngine:
         for name in ("x_repair_partition_dp", "x_repair_station_balanced_partition"):
             if name in arms["X"]["repair"]:
                 arms["X"]["repair"][name].weight = 2.75
+        if "x_destroy_critical_order_cluster" in arms["X"]["destroy"]:
+            arms["X"]["destroy"]["x_destroy_critical_order_cluster"].weight = 3.5
+        if "x_repair_sku_cluster_beam" in arms["X"]["repair"]:
+            arms["X"]["repair"]["x_repair_sku_cluster_beam"].weight = 3.0
+        if "y_destroy_critical_path_block" in arms["Y"]["destroy"]:
+            arms["Y"]["destroy"]["y_destroy_critical_path_block"].weight = 3.0
+        if "y_repair_ejection_chain_balance" in arms["Y"]["repair"]:
+            arms["Y"]["repair"]["y_repair_ejection_chain_balance"].weight = 2.75
+        if "z_destroy_critical_path_window" in arms["Z"]["destroy"]:
+            arms["Z"]["destroy"]["z_destroy_critical_path_window"].weight = 3.25
         self._apply_operator_weight_floors(arms)
         return arms
 
@@ -328,6 +370,14 @@ class ResourceTimeALNSEngine:
 
     def _available_layers(self, iter_id: int) -> List[str]:
         all_layers = list(getattr(self, "resource_layers", ["X", "Y", "Z"]))
+        self.last_xyz_skip_reason = ""
+        if "XYZ" in all_layers and bool(getattr(self.cfg, "resource_xyz_stagnation_gate", True)):
+            trigger = int(getattr(self.cfg, "resource_xyz_trigger_stagnation_rounds", 8))
+            recent_repartition = int(iter_id) - int(getattr(self, "last_x_repartition_iter", -10**9)) <= 1
+            stagnant = float(getattr(self, "no_improve_rounds", 0.0)) >= float(trigger) or float(getattr(self, "no_best_z_change_rounds", 0.0)) >= float(trigger)
+            if not (bool(recent_repartition) or bool(stagnant)):
+                all_layers = [layer for layer in all_layers if str(layer).upper() != "XYZ"]
+                self.last_xyz_skip_reason = f"stagnation_gate<{trigger}"
         available = [
             layer
             for layer in all_layers
@@ -337,7 +387,9 @@ class ResourceTimeALNSEngine:
             )
             < int(iter_id)
         ]
-        return available if available else all_layers
+        selected = available if available else all_layers
+        self.last_available_layers = list(selected)
+        return selected
 
     def _round_robin_next(self, available_layers: Optional[List[str]] = None) -> str:
         order = list(getattr(self, "resource_layers", ["X", "Y", "Z"]))
@@ -369,6 +421,7 @@ class ResourceTimeALNSEngine:
             layer = str(forced_queue.popleft()).upper()
             if layer in available_layers:
                 self.last_selected_layer = layer
+                self.last_selected_layer_source = "forced_queue"
                 return layer, True
         wx = float(getattr(self.cfg, "resource_component_weight_x", 1.0))
         wy = float(getattr(self.cfg, "resource_component_weight_y", 1.0))
@@ -390,10 +443,12 @@ class ResourceTimeALNSEngine:
         if any(float(self.layer_stagnation[layer]) >= float(getattr(self.cfg, "resource_force_rotate_threshold", 20)) for layer in available_layers):
             layer = self._round_robin_next(available_layers)
             self.last_selected_layer = str(layer)
+            self.last_selected_layer_source = "force_rotate"
             return str(layer), True
         if self.rng.random() < float(getattr(self.cfg, "resource_layer_explore_eps", 0.10)):
             layer = str(self.rng.choice(available_layers))
             self.last_selected_layer = layer
+            self.last_selected_layer_source = "explore"
             return layer, False
         scores: Dict[str, float] = {}
         for layer in available_layers:
@@ -408,9 +463,11 @@ class ResourceTimeALNSEngine:
             acc += float(scores[layer])
             if draw <= acc:
                 self.last_selected_layer = layer
+                self.last_selected_layer_source = "weighted"
                 return layer, False
         fallback_layer = available_layers[-1]
         self.last_selected_layer = fallback_layer
+        self.last_selected_layer_source = "weighted_fallback"
         return fallback_layer, False
 
     def _current_destroy_mu(self) -> Tuple[float, bool, str]:
@@ -454,6 +511,13 @@ class ResourceTimeALNSEngine:
         return int(max(base, dynamic))
 
     def _sample_operator_pair(self, layer: str) -> Tuple[str, str]:
+        if str(layer).upper() == "Y":
+            if (
+                "y_destroy_rank_window_release" in self.operator_arms["Y"]["destroy"]
+                and "y_repair_station_rank_permutation" in self.operator_arms["Y"]["repair"]
+                and int(getattr(self, "layer_exec_since_update", {}).get("Y", 0)) % 5 == 4
+            ):
+                return "y_destroy_rank_window_release", "y_repair_station_rank_permutation"
         if str(layer).upper() == "Z":
             self.z_operator_pick_count = int(getattr(self, "z_operator_pick_count", 0)) + 1
             shared_period = max(0, int(getattr(self.cfg, "z_shared_stack_destroy_period", 5)))
@@ -471,6 +535,12 @@ class ResourceTimeALNSEngine:
                 repair_available = [name for name in sorted(repair_names) if name in self.operator_arms["Z"]["repair"]]
                 if destroy_available and repair_available:
                     return str(destroy_available[0]), str(repair_available[(self.z_operator_pick_count // period) % len(repair_available)])
+            if (
+                "z_destroy_mode_window" in self.operator_arms["Z"]["destroy"]
+                and "z_repair_stack_mode_joint_polish" in self.operator_arms["Z"]["repair"]
+                and self.z_operator_pick_count % 4 == 2
+            ):
+                return "z_destroy_mode_window", "z_repair_stack_mode_joint_polish"
         destroy_name = self._weighted_pick(self.operator_arms[layer]["destroy"])
         repair_candidates = {
             name: arm
@@ -686,9 +756,18 @@ class ResourceTimeALNSEngine:
         }
 
     def _build_xyz_exact_candidate(self, iter_id: int, budget: int) -> Optional[Dict[str, object]]:
-        x_destroy, x_repair = self._sample_operator_pair("X")
-        y_destroy, y_repair = self._sample_operator_pair("Y")
-        z_destroy, z_repair = self._sample_operator_pair("Z")
+        critical_path_mode = bool(getattr(self.cfg, "resource_enable_critical_path_xyz", False))
+        if critical_path_mode:
+            x_destroy = "x_destroy_critical_order_cluster" if "x_destroy_critical_order_cluster" in self.operator_arms["X"]["destroy"] else self._sample_operator_pair("X")[0]
+            x_repair = "x_repair_sku_cluster_beam" if "x_repair_sku_cluster_beam" in self.operator_arms["X"]["repair"] else self._sample_operator_pair("X")[1]
+            y_destroy = "y_destroy_critical_path_block" if "y_destroy_critical_path_block" in self.operator_arms["Y"]["destroy"] else "y_destroy_max_tardiness_blocker"
+            y_repair = "y_repair_ejection_chain_balance" if "y_repair_ejection_chain_balance" in self.operator_arms["Y"]["repair"] else "y_repair_arrival_aware_rank"
+            z_destroy = "z_destroy_critical_path_window" if "z_destroy_critical_path_window" in self.operator_arms["Z"]["destroy"] else "z_destroy_shared_stack_window"
+            z_repair = "z_repair_stack_mode_joint_polish" if "z_repair_stack_mode_joint_polish" in self.operator_arms["Z"]["repair"] else "z_repair_multistack_cover_compact"
+        else:
+            x_destroy, x_repair = self._sample_operator_pair("X")
+            y_destroy, y_repair = self._sample_operator_pair("Y")
+            z_destroy, z_repair = self._sample_operator_pair("Z")
         action_signature = (
             "XYZ",
             str(x_destroy),
@@ -699,9 +778,9 @@ class ResourceTimeALNSEngine:
             str(z_repair),
             self.current_config.validation_signature(),
         )
-        if self._action_signature_known("XYZ", action_signature):
+        if self._action_signature_known("XYZ", action_signature) and not bool(critical_path_mode):
+            self.last_xyz_skip_reason = "duplicate_action_signature"
             return None
-        self._remember_action_signature("XYZ", action_signature)
 
         x_payload = self._apply_x_candidate_to_config(
             base_config=self.current_config,
@@ -712,6 +791,7 @@ class ResourceTimeALNSEngine:
             degree=max(1, int(budget)),
         )
         if x_payload is None:
+            self.last_xyz_skip_reason = f"x_payload_fail:{x_destroy}+{x_repair}"
             return None
         candidate = x_payload["config"]
         touched_ids = set(int(x) for x in (x_payload.get("affected_ids", set()) or set()))
@@ -721,9 +801,12 @@ class ResourceTimeALNSEngine:
 
         y_plan = plan_y_candidate(self.opt, candidate, str(y_destroy), str(y_repair), self.rng, max(1, int(budget)))
         if not bool(y_plan.get("success", False)):
+            self.last_xyz_skip_reason = f"y_plan_fail:{y_destroy}+{y_repair}"
             return None
+        critical_subtasks = list(y_plan.get("destroy_ctx", {}).get("critical_path_subtask_ids", []) or [])
         y_payload = apply_exact_y_plan(self.opt, candidate, y_plan, self.rng)
         if not bool(y_payload.get("success", False)):
+            self.last_xyz_skip_reason = f"y_apply_fail:{y_destroy}+{y_repair}"
             return None
         candidate = y_payload["config"]
         touched_ids.update(int(x) for x in (y_payload.get("affected_ids", set()) or set()))
@@ -731,15 +814,27 @@ class ResourceTimeALNSEngine:
 
         z_plan = plan_z_candidate(self.opt, candidate, str(z_destroy), str(z_repair), self.rng, max(1, int(budget)))
         if not bool(z_plan.get("success", False)):
+            self.last_xyz_skip_reason = f"z_plan_fail:{z_destroy}+{z_repair}"
             return None
         z_payload = apply_exact_z_plan(self.opt, candidate, z_plan, self.rng)
         if not bool(z_payload.get("success", False)):
+            self.last_xyz_skip_reason = f"z_apply_fail:{z_destroy}+{z_repair}:{z_payload.get('reason', '')}"
             return None
         candidate = z_payload["config"]
         touched_ids.update(int(x) for x in (z_payload.get("affected_ids", set()) or set()))
         fallback_used = bool(fallback_used or z_payload.get("fallback_used", False))
-        affected_cap = max(1, int(getattr(self.cfg, "resource_xyz_exact_validation_subtask_cap", 6)))
+        affected_cap = max(
+            1,
+            int(
+                getattr(
+                    self.cfg,
+                    "resource_critical_xyz_exact_validation_subtask_cap" if bool(critical_path_mode) else "resource_xyz_exact_validation_subtask_cap",
+                    16 if bool(critical_path_mode) else 6,
+                )
+            ),
+        )
         if len(touched_ids) > int(affected_cap):
+            self.last_xyz_skip_reason = f"affected_cap:{len(touched_ids)}>{affected_cap}"
             return None
 
         payload = {
@@ -792,6 +887,8 @@ class ResourceTimeALNSEngine:
             "xyz_y_operator": f"{y_destroy}+{y_repair}",
             "xyz_z_operator": f"{z_destroy}+{z_repair}",
             "repartition_mode": bool(str(x_destroy) == "x_destroy_order_repartition"),
+            "critical_path_operator_used": bool(critical_path_mode),
+            "critical_path_subtask_ids": list(int(x) for x in critical_subtasks),
         }
 
     def _generate_xyz_candidate_pool(self, iter_id: int, budget: int, target_size: int) -> Dict[str, object]:
@@ -1126,6 +1223,188 @@ class ResourceTimeALNSEngine:
                     iterations_since_last_validation=0,
                     distance_to_last_validated=config_distance(self.current_config, self.last_validated_config),
                 )
+
+    def _y_polish_proxy_score(self, config: ResourceConfig) -> Tuple[float, ...]:
+        station_loads: Dict[int, float] = {}
+        station_counts: Dict[int, int] = {}
+        for row in config.subtasks.values():
+            if int(row.station_id) < 0:
+                continue
+            station_counts[int(row.station_id)] = int(station_counts.get(int(row.station_id), 0)) + 1
+            station_loads[int(row.station_id)] = float(station_loads.get(int(row.station_id), 0.0)) + float(
+                sum(float(getattr(task, "station_service_time", 0.0) or 0.0) + max(1, int(getattr(task, "sku_pick_count", 0) or 0)) for task in (row.z_tasks or []))
+            )
+        loads = list(station_loads.values()) or [0.0]
+        return (
+            float(max(loads)),
+            float(statistics.pstdev(loads) if len(loads) >= 2 else 0.0),
+            float(max(station_counts.values(), default=0)),
+            float(self.scorer.evaluate(config).F_raw),
+        )
+
+    def _enumerate_y_polish_candidates(self, base_config: ResourceConfig) -> List[Tuple[Tuple[float, ...], ResourceConfig]]:
+        rows = sorted(base_config.subtasks.values(), key=lambda row: (int(row.order_id), int(row.subtask_id)))
+        cap = max(1, int(getattr(self.cfg, "resource_y_polish_subtask_cap", 6)))
+        station_count = max(1, len(list(getattr(getattr(self.opt, "problem", None), "station_list", []) or [])))
+        if len(rows) <= 1 or len(rows) > int(cap) or station_count <= 0:
+            return []
+        candidate_limit = max(1, int(getattr(self.cfg, "resource_y_polish_candidate_limit", 64)))
+        scored: List[Tuple[Tuple[float, ...], ResourceConfig]] = []
+        seen = set()
+        row_ids = [int(row.subtask_id) for row in rows]
+        for station_assignment in itertools.product(range(station_count), repeat=len(rows)):
+            groups: Dict[int, List[int]] = {}
+            for subtask_id, station_id in zip(row_ids, station_assignment):
+                groups.setdefault(int(station_id), []).append(int(subtask_id))
+            per_station_orders: List[List[Tuple[int, ...]]] = []
+            station_ids = sorted(groups.keys())
+            for station_id in station_ids:
+                group = list(groups[int(station_id)])
+                if len(group) <= 1:
+                    per_station_orders.append([tuple(group)])
+                elif len(group) <= 4:
+                    current_rank = {
+                        int(subtask_id): int(base_config.subtasks[int(subtask_id)].station_rank if int(base_config.subtasks[int(subtask_id)].station_rank) >= 0 else 10**9)
+                        for subtask_id in group
+                    }
+                    perms = sorted(
+                        itertools.permutations(group),
+                        key=lambda perm: (
+                            sum(abs(idx - int(current_rank.get(int(subtask_id), idx))) for idx, subtask_id in enumerate(perm)),
+                            tuple(int(x) for x in perm),
+                        ),
+                    )[: max(2, min(8, math.factorial(len(group))))]
+                    per_station_orders.append([tuple(int(x) for x in perm) for perm in perms])
+                else:
+                    per_station_orders.append([tuple(group), tuple(reversed(group))])
+            for order_combo in itertools.product(*per_station_orders):
+                trial = base_config.clone_for_layer("Y", row_ids)
+                for station_id, sequence in zip(station_ids, order_combo):
+                    for rank, subtask_id in enumerate(sequence):
+                        row = trial.subtasks.get(int(subtask_id))
+                        if row is None:
+                            continue
+                        row.station_id = int(station_id)
+                        row.station_rank = int(rank)
+                trial.rebuild_indices()
+                signature = trial.validation_signature()
+                if signature in seen:
+                    continue
+                seen.add(signature)
+                score = self._y_polish_proxy_score(trial)
+                scored.append((score, trial))
+                if len(scored) > candidate_limit * 20:
+                    scored.sort(key=lambda item: item[0])
+                    scored = scored[: candidate_limit * 10]
+        scored.sort(key=lambda item: item[0])
+        return scored[:candidate_limit]
+
+    def _best_y_assignment_polish(self) -> Dict[str, object]:
+        if not bool(getattr(self.cfg, "resource_enable_best_y_assignment_polish", False)):
+            return {"enabled": False, "applied": False}
+        if self.best_validated.snapshot is not None:
+            self.opt.restore_snapshot(self.best_validated.snapshot)
+        base_config = self.best_validated.config.clone()
+        candidates = self._enumerate_y_polish_candidates(base_config)
+        best_makespan = float(self.best_validated.makespan)
+        best_payload = None
+        exact_count = 0
+        for _score, candidate in candidates:
+            if candidate.validation_signature() == base_config.validation_signature():
+                continue
+            validation = self.validator.validate(candidate, -1)
+            exact_count += int(validation.get("validation_call_count", validation.get("lkh_call_count", 1)) or 0)
+            hard_reason = str(validation.get("hard_reject_reason", "") or "")
+            if hard_reason:
+                continue
+            makespan = float(validation.get("makespan", float("inf")))
+            if makespan + 1e-9 < best_makespan:
+                best_makespan = float(makespan)
+                best_payload = (candidate.clone(), validation)
+        if best_payload is not None:
+            candidate, validation = best_payload
+            self.best_validated = ValidatedIncumbent(
+                config=candidate.clone(),
+                makespan=float(best_makespan),
+                iter_id=-1,
+                snapshot=validation["snapshot"],
+            )
+            self.current_config = candidate.clone()
+            self.last_validated_config = candidate.clone()
+            self.last_validated_signature = candidate.validation_signature()
+            self.opt.best = validation["snapshot"]
+            self.opt.work = validation["snapshot"]
+            self.opt.work_z = float(best_makespan)
+        stats = {
+            "enabled": True,
+            "applied": bool(best_payload is not None),
+            "candidate_count": int(len(candidates)),
+            "exact_count": int(exact_count),
+            "best_makespan": float(best_makespan),
+        }
+        self.opt.best_y_assignment_polish_stats = stats
+        return stats
+
+    def _best_z_sortify_polish(self) -> Dict[str, object]:
+        if not bool(getattr(self.cfg, "resource_enable_best_z_sortify_polish", False)):
+            return {"enabled": False, "applied": False}
+        if self.best_validated.snapshot is not None:
+            self.opt.restore_snapshot(self.best_validated.snapshot)
+        before_flip_count = int(
+            sum(
+                1
+                for subtask in self.best_validated.config.subtasks.values()
+                for descriptor in (subtask.z_tasks or [])
+                if str(getattr(descriptor, "mode", "")).upper() == "FLIP"
+            )
+        )
+        candidate, sortify_stats = apply_single_flip_sortify_polish(self.opt, self.best_validated.config)
+        if candidate.validation_signature() == self.best_validated.config.validation_signature():
+            stats = {"enabled": True, "applied": False, **{f"sortify_{k}": v for k, v in sortify_stats.items()}}
+            self.opt.best_z_sortify_polish_stats = stats
+            return stats
+        validation = self.validator.validate(candidate, -1)
+        hard_reason = str(validation.get("hard_reject_reason", "") or "")
+        makespan = float(validation.get("makespan", float("inf")))
+        applied = False
+        after_flip_count = int(
+            sum(
+                1
+                for subtask in candidate.subtasks.values()
+                for descriptor in (subtask.z_tasks or [])
+                if str(getattr(descriptor, "mode", "")).upper() == "FLIP"
+            )
+        )
+        structural_tie_improved = bool(
+            makespan <= float(self.best_validated.makespan) + 1e-9
+            and after_flip_count < before_flip_count
+        )
+        if not hard_reason and makespan + 1e-9 < float(self.best_validated.makespan):
+            self.best_validated = ValidatedIncumbent(
+                config=candidate.clone(),
+                makespan=float(makespan),
+                iter_id=-1,
+                snapshot=validation["snapshot"],
+            )
+            self.current_config = candidate.clone()
+            self.last_validated_config = candidate.clone()
+            self.last_validated_signature = candidate.validation_signature()
+            self.opt.best = validation["snapshot"]
+            self.opt.work = validation["snapshot"]
+            self.opt.work_z = float(makespan)
+            applied = True
+        stats = {
+            "enabled": True,
+            "applied": bool(applied),
+            "hard_reject_reason": hard_reason,
+            "candidate_makespan": float(makespan),
+            "before_flip_count": int(before_flip_count),
+            "after_flip_count": int(after_flip_count),
+            "structural_tie_improved": bool(structural_tie_improved),
+            **{f"sortify_{k}": v for k, v in sortify_stats.items()},
+        }
+        self.opt.best_z_sortify_polish_stats = stats
+        return stats
 
     def _update_layer_progress(self, layer: str, accepted: bool, prev_f_raw: float, new_f_raw: float, stagnation_increment: float) -> None:
         improvement = max(0.0, float(prev_f_raw) - float(new_f_raw)) if bool(accepted) else 0.0
@@ -1493,6 +1772,11 @@ class ResourceTimeALNSEngine:
             if selected_candidate is not None:
                 destroy_name = str(selected_candidate.get("destroy_operator", ""))
                 repair_name = str(selected_candidate.get("repair_operator", ""))
+                if str(layer).upper() == "X" and (
+                    str(destroy_name) in {"x_destroy_order_repartition", "x_destroy_critical_order_cluster"}
+                    or bool(selected_candidate.get("repartition_mode", False))
+                ):
+                    self.last_x_repartition_iter = int(iter_id)
                 fallback_used = bool(selected_candidate.get("fallback_used", False))
                 projection_mode = str(selected_candidate.get("projection_mode", ""))
                 projection_count = int(selected_candidate.get("projection_repaired_subtask_count", 0))
@@ -1736,6 +2020,11 @@ class ResourceTimeALNSEngine:
                     "heavy_destroy_active": bool(heavy_destroy_active),
                     "destroy_tier": str(destroy_tier),
                     "force_rotate_used": bool(force_rotate_used),
+                    "available_layers": "|".join(str(x) for x in getattr(self, "last_available_layers", [])),
+                    "selected_layer_source": str(getattr(self, "last_selected_layer_source", "")),
+                    "xyz_skip_reason": str(getattr(self, "last_xyz_skip_reason", "")),
+                    "critical_path_operator_used": bool(selected_candidate.get("critical_path_operator_used", False)) if selected_candidate is not None else False,
+                    "critical_path_subtask_ids": str(selected_candidate.get("critical_path_subtask_ids", [])) if selected_candidate is not None else "",
                     "x_temp_boost_used": bool(x_temp_boost_used),
                     "duplicate_tote_count": int(candidate_eval.duplicate_tote_count),
                     "duplicate_tote_penalty": float(candidate_eval.duplicate_tote_penalty),
@@ -1822,6 +2111,13 @@ class ResourceTimeALNSEngine:
         self.opt.adaptive_destroy_bonus = float(self.adaptive_destroy_bonus)
         if not str(getattr(self.opt, "stop_reason", "") or ""):
             self.opt.stop_reason = "max_iters_reached"
+        z_polish_stats = self._best_z_sortify_polish()
+        polish_stats = self._best_y_assignment_polish()
+        z_polish_stats_after_y = self._best_z_sortify_polish()
+        if bool(polish_stats.get("applied", False)):
+            self.opt.stop_reason = f"{self.opt.stop_reason}+best_y_polish"
+        if bool(z_polish_stats.get("applied", False)) or bool(z_polish_stats_after_y.get("applied", False)):
+            self.opt.stop_reason = f"{self.opt.stop_reason}+best_z_sortify"
         if self.best_validated.snapshot is not None:
             self.opt.restore_snapshot(self.best_validated.snapshot)
             self.opt.best = self.best_validated.snapshot

@@ -517,6 +517,28 @@ class SP4_Robot_Router:
                 time_limit_seconds=selected_budget,
                 use_guided_local_search=True,
             )
+        elif solution is not None and bool(enable_guided_local_search):
+            gls_solution = self._solve_with_search_parameters(
+                routing,
+                strategy_name=str(strategy_names[-1]),
+                time_limit_seconds=int(max(1, int(self.lkh_time_limit_seconds))),
+                use_guided_local_search=True,
+            )
+            if gls_solution is not None and int(gls_solution.ObjectiveValue()) < int(solution.ObjectiveValue()):
+                selected_strategy = str(strategy_names[-1]) + "+GUIDED_LOCAL_SEARCH"
+                selected_budget = int(max(1, int(self.lkh_time_limit_seconds)))
+                solution = gls_solution
+        elif solution is not None and bool(enable_guided_local_search):
+            gls_solution = self._solve_with_search_parameters(
+                routing,
+                strategy_name=str(strategy_names[-1]),
+                time_limit_seconds=int(max(1, int(self.lkh_time_limit_seconds))),
+                use_guided_local_search=True,
+            )
+            if gls_solution is not None and int(gls_solution.ObjectiveValue()) < int(solution.ObjectiveValue()):
+                selected_strategy = str(strategy_names[-1]) + "+GUIDED_LOCAL_SEARCH"
+                selected_budget = int(max(1, int(self.lkh_time_limit_seconds)))
+                solution = gls_solution
         verbose_console = bool(getattr(self.problem, "runtime_verbose_sp4", False)) and not bool(quiet_mode)
 
 

@@ -969,6 +969,55 @@ def y_destroy_max_tardiness_blocker(opt, config: ResourceConfig, rng, degree: in
     return _max_tardiness_release_payload(opt, config, rng, int(degree), preview=False)
 
 
+def _critical_path_release_payload(opt, config: ResourceConfig, rng, degree: int, preview: bool) -> Dict[str, object]:
+    metrics = _snapshot_subtask_metrics(opt)
+    if not metrics:
+        return _heavy_robot_release_payload(opt, config, rng, int(degree), preview=bool(preview))
+    ranked = sorted(
+        [
+            (
+                (
+                    -float(meta.get("completion_time", 0.0)),
+                    -float(meta.get("arrival_station", 0.0)),
+                    int(subtask_id),
+                ),
+                int(subtask_id),
+            )
+            for subtask_id, meta in metrics.items()
+            if int(subtask_id) in config.subtasks and int(config.subtasks[int(subtask_id)].station_id) >= 0
+        ],
+        key=lambda item: item[0],
+    )
+    if not ranked:
+        return {"success": False}
+    picked = pick_ranked_candidate(rng, ranked, opt.cfg)
+    if picked is None:
+        return {"success": False}
+    _, center_subtask_id = picked
+    center = config.subtasks.get(int(center_subtask_id))
+    if center is None:
+        return {"success": False}
+    station_rows = config.station_subtasks(int(center.station_id))
+    center_idx = next((idx for idx, row in enumerate(station_rows) if int(row.subtask_id) == int(center_subtask_id)), 0)
+    move_n = max(1, min(int(degree), int(getattr(opt.cfg, "resource_critical_path_window_size", 4)), len(station_rows)))
+    start = max(0, int(center_idx) - move_n + 1)
+    end = min(len(station_rows), start + move_n)
+    release_ids = [int(row.subtask_id) for row in station_rows[start:end]]
+    return _finalize_release_ids(
+        config,
+        release_ids,
+        move_n,
+        priority_ids=[int(center_subtask_id)],
+        preview=bool(preview),
+        metrics=metrics,
+        extra={"critical_path_subtask_ids": [int(x) for x in release_ids]},
+    )
+
+
+def y_destroy_critical_path_block(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
+    return _critical_path_release_payload(opt, config, rng, int(degree), preview=False)
+
+
 def y_plan_destroy_congested_station_block(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
     loads = _station_loads(config)
     if not loads:
@@ -1073,6 +1122,10 @@ def y_plan_destroy_initial_idle_head(opt, config: ResourceConfig, rng, degree: i
 
 def y_plan_destroy_max_tardiness_blocker(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
     return _max_tardiness_release_payload(opt, config, rng, int(degree), preview=True)
+
+
+def y_plan_destroy_critical_path_block(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
+    return _critical_path_release_payload(opt, config, rng, int(degree), preview=True)
 
 
 def _assign_station_rank(config: ResourceConfig, subtask_id: int, station_id: int) -> None:
@@ -1229,6 +1282,76 @@ def _build_y_rough_features(opt, config: ResourceConfig, released_subtasks: Dict
     }
 
 
+def _station_rank_permutation_proxy(
+    opt,
+    config: ResourceConfig,
+    station_id: int,
+    ordered_subtask_ids: Sequence[int],
+) -> float:
+    cumulative = 0.0
+    completion_sum = 0.0
+    max_tail = 0.0
+    weighted_rank_penalty = 0.0
+    for rank, subtask_id in enumerate(ordered_subtask_ids):
+        row = config.subtasks.get(int(subtask_id))
+        if row is None:
+            continue
+        station_work = float(_subtask_station_work(row))
+        arrival = float(_arrival_proxy(opt, row, int(station_id)))
+        cumulative += station_work
+        completion = float(arrival + cumulative)
+        completion_sum += completion
+        max_tail = max(max_tail, completion)
+        weighted_rank_penalty += float(rank) * station_work
+    return float(max_tail + 0.15 * completion_sum + 0.10 * weighted_rank_penalty)
+
+
+def _enumerate_station_rank_permutations(
+    opt,
+    config: ResourceConfig,
+    station_id: int,
+    released_ids: Sequence[int],
+    max_candidates: int,
+) -> List[Tuple[float, List[int]]]:
+    released_ids = [int(x) for x in (released_ids or []) if int(x) in config.subtasks]
+    if not released_ids or int(station_id) < 0:
+        return []
+    released_set = set(int(x) for x in released_ids)
+    fixed_ids = [
+        int(row.subtask_id)
+        for row in sorted(config.station_subtasks(int(station_id)), key=lambda row: (int(row.station_rank), int(row.subtask_id)))
+        if int(row.subtask_id) not in released_set
+    ]
+    candidates: List[Tuple[float, List[int]]] = []
+    seen: Set[Tuple[int, ...]] = set()
+    perm_limit = max(1, int(max_candidates))
+    release_perms = list(itertools.permutations(released_ids))
+    if len(release_perms) > perm_limit:
+        release_perms = release_perms[:perm_limit]
+    for perm in release_perms:
+        for insert_start in range(0, len(fixed_ids) + 1):
+            sequence = list(fixed_ids)
+            for offset, subtask_id in enumerate(perm):
+                sequence.insert(int(insert_start) + int(offset), int(subtask_id))
+            signature = tuple(int(x) for x in sequence)
+            if signature in seen:
+                continue
+            seen.add(signature)
+            score = _station_rank_permutation_proxy(opt, config, int(station_id), sequence)
+            candidates.append((float(score), list(sequence)))
+    candidates.sort(key=lambda item: (float(item[0]), tuple(int(x) for x in item[1])))
+    return candidates[:perm_limit]
+
+
+def _apply_station_sequence(candidate: ResourceConfig, station_id: int, ordered_subtask_ids: Sequence[int]) -> None:
+    for rank, subtask_id in enumerate(ordered_subtask_ids):
+        row = candidate.subtasks.get(int(subtask_id))
+        if row is None:
+            continue
+        row.station_id = int(station_id)
+        row.station_rank = int(rank)
+
+
 def _wave1_minimax_match(
     opt,
     config: ResourceConfig,
@@ -1303,6 +1426,20 @@ def _plan_y_assignments(opt, config: ResourceConfig, released_subtasks: Dict[int
     released_ids = [int(x) for x in (released_subtasks or {}).keys()]
     if not released_ids:
         return {"success": False}
+    if str(strategy) == "y_repair_station_rank_permutation":
+        source_station_ids = sorted({int(station_id) for station_id, _ in released_subtasks.values() if int(station_id) >= 0})
+        if len(source_station_ids) != 1:
+            return {"success": False}
+        station_id = int(source_station_ids[0])
+        assignments = {
+            int(subtask_id): {
+                "station_id": int(station_id),
+                "station_rank": int(released_subtasks[int(subtask_id)][1]),
+                "selected_robot_id": -1,
+            }
+            for subtask_id in released_ids
+        }
+        return {"success": True, "assignments": assignments}
     loads, counts = _y_base_maps(config, released_ids)
     assignments: Dict[int, Dict[str, int]] = {}
     remaining = list(released_ids)
@@ -1394,6 +1531,11 @@ def _plan_y_assignments(opt, config: ResourceConfig, released_subtasks: Dict[int
             counts[int(station_id)] = counts.get(int(station_id), 0) + 1
             remaining.remove(int(subtask_id))
     else:
+        ejection_sources = {
+            int(subtask_id): int(station_id)
+            for subtask_id, (station_id, _rank) in (released_subtasks or {}).items()
+            if int(station_id) >= 0
+        }
         chooser = {
             "y_repair_earliest_finish": lambda row: int(
                 (
@@ -1456,6 +1598,37 @@ def _plan_y_assignments(opt, config: ResourceConfig, released_subtasks: Dict[int
                 )[1]
             ),
             "y_repair_load_balance": lambda row: _choose_station_load_balance_from_maps(opt, loads, row, rng),
+            "y_repair_ejection_chain_balance": lambda row: int(
+                (
+                    pick_soft_greedy_min(
+                        rng,
+                        [
+                            (
+                                _station_choice_cost(
+                                    opt,
+                                    config,
+                                    row,
+                                    int(station_id),
+                                    loads,
+                                    released_ids=released_ids,
+                                    counts=counts,
+                                    assignment_index=len(assignments),
+                                    first_batch_limit=first_batch_limit,
+                                    used_station_ids=used_station_ids,
+                                    used_robot_ids=used_robot_ids,
+                                    robot_frontier=robot_frontier,
+                                )
+                                + (25.0 if int(station_id) == int(ejection_sources.get(int(row.subtask_id), -1)) else 0.0),
+                                int(station_id),
+                            )
+                            for station_id in range(_station_count(opt))
+                        ],
+                        opt.cfg,
+                        score_getter=lambda item: (float(item[0]), int(item[1])),
+                    )
+                    or (0.0, 0)
+                )[1]
+            ),
         }.get(
             str(strategy),
             lambda row: int(
@@ -1525,6 +1698,7 @@ def plan_y_candidate(opt, config: ResourceConfig, destroy_name: str, repair_name
         "y_destroy_heavy_robot_tail": y_plan_destroy_heavy_robot_tail,
         "y_destroy_initial_idle_head": y_plan_destroy_initial_idle_head,
         "y_destroy_max_tardiness_blocker": y_plan_destroy_max_tardiness_blocker,
+        "y_destroy_critical_path_block": y_plan_destroy_critical_path_block,
     }
     destroy_ctx = destroy_planners[str(destroy_name)](opt, config, rng, degree)
     if not bool(destroy_ctx.get("success", False)):
@@ -1541,6 +1715,7 @@ def plan_y_candidate(opt, config: ResourceConfig, destroy_name: str, repair_name
         "success": True,
         "destroy_ctx": destroy_ctx,
         "assignments": assignments,
+        "repair_name": str(repair_name),
         "fallback_used": bool(fallback_used),
         "action_signature": _build_y_action_signature(str(destroy_name), str(repair_name), destroy_ctx.get("released_subtasks", {}), assignments),
         "rough_features": _build_y_rough_features(opt, config, destroy_ctx.get("released_subtasks", {}), assignments),
@@ -1554,6 +1729,38 @@ def apply_exact_y_plan(opt, config: ResourceConfig, plan: Dict[str, object], rng
     released_subtasks = dict(destroy_ctx.get("released_subtasks", {}) or {})
     if not released_subtasks or not assignments:
         return {"success": False}
+    if str(plan.get("repair_name", "")) == "y_repair_station_rank_permutation":
+        source_station_ids = sorted({int(station_id) for station_id, _ in released_subtasks.values() if int(station_id) >= 0})
+        if len(source_station_ids) != 1:
+            return {"success": False}
+        station_id = int(source_station_ids[0])
+        touched_subtask_ids = {
+            int(row.subtask_id)
+            for row in config.subtasks.values()
+            if int(row.station_id) == int(station_id) or int(row.subtask_id) in set(int(x) for x in released_subtasks.keys())
+        }
+        candidate = config.clone_for_layer("Y", sorted(touched_subtask_ids))
+        ranked_sequences = _enumerate_station_rank_permutations(
+            opt,
+            candidate,
+            int(station_id),
+            [int(x) for x in released_subtasks.keys()],
+            max(8, int(getattr(opt.cfg, "resource_y_rank_permutation_cap", 24))),
+        )
+        if not ranked_sequences:
+            return {"success": False}
+        _apply_station_sequence(candidate, int(station_id), ranked_sequences[0][1])
+        _normalize_station_ranks_subset(candidate, [int(station_id)])
+        return {
+            "success": True,
+            "config": candidate,
+            "score_cache": None,
+            "affected_ids": set(int(x) for x in touched_subtask_ids),
+            "fallback_used": bool(plan.get("fallback_used", False)),
+            "projection_mode": "",
+            "projection_repaired_subtask_count": 0,
+            "validation_signature": candidate.validation_signature(),
+        }
     source_station_ids = [int(station_id) for station_id, _ in released_subtasks.values() if int(station_id) >= 0]
     target_station_ids = [int(meta.get("station_id", -1)) for meta in assignments.values() if int(meta.get("station_id", -1)) >= 0]
     touched_station_ids = sorted(set(source_station_ids + target_station_ids))
@@ -1710,6 +1917,7 @@ Y_DESTROY_OPERATORS = {
     "y_destroy_heavy_robot_tail": y_destroy_heavy_robot_tail,
     "y_destroy_initial_idle_head": y_destroy_initial_idle_head,
     "y_destroy_max_tardiness_blocker": y_destroy_max_tardiness_blocker,
+    "y_destroy_critical_path_block": y_destroy_critical_path_block,
 }
 
 Y_REPAIR_OPERATORS = {
@@ -1717,6 +1925,8 @@ Y_REPAIR_OPERATORS = {
     "y_repair_regret2_station": y_repair_regret2_station,
     "y_repair_arrival_aware_rank": y_repair_arrival_aware_rank,
     "y_repair_load_balance": y_repair_load_balance,
+    "y_repair_station_rank_permutation": y_repair_arrival_aware_rank,
+    "y_repair_ejection_chain_balance": y_repair_arrival_aware_rank,
 }
 
 Y_FALLBACK_OPERATOR = "y_repair_greedy_fallback"
