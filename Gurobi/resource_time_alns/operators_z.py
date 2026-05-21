@@ -2217,7 +2217,7 @@ def z_repair_multistack_cover_compact(opt, config: ResourceConfig, ctx: Dict[str
 
 
 def z_repair_stack_mode_joint_polish(opt, config: ResourceConfig, ctx: Dict[str, object], rng) -> Dict[str, object]:
-    return _repair_window(opt, config, ctx, "z_repair_gurobi_like_sort", allow_fallback=False, rng=rng)
+    return _apply_joint_z_repair_strategies(opt, config, dict(ctx or {}), rng=rng)
 
 
 def z_repair_greedy_fallback(opt, config: ResourceConfig, ctx: Dict[str, object], rng) -> Dict[str, object]:

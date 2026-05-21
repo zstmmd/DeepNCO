@@ -737,7 +737,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--time-limit", type=float, default=3600.0)
     parser.add_argument("--mip-gap", type=float, default=0.01)
-    parser.add_argument("--candidate-stack-topk", type=int, default=3)
+    parser.add_argument("--candidate-stack-topk", type=int, default=999)
     parser.add_argument("--max-rank", type=int, default=0)
     parser.add_argument("--write-lp", action="store_true")
     parser.add_argument("--quiet-gurobi", action="store_true", help="Disable Gurobi solver log output.")
@@ -748,7 +748,7 @@ def main() -> None:
     parser.add_argument("--warm-start-sp4", action="store_true", help="Deprecated: SP4/LKH warm start is now enabled by default.")
     parser.add_argument("--disable-warm-start-sp4", action="store_true", help="Disable SP4/LKH during warm-start construction and use greedy routing.")
     parser.add_argument("--enable-sp4-fallback", action="store_true", help="Allow SP4/ortools if the integrated MIP path falls back.")
-    parser.add_argument("--max-candidate-stacks-per-order", type=int, default=24)
+    parser.add_argument("--max-candidate-stacks-per-order", type=int, default=0)
     parser.add_argument("--u-route-lkh", action="store_true", help="Use non-MIP routing in the U stage when SP4 is available.")
     parser.add_argument("--bom-arrival-window-sec", type=float, default=60.0)
     parser.add_argument("--disable-order-time-windows", action="store_true")
@@ -772,10 +772,10 @@ def main() -> None:
     parser.add_argument("--enable-tight-slot-upper-bound", action="store_true", help="Deprecated no-op: tight slot upper bound is enabled by default.")
     parser.add_argument("--disable-tight-slot-upper-bound", action="store_true", help="Disable warm/capacity tight slot upper bound.")
     parser.add_argument("--slot-slack-per-order", type=int, default=1)
-    parser.add_argument("--enable-warm-candidate-stack-prune", action="store_true", help="Deprecated no-op: warm candidate stack pruning is enabled by default.")
+    parser.add_argument("--enable-warm-candidate-stack-prune", action="store_true", help="Enable warm-stack candidate pruning.")
     parser.add_argument("--disable-warm-candidate-stack-prune", action="store_true", help="Disable warm-stack candidate pruning.")
-    parser.add_argument("--candidate-station-topk-per-stack", type=int, default=2)
-    parser.add_argument("--route-pickup-neighbor-limit", type=int, default=5)
+    parser.add_argument("--candidate-station-topk-per-stack", type=int, default=999)
+    parser.add_argument("--route-pickup-neighbor-limit", type=int, default=0)
     parser.add_argument("--enable-scale-adaptive-candidate-prune", action="store_true", help="Enable GUROBI-S6+ adaptive candidate compression.")
     parser.add_argument("--disable-scale-adaptive-candidate-prune", action="store_true", help="Deprecated no-op: scale-adaptive candidate compression is disabled by default.")
     parser.add_argument("--disable-resource-lex-symmetry", action="store_true", help="Disable safe same-coordinate resource lex symmetry constraints.")
@@ -821,7 +821,7 @@ def main() -> None:
         enable_route_directional_arc_prune=bool(args.enable_route_directional_arc_prune),
         enable_route_service_sec_cuts=bool(args.enable_route_service_sec_cuts),
         enable_tight_slot_upper_bound=not bool(args.disable_tight_slot_upper_bound),
-        enable_warm_candidate_stack_prune=not bool(args.disable_warm_candidate_stack_prune),
+        enable_warm_candidate_stack_prune=bool(args.enable_warm_candidate_stack_prune) and not bool(args.disable_warm_candidate_stack_prune),
         candidate_station_topk_per_stack=int(args.candidate_station_topk_per_stack),
         route_pickup_neighbor_limit=int(args.route_pickup_neighbor_limit),
         enable_scale_adaptive_candidate_prune=bool(args.enable_scale_adaptive_candidate_prune) and not bool(args.disable_scale_adaptive_candidate_prune),
@@ -832,6 +832,10 @@ def main() -> None:
         enable_warm_prune_bound_repair=bool(args.enable_warm_prune_bound_repair),
         enable_warm_start_route_repair=not bool(args.disable_warm_start_route_repair),
     )
+    if str(args.scale).strip().upper() == "GUROBI-S7":
+        cfg.route_arc_prune = False
+        cfg.enable_route_time_window_arc_prune = False
+        cfg.enable_route_load_interval_arc_prune = False
     solver = GlobalXYZUSolver()
     result = solver.solve(problem, cfg=cfg)
     result_root = _write_result_files(problem, result, scale=args.scale, seed=args.seed, cfg=cfg)

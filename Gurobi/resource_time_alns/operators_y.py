@@ -1890,6 +1890,41 @@ def y_repair_load_balance(opt, config: ResourceConfig, ctx: Dict[str, object], r
     return {"success": bool(affected), "affected_subtask_ids": affected}
 
 
+def y_repair_ejection_chain_balance(opt, config: ResourceConfig, ctx: Dict[str, object], rng) -> Dict[str, object]:
+    released_subtasks = dict(ctx.get("released_subtasks", {}) or {})
+    if not released_subtasks:
+        return {"success": False}
+    plan = _plan_y_assignments(opt, config, released_subtasks, "y_repair_ejection_chain_balance", rng)
+    assignments = dict(plan.get("assignments", {}) or {})
+    if not bool(plan.get("success", False)) or not assignments:
+        return {"success": False}
+    touched_station_ids = {
+        int(station_id)
+        for station_id, _rank in released_subtasks.values()
+        if int(station_id) >= 0
+    }
+    for meta in assignments.values():
+        station_id = int(meta.get("station_id", -1))
+        if station_id >= 0:
+            touched_station_ids.add(station_id)
+    affected = set(int(x) for x in released_subtasks.keys())
+    for subtask_id in released_subtasks.keys():
+        row = config.subtasks.get(int(subtask_id))
+        if row is None:
+            continue
+        row.station_id = -1
+        row.station_rank = -1
+    for subtask_id, meta in assignments.items():
+        row = config.subtasks.get(int(subtask_id))
+        if row is None:
+            continue
+        row.station_id = int(meta["station_id"])
+        row.station_rank = int(meta["station_rank"])
+        affected.add(int(subtask_id))
+    _normalize_station_ranks_subset(config, sorted(touched_station_ids))
+    return {"success": bool(affected), "affected_subtask_ids": affected}
+
+
 def y_repair_greedy_fallback(opt, config: ResourceConfig, ctx: Dict[str, object], rng) -> Dict[str, object]:
     released = [int(x) for x in (ctx.get("released_subtasks", {}) or {}).keys()]
     if not released:
@@ -1926,7 +1961,7 @@ Y_REPAIR_OPERATORS = {
     "y_repair_arrival_aware_rank": y_repair_arrival_aware_rank,
     "y_repair_load_balance": y_repair_load_balance,
     "y_repair_station_rank_permutation": y_repair_arrival_aware_rank,
-    "y_repair_ejection_chain_balance": y_repair_arrival_aware_rank,
+    "y_repair_ejection_chain_balance": y_repair_ejection_chain_balance,
 }
 
 Y_FALLBACK_OPERATOR = "y_repair_greedy_fallback"

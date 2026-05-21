@@ -17,7 +17,15 @@ from Gurobi.resource_time_alns.diagnostics import compare_solution_signatures, w
 
 
 DEFAULT_ALL_CASES = [
-    "Gurobi-s1"
+    "GUROBI-S1",
+    "GUROBI-S2",
+    "GUROBI-S3",
+    "GUROBI-S4",
+    "GUROBI-S5",
+    "GUROBI-S6",
+    "GUROBI-S7",
+    "GUROBI-S8",
+    "GUROBI-S9",
     #  "SMALL",
     # "SMALL2",
     # "SMALL_ZRICH",
@@ -26,6 +34,30 @@ DEFAULT_ALL_CASES = [
     # "SMALL_UNEVEN",
     # "SMALL2_UNEVEN",
 ]
+
+CURRENT_TRA_BASELINE_CMAX = {
+    "GUROBI-S1": 94.0,
+    "GUROBI-S2": 165.0,
+    "GUROBI-S3": 256.0,
+    "GUROBI-S4": 266.0,
+    "GUROBI-S5": 329.0,
+    "GUROBI-S6": 333.0,
+    "GUROBI-S7": 362.0,
+    "GUROBI-S8": 417.0,
+    "GUROBI-S9": 439.0,
+}
+
+KNOWN_GUROBI_EXPORT_DIRS = {
+    "GUROBI-S1": os.path.join(ROOT_DIR, "result", "gurobi_gurobi-s1_20260520_231530", "gurobi_solution_export"),
+    "GUROBI-S2": os.path.join(ROOT_DIR, "result", "gurobi_gurobi-s2_20260520_231546", "gurobi_solution_export"),
+    "GUROBI-S3": os.path.join(ROOT_DIR, "result", "gurobi_gurobi-s3_20260520_231605", "gurobi_solution_export"),
+    "GUROBI-S4": os.path.join(ROOT_DIR, "result", "gurobi_gurobi-s4_20260520_231645", "gurobi_solution_export"),
+    "GUROBI-S5": os.path.join(ROOT_DIR, "result", "gurobi_gurobi-s5_20260520_231825", "gurobi_solution_export"),
+    "GUROBI-S6": os.path.join(ROOT_DIR, "result", "gurobi_gurobi-s6_20260520_231843", "gurobi_solution_export"),
+    "GUROBI-S7": os.path.join(ROOT_DIR, "result", "gurobi_gurobi-s7_20260521_000507", "gurobi_solution_export"),
+    "GUROBI-S8": os.path.join(ROOT_DIR, "result", "gurobi_gurobi-s8_20260520_232208", "gurobi_solution_export"),
+    "GUROBI-S9": os.path.join(ROOT_DIR, "result", "gurobi_gurobi-s9_20260520_225718", "gurobi_solution_export"),
+}
 
 
 def _ensure_dir(path: str) -> str:
@@ -78,21 +110,35 @@ def _case_target_cmax(scale: str) -> float:
     targets = {
         "GUROBI-S1": 90.0,
         "GUROBI-S2": 164.0,
-        "GUROBI-S3": 223.0,
+        "GUROBI-S3": 222.0,
         "GUROBI-S4": 237.0,
-        "GUROBI-S5": 281.0,
+        "GUROBI-S5": 275.0,
         "GUROBI-S6": 299.0,
-        "GUROBI-S7": 307.0,
-        "GUROBI-S8": 367.0,
-        "GUROBI-S9": 451.0,
+        "GUROBI-S7": 361.0,
+        "GUROBI-S8": 366.0,
+        "GUROBI-S9": 438.0,
     }
     return float(targets.get(str(scale).upper(), float("nan")))
 
 
+def _case_current_baseline_cmax(scale: str) -> float:
+    return float(CURRENT_TRA_BASELINE_CMAX.get(str(scale).upper(), float("nan")))
+
+
 def _gurobi_export_dir(args, scale: str) -> str:
     case_name = str(scale).upper()
+    known = KNOWN_GUROBI_EXPORT_DIRS.get(case_name)
+    if known and os.path.exists(known):
+        return known
     root = str(args.gurobi_s6_reference_root if case_name == "GUROBI-S6" else args.gurobi_reference_root)
-    return os.path.join(root, case_name, "gurobi_solution_export")
+    candidates = [
+        os.path.join(root, case_name, "gurobi_solution_export"),
+        os.path.join(root, "gurobi_solution_export"),
+    ]
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            return candidate
+    return candidates[0]
 
 
 def _normalize_jsonable(value: Any) -> Any:
@@ -241,6 +287,48 @@ def _build_cfg(args, scale: str, seed: int, run_log_dir: str) -> TRARunConfig:
     if bool(cfg.resource_assert_sp4_ortools_only):
         cfg.sp4_use_mip = False
         cfg.exact_sp4_use_mip = False
+    cfg.exact_sp4_lkh_time_limit_seconds = int(args.exact_sp4_lkh_time_limit_seconds)
+    cfg.resource_eval_backend = str(args.resource_eval_backend)
+    cfg.fixgurobi_time_limit_sec = float(args.fixgurobi_time_limit_sec)
+    cfg.fixgurobi_mip_gap = float(args.fixgurobi_mip_gap)
+    cfg.fixgurobi_candidate_trial_limit = int(args.fixgurobi_candidate_trial_limit)
+    cfg.fixgurobi_cache_size = int(args.fixgurobi_cache_size)
+    cfg.fixgurobi_fix_used_stack_ids = bool(args.fixgurobi_fix_used_stack_ids)
+    cfg.fixgurobi_output = bool(args.fixgurobi_output)
+    profile = str(args.operator_profile or "baseline_safe").strip().lower()
+    cfg.resource_operator_profile = profile
+    if profile == "critical_xyz_expanded":
+        cfg.resource_enable_xyz_operator = True
+        cfg.resource_enable_critical_path_xyz = True
+        cfg.resource_enable_experimental_z_joint_polish = True
+        cfg.resource_enable_single_flip_sortify = True
+        cfg.resource_enable_best_sortify_polish = True
+        cfg.resource_enable_best_rank_sortify_polish = True
+        cfg.resource_candidate_pool_size = max(int(cfg.resource_candidate_pool_size), 10)
+        cfg.resource_exact_candidate_trial_limit = max(int(cfg.resource_exact_candidate_trial_limit), 10)
+        cfg.resource_xyz_candidate_pool_size = max(int(cfg.resource_xyz_candidate_pool_size), 6)
+        cfg.resource_xyz_exact_candidate_trial_limit = max(int(cfg.resource_xyz_exact_candidate_trial_limit), 6)
+        cfg.resource_stop_if_best_z_no_change_rounds = max(int(cfg.resource_stop_if_best_z_no_change_rounds), 80)
+        cfg.resource_stop_if_validated_best_no_change_rounds = max(int(cfg.resource_stop_if_validated_best_no_change_rounds), 80)
+        cfg.x_repartition_beam_width = max(int(cfg.x_repartition_beam_width), 10)
+        cfg.resource_z_candidate_stack_topk = max(int(cfg.resource_z_candidate_stack_topk), 8)
+    if profile == "route_polish_exact":
+        cfg.resource_enable_xyz_operator = False
+        cfg.resource_enable_critical_path_xyz = False
+        cfg.resource_enable_experimental_z_joint_polish = False
+        cfg.resource_enable_best_y_assignment_polish = True
+        cfg.resource_enable_best_z_sortify_polish = True
+        cfg.resource_enable_best_sortify_polish = True
+        cfg.resource_enable_best_rank_sortify_polish = True
+        cfg.sp4_lkh_time_limit_seconds = max(int(cfg.sp4_lkh_time_limit_seconds), int(args.route_polish_sp4_lkh_time_limit_seconds))
+        cfg.exact_sp4_lkh_time_limit_seconds = max(int(cfg.exact_sp4_lkh_time_limit_seconds), int(args.route_polish_sp4_lkh_time_limit_seconds))
+        cfg.resource_real_eval_period = max(1, min(int(cfg.resource_real_eval_period), 4))
+    if str(cfg.resource_eval_backend).strip().lower() == "fixgurobi_prefix":
+        limit = max(1, int(cfg.fixgurobi_candidate_trial_limit))
+        cfg.resource_candidate_pool_size = min(int(cfg.resource_candidate_pool_size), limit)
+        cfg.resource_exact_candidate_trial_limit = min(int(cfg.resource_exact_candidate_trial_limit), limit)
+        cfg.resource_xyz_candidate_pool_size = min(int(cfg.resource_xyz_candidate_pool_size), limit)
+        cfg.resource_xyz_exact_candidate_trial_limit = min(int(cfg.resource_xyz_exact_candidate_trial_limit), limit)
     return cfg
 
 
@@ -296,6 +384,8 @@ def _run_variant(
             layer_selected[layer_name] = int(layer_selected[layer_name]) + 1
             if bool(iter_row.get("local_accept", False)):
                 layer_accepted[layer_name] = int(layer_accepted[layer_name]) + 1
+    fix_rows = [row for row in iter_rows if str(row.get("eval_backend", "")) == "fixgurobi_prefix"]
+    last_fix_row = dict(fix_rows[-1]) if fix_rows else {}
     initial_makespan = _safe_float(init_metrics.get("initial_makespan", float("nan")))
     summary_best_z = _safe_float(best_row.get("z", float("nan")))
     run_best_z = _safe_float(best_z)
@@ -331,6 +421,13 @@ def _run_variant(
         "x_failure_decapitation_count": int(run_stats.get("x_failure_decapitation_count", 0) or 0),
         "stop_reason": str(run_stats.get("stop_reason", "") or ""),
         "resource_real_eval_period": int(config_row.get("resource_real_eval_period", run_stats.get("resource_real_eval_period", 0)) or 0),
+        "resource_eval_backend": str(args.resource_eval_backend),
+        "fixgurobi_eval_count": int(len(fix_rows)),
+        "fixgurobi_last_status": str(last_fix_row.get("fixgurobi_status", "")),
+        "fixgurobi_last_obj": _safe_float(last_fix_row.get("fixgurobi_obj", float("nan"))),
+        "fixgurobi_last_gap": _safe_float(last_fix_row.get("fixgurobi_gap", float("nan"))),
+        "fixgurobi_last_solve_time": _safe_float(last_fix_row.get("fixgurobi_solve_time", float("nan"))),
+        "fixgurobi_last_fixed_scope": str(last_fix_row.get("fixgurobi_fixed_scope", "")),
         "layer_selected_x": int(layer_selected["X"]),
         "layer_selected_y": int(layer_selected["Y"]),
         "layer_selected_z": int(layer_selected["Z"]),
@@ -406,8 +503,20 @@ def _run_one(args, scale: str, run_idx: int, seed: int, batch_root: str) -> Dict
         ensure_ascii=False,
     )
     target_cmax = _case_target_cmax(scale)
+    current_baseline = _case_current_baseline_cmax(scale)
+    best_value = float(best_row.get("best_z", float("nan")))
     best_row["target_cmax"] = target_cmax
-    best_row["delta_to_target"] = float(best_row.get("best_z", float("nan")) - target_cmax) if math.isfinite(target_cmax) and math.isfinite(float(best_row.get("best_z", float("nan")))) else float("nan")
+    best_row["delta_to_target"] = float(best_value - target_cmax) if math.isfinite(target_cmax) and math.isfinite(best_value) else float("nan")
+    best_row["current_baseline_cmax"] = current_baseline
+    best_row["delta_to_current_baseline"] = float(best_value - current_baseline) if math.isfinite(current_baseline) and math.isfinite(best_value) else float("nan")
+    best_row["not_worse_than_current_baseline"] = bool(
+        (not bool(args.disable_current_baseline_gate))
+        and math.isfinite(current_baseline)
+        and math.isfinite(best_value)
+        and best_value <= current_baseline + 1e-9
+    )
+    if bool(args.disable_current_baseline_gate):
+        best_row["not_worse_than_current_baseline"] = ""
     return best_row
 
 
@@ -428,6 +537,9 @@ def _summarize(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         bom_unique_counts = [row.get("bom_unique_sku_counts") for row in ok_rows if row.get("bom_unique_sku_counts") is not None]
         bom_unique_total_values = [int(row.get("bom_unique_sku_total", 0) or 0) for row in ok_rows]
         resource_real_eval_period_values = [int(row.get("resource_real_eval_period", 0) or 0) for row in ok_rows]
+        resource_eval_backend_values = [row.get("resource_eval_backend") for row in ok_rows if row.get("resource_eval_backend") not in (None, "")]
+        fixgurobi_eval_count_values = [int(row.get("fixgurobi_eval_count", 0) or 0) for row in ok_rows]
+        fixgurobi_last_status_values = [row.get("fixgurobi_last_status") for row in ok_rows if row.get("fixgurobi_last_status") not in (None, "")]
         coverage_hard_reject_values = [int(row.get("coverage_hard_reject_count", 0) or 0) for row in ok_rows]
         exact_cache_hit_values = [int(row.get("exact_eval_cache_hit_count", 0) or 0) for row in ok_rows]
         x_decap_values = [int(row.get("x_failure_decapitation_count", 0) or 0) for row in ok_rows]
@@ -440,13 +552,20 @@ def _summarize(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         layer_accepted_y_values = [int(row.get("layer_accepted_y", 0) or 0) for row in ok_rows]
         layer_accepted_z_values = [int(row.get("layer_accepted_z", 0) or 0) for row in ok_rows]
         layer_accepted_xyz_values = [int(row.get("layer_accepted_xyz", 0) or 0) for row in ok_rows]
+        current_baseline = _case_current_baseline_cmax(scale)
+        best_of_best_z = min(best_values) if best_values else float("nan")
         out.append({
             "scale": scale,
             "run_count": int(len(scale_rows)),
             "ok_count": int(len(ok_rows)),
             "error_count": int(len(scale_rows) - len(ok_rows)),
-            "best_of_best_z": min(best_values) if best_values else float("nan"),
+            "best_of_best_z": best_of_best_z,
             "mean_best_z": (sum(best_values) / len(best_values)) if best_values else float("nan"),
+            "target_cmax": _case_target_cmax(scale),
+            "delta_to_target": float(best_of_best_z - _case_target_cmax(scale)) if math.isfinite(best_of_best_z) and math.isfinite(_case_target_cmax(scale)) else float("nan"),
+            "current_baseline_cmax": current_baseline,
+            "delta_to_current_baseline": float(best_of_best_z - current_baseline) if math.isfinite(best_of_best_z) and math.isfinite(current_baseline) else float("nan"),
+            "not_worse_than_current_baseline": bool(math.isfinite(best_of_best_z) and math.isfinite(current_baseline) and best_of_best_z <= current_baseline + 1e-9),
             "total_runtime_sec": float(sum(runtime_values)) if runtime_values else float("nan"),
             "initial_makespan": _collapse_values(init_makespan_values),
             "improvement_ratio": _collapse_values(improvement_values),
@@ -458,6 +577,9 @@ def _summarize(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             "initial_robot_path_lengths": _collapse_values(init_robot_paths),
             "initial_robot_path_length_total": _collapse_values(init_robot_path_total_values),
             "resource_real_eval_period": _collapse_values(resource_real_eval_period_values),
+            "resource_eval_backend": _collapse_values(resource_eval_backend_values),
+            "fixgurobi_eval_count": _collapse_values(fixgurobi_eval_count_values),
+            "fixgurobi_last_status": _collapse_values(fixgurobi_last_status_values),
             "coverage_hard_reject_count": _collapse_values(coverage_hard_reject_values),
             "exact_eval_cache_hit_count": _collapse_values(exact_cache_hit_values),
             "x_failure_decapitation_count": _collapse_values(x_decap_values),
@@ -493,6 +615,8 @@ def parse_args():
     parser.add_argument("--sp2-time-limit-sec", type=float, default=10.0, help="SP2 time limit")
     parser.add_argument("--sp3-use-mip", action="store_true", help="Use SP3 MIP instead of heuristic")
     parser.add_argument("--sp4-lkh-time-limit-seconds", type=int, default=5, help="SP4 LKH time limit")
+    parser.add_argument("--exact-sp4-lkh-time-limit-seconds", type=int, default=120, help="Exact validation SP4 LKH time limit")
+    parser.add_argument("--route-polish-sp4-lkh-time-limit-seconds", type=int, default=180, help="SP4 LKH time limit used by route_polish_exact profile")
     parser.add_argument("--sp4-first-solution-strategies", type=str, default="PATH_CHEAPEST_ARC,SAVINGS,PARALLEL_CHEAPEST_INSERTION", help="Comma-separated OR-Tools first solution strategies")
     parser.add_argument("--sp4-first-solution-slice-seconds", type=int, default=10, help="Time slice for each SP4 first solution strategy")
     parser.add_argument("--sp4-enable-guided-local-search", action="store_true", help="Enable guided local search as final SP4 pass")
@@ -521,6 +645,16 @@ def parse_args():
     parser.add_argument("--disable-resource-xyz-stagnation-gate", action="store_true", default=False)
     parser.add_argument("--enable-sp3-init-portfolio", action="store_true", default=False, help="Run both SP3 heuristic and SP3 MIP initializations, then keep the better result")
     parser.add_argument("--allow-sp4-mip", action="store_true", default=False, help="Unsafe escape hatch; default forbids SP4 MIP and forces OR-Tools.")
+    parser.add_argument("--operator-profile", type=str, default="baseline_safe", choices=["baseline_safe", "critical_xyz_expanded", "route_polish_exact"], help="Gated TRA operator profile")
+    parser.add_argument("--resource-eval-backend", type=str, default="surrogate", choices=["surrogate", "fixgurobi_prefix"], help="Candidate evaluation backend")
+    parser.add_argument("--fixgurobi-time-limit-sec", type=float, default=20.0, help="Time limit for each fixed-Gurobi candidate evaluation")
+    parser.add_argument("--fixgurobi-mip-gap", type=float, default=0.01, help="MIP gap for each fixed-Gurobi candidate evaluation")
+    parser.add_argument("--fixgurobi-candidate-trial-limit", type=int, default=1, help="Max exact candidates per ALNS round evaluated by fixed Gurobi")
+    parser.add_argument("--fixgurobi-cache-size", type=int, default=128, help="Fixed-Gurobi evaluator cache size")
+    parser.add_argument("--fixgurobi-fix-used-stack-ids", action="store_true", default=False, help="Also force the exact used stack id set for each order")
+    parser.add_argument("--fixgurobi-output", action="store_true", default=False, help="Enable Gurobi log output inside fixed evaluator")
+    parser.add_argument("--disable-current-baseline-gate", action="store_true", default=False, help="Do not mark runs against the locked current TRA baseline")
+    parser.add_argument("--fail-on-current-baseline-regression", action="store_true", default=False, help="Exit nonzero if any case is worse than the locked current TRA baseline")
     parser.add_argument("--gurobi-reference-root", type=str, default=os.path.join(ROOT_DIR, "result", "gurobi_s1_s9_no_scale_adapt_300s_001_20260517"))
     parser.add_argument("--gurobi-s6-reference-root", type=str, default=os.path.join(ROOT_DIR, "result", "gurobi_s6_tune_20260517_try3"))
     parser.add_argument("--write-structure-compare", action="store_true", default=False)
@@ -562,6 +696,9 @@ def main():
             cmp_row["runtime_sec"] = _safe_float(row.get("runtime_sec", float("nan")))
             cmp_row["status"] = str(row.get("status", ""))
             cmp_row["variant_name"] = str(row.get("variant_name", ""))
+            cmp_row["current_baseline_cmax"] = _case_current_baseline_cmax(scale)
+            cmp_row["not_worse_than_current_baseline"] = bool(row.get("not_worse_than_current_baseline", False))
+            cmp_row["reached_by_operator"] = str(row.get("stop_reason", ""))
             structure_rows.append(cmp_row)
     _write_csv(os.path.join(batch_root, "batch_runs.csv"), all_rows)
     _write_csv(os.path.join(batch_root, "batch_summary.csv"), summary_rows)
@@ -577,6 +714,9 @@ def main():
             "seed_base": int(args.seed_base),
             "same_seed": bool(args.same_seed),
             "alns_max_iters": int(args.max_iters),
+            "operator_profile": str(args.operator_profile),
+            "resource_eval_backend": str(args.resource_eval_backend),
+            "current_baseline_cmax": CURRENT_TRA_BASELINE_CMAX,
             "batch_root": batch_root,
         },
     )
@@ -595,6 +735,10 @@ def main():
                     f"scale={row['scale']}, run_count={row['run_count']}, ok_count={row['ok_count']}, "
                     f"error_count={row['error_count']}, best_of_best_z={row['best_of_best_z']}, "
                     f"mean_best_z={row['mean_best_z']}, total_runtime_sec={row['total_runtime_sec']}, "
+                    f"target_cmax={row['target_cmax']}, delta_to_target={row['delta_to_target']}, "
+                    f"current_baseline_cmax={row['current_baseline_cmax']}, "
+                    f"delta_to_current_baseline={row['delta_to_current_baseline']}, "
+                    f"not_worse_than_current_baseline={row['not_worse_than_current_baseline']}, "
                     f"initial_makespan={row['initial_makespan']}, "
                     f"bom_unique_sku_counts={row['bom_unique_sku_counts']}, "
                     f"bom_unique_sku_total={row['bom_unique_sku_total']}, "
@@ -610,6 +754,17 @@ def main():
             ],
         ],
     )
+    if bool(args.fail_on_current_baseline_regression):
+        regressions = [
+            row for row in summary_rows
+            if not bool(row.get("not_worse_than_current_baseline", False))
+        ]
+        if regressions:
+            labels = ", ".join(
+                f"{row['scale']}: {row['best_of_best_z']} > {row['current_baseline_cmax']}"
+                for row in regressions
+            )
+            raise SystemExit(f"current baseline regression: {labels}")
     print(f"[DONE] batch_root={batch_root}")
 
 

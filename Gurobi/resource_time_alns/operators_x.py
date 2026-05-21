@@ -466,10 +466,13 @@ def _partition_state_score(
     station_penalty = sum(score[3] for score in group_scores)
     sku_diversity = sum(score[0] for score in group_scores)
     major_sku_bonus = sum(score[4] for score in group_scores)
+    group_sizes = [float(len(group)) for group in groups if group]
+    size_skew = (max(group_sizes) - min(group_sizes)) if group_sizes else 0.0
     return (
         float(group_count),
         float(candidate_stack_count),
         float(route_span),
+        float(size_skew),
         float(station_penalty),
         float(sku_diversity),
         float(major_sku_bonus),
@@ -509,6 +512,7 @@ def _repair_partition_beam(
     config: ResourceConfig,
     ctx: Dict[str, object],
     station_balance_weight: float,
+    cluster_by_sku: bool = False,
 ) -> Dict[str, object]:
     removed_units = [str(x) for x in (ctx.get("removed_units", []) or [])]
     if not removed_units:
@@ -518,29 +522,52 @@ def _repair_partition_beam(
     origin_group_ids = tuple(str(x) for x in (ctx.get("origin_group_ids", ()) or ()))
     station_templates = tuple(int(x) for x in (ctx.get("station_templates", ()) or ()) if int(x) >= 0)
     size_limit = max(1, int(_capacity_limit(config, int(order_id))))
-    max_groups = max(1, min(int(len(removed_units)), int(size_limit)))
     beam_width = max(2, int(getattr(opt.cfg, "x_repartition_beam_width", 6)))
-    sorted_units = sorted(
-        removed_units,
-        key=lambda unit_id: (
-            int(config.work_units[str(unit_id)].sku_id) if str(unit_id) in config.work_units else 10**9,
-            int(config.work_units[str(unit_id)].occurrence_index) if str(unit_id) in config.work_units else 10**9,
-            str(unit_id),
-        ),
-    )
+    old_group_count = max(1, len([int(x) for x in affected_ids if int(x) >= 0]))
+    template_group_count = len([int(x) for x in station_templates if int(x) >= 0])
+    if bool(cluster_by_sku):
+        grouped_by_sku: Dict[int, List[str]] = defaultdict(list)
+        for unit_id in removed_units:
+            work_unit = config.work_units.get(str(unit_id))
+            sku_id = int(work_unit.sku_id) if work_unit is not None else 10**9
+            grouped_by_sku[int(sku_id)].append(str(unit_id))
+        unit_blocks = [
+            tuple(sorted(rows, key=lambda unit_id: (
+                int(config.work_units[str(unit_id)].occurrence_index) if str(unit_id) in config.work_units else 10**9,
+                str(unit_id),
+            )))
+            for _sku_id, rows in sorted(grouped_by_sku.items(), key=lambda item: (-len(item[1]), int(item[0])))
+            if rows
+        ]
+        max_groups = max(1, min(len(unit_blocks), max(old_group_count, template_group_count, 1)))
+        min_groups = max(1, min(max_groups, template_group_count or old_group_count))
+    else:
+        unit_blocks = [
+            (str(unit_id),)
+            for unit_id in sorted(
+                removed_units,
+                key=lambda unit_id: (
+                    int(config.work_units[str(unit_id)].sku_id) if str(unit_id) in config.work_units else 10**9,
+                    int(config.work_units[str(unit_id)].occurrence_index) if str(unit_id) in config.work_units else 10**9,
+                    str(unit_id),
+                ),
+            )
+        ]
+        max_groups = max(1, min(int(len(removed_units)), int(size_limit)))
+        min_groups = 1
     beam: List[List[List[str]]] = [[]]
-    for unit_id in sorted_units:
+    for unit_block in unit_blocks:
         next_states: List[Tuple[Tuple[float, ...], List[List[str]]]] = []
         for groups in beam:
             for group_idx in range(len(groups)):
-                if len(groups[group_idx]) >= int(size_limit):
+                if len(groups[group_idx]) + len(unit_block) > int(size_limit):
                     continue
                 new_groups = [list(group) for group in groups]
-                new_groups[group_idx].append(str(unit_id))
+                new_groups[group_idx].extend(str(unit_id) for unit_id in unit_block)
                 score = _partition_state_score(opt, config, int(order_id), new_groups, station_templates, float(station_balance_weight))
                 next_states.append((score, new_groups))
             if len(groups) < int(max_groups):
-                new_groups = [list(group) for group in groups] + [[str(unit_id)]]
+                new_groups = [list(group) for group in groups] + [[str(unit_id) for unit_id in unit_block]]
                 score = _partition_state_score(opt, config, int(order_id), new_groups, station_templates, float(station_balance_weight))
                 next_states.append((score, new_groups))
         if not next_states:
@@ -559,8 +586,11 @@ def _repair_partition_beam(
         beam = dedup
     if not beam:
         return {"success": False}
+    feasible_beam = [groups for groups in beam if len(groups) >= int(min_groups)]
+    if not feasible_beam:
+        feasible_beam = beam
     best_groups = min(
-        beam,
+        feasible_beam,
         key=lambda groups: _partition_state_score(opt, config, int(order_id), groups, station_templates, float(station_balance_weight)),
     )
     created_ids = _materialize_partition_groups(config, int(order_id), best_groups, origin_group_ids, station_templates)
@@ -610,7 +640,7 @@ def x_repair_station_balanced_partition(opt, config: ResourceConfig, ctx: Dict[s
 
 def x_repair_sku_cluster_beam(opt, config: ResourceConfig, ctx: Dict[str, object], rng) -> Dict[str, object]:
     del rng
-    return _repair_partition_beam(opt, config, ctx, station_balance_weight=0.35)
+    return _repair_partition_beam(opt, config, ctx, station_balance_weight=0.35, cluster_by_sku=True)
 
 X_DESTROY_OPERATORS = {
     "x_destroy_spatial_outliers": x_destroy_spatial_outliers,

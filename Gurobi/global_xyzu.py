@@ -79,7 +79,7 @@ class GlobalXYZUConfig:
 
     time_limit_sec: float = 2000.0
     mip_gap: float = 0.01
-    candidate_stack_topk: int = 3
+    candidate_stack_topk: int = 999
     max_rank: int = 0
     enable_warm_start: bool = True
     write_lp: bool = False
@@ -88,9 +88,9 @@ class GlobalXYZUConfig:
     # 规模控制
     slot_slack_per_order: int = 1
     enable_tight_slot_upper_bound: bool = True
-    max_candidate_stacks_per_order: int = 12
-    enable_warm_candidate_stack_prune: bool = True
-    candidate_station_topk_per_stack: int = 2
+    max_candidate_stacks_per_order: int = 0
+    enable_warm_candidate_stack_prune: bool = False
+    candidate_station_topk_per_stack: int = 999
     warm_start_sp4_time_limit_sec: int = 15
     u_route_use_mip: bool = True
     big_m_time: float =2000.0
@@ -139,8 +139,17 @@ class GlobalXYZUConfig:
     enable_warm_prune_bound_repair: bool = False
     enable_warm_start_route_repair: bool = True
     enable_scale_adaptive_candidate_prune: bool = False
-    route_pickup_neighbor_limit: int = 5
+    route_pickup_neighbor_limit: int = 0
     forced_candidate_stacks_by_order: Optional[Dict[int, List[int]]] = None
+    fixed_slot_count_by_order: Optional[Dict[int, int]] = None
+    fixed_work_units_by_order_slot: Optional[Dict[int, List[List[str]]]] = None
+    fixed_station_rank_by_order_slot: Optional[Dict[int, List[Optional[Tuple[int, int]]]]] = None
+    fixed_z_descriptors_by_order_slot: Optional[Dict[int, List[List[Dict[str, Any]]]]] = None
+    fixed_used_stack_ids_by_order: Optional[Dict[int, List[int]]] = None
+    fixed_route_arcs_by_robot: Optional[Dict[int, List[Tuple[int, int]]]] = None
+    fixed_route_task_sequence_by_robot: Optional[Dict[int, List[Dict[str, Any]]]] = None
+    fixgurobi_no_warm_start: bool = False
+    fixgurobi_allow_warm_start_fallback: bool = True
 
 
 @dataclass
@@ -308,6 +317,9 @@ class GlobalXYZUSolver:
         cfg = cfg or GlobalXYZUConfig()
         cfg, scale_adaptive_diag = self._apply_scale_adaptive_config(problem, cfg)
         start_clock = time.perf_counter()
+        fixgurobi_no_warm_start = bool(getattr(cfg, "fixgurobi_no_warm_start", False))
+        if bool(fixgurobi_no_warm_start) and bool(getattr(cfg, "enable_warm_start", False)):
+            raise RuntimeError("FixGurobi forbids global_xyzu warm start injection; set enable_warm_start=False.")
 
         # 统一诊断信息：后续用于判断是否真正走了一体化 U MIP，还是进入了 fallback。
         diagnostics: Dict[str, Any] = {
@@ -324,6 +336,8 @@ class GlobalXYZUSolver:
             "gurobi_runtime_sec": 0.0,
             "route_lazy_constraint": bool(getattr(cfg, "route_lazy_constraint", True)),
             "route_lazy_level": int(getattr(cfg, "route_lazy_level", 1)),
+            "fixgurobi_warm_start_disabled": bool(fixgurobi_no_warm_start),
+            "fixgurobi_warm_start_applied": False,
         }
         diagnostics.update(scale_adaptive_diag)
         scale_name = str(getattr(problem, "scale_name", "") or "").upper()
@@ -385,11 +399,15 @@ class GlobalXYZUSolver:
 
             vars_payload = self._build_model(model, prepared, cfg)
             diagnostics.update(vars_payload.get("diagnostics", {}))
+            diagnostics.update(self._apply_fixed_decision_constraints(model, vars_payload, prepared, cfg))
             diagnostics.update(self._collect_model_structure_stats(model))
             if bool(cfg.write_lp):
                 model.write("global_xyzu_model.lp")
             if bool(cfg.enable_warm_start):
+                if bool(getattr(cfg, "fixgurobi_no_warm_start", False)):
+                    raise RuntimeError("FixGurobi attempted to apply a global_xyzu warm start.")
                 diagnostics.update(self._apply_warm_start(vars_payload, prepared, warm))
+                diagnostics["fixgurobi_warm_start_applied"] = False
             # DEBUG_WARM_START = True
             # model.update()
             # if DEBUG_WARM_START and bool(cfg.enable_warm_start):
@@ -481,6 +499,21 @@ class GlobalXYZUSolver:
             gap = float(model.MIPGap) if model.Status in {GRB.OPTIMAL, GRB.TIME_LIMIT} else float("nan")
             status = self._status_label(model.Status)
         except Exception as exc:
+            if not bool(getattr(cfg, "fixgurobi_allow_warm_start_fallback", True)):
+                diagnostics["fallback"] = ""
+                diagnostics["fallback_reason"] = str(exc)
+                diagnostics["u_fallback_reason"] = str(exc)
+                diagnostics["stage"] = "fixgurobi_failed"
+                runtime_sec = float(time.perf_counter() - start_clock)
+                return GlobalXYZUResult(
+                    status="FIXGUROBI_FAILED",
+                    objective=float("inf"),
+                    gap=float("nan"),
+                    runtime_sec=runtime_sec,
+                    subtask_count=0,
+                    task_count=0,
+                    diagnostics=diagnostics,
+                )
             diagnostics["fallback"] = "warm_start"
             diagnostics["fallback_reason"] = str(exc)
             diagnostics["u_fallback_reason"] = str(exc)
@@ -555,6 +588,349 @@ class GlobalXYZUSolver:
             runtime_sec=runtime_sec,
             diagnostics=diagnostics,
         )
+
+    @staticmethod
+    def _fixed_route_arcs_from_cfg(
+        *,
+        cfg: GlobalXYZUConfig,
+        route_task_by_tuple: Dict[Tuple[int, int, int], int],
+        route_tasks: Dict[int, RouteTaskSpec],
+        route_start_nodes: Dict[int, int],
+        route_end_nodes: Dict[int, int],
+        slot_ids_by_order: Dict[int, List[int]],
+    ) -> Tuple[Set[Tuple[int, int]], Dict[str, Any]]:
+        arcs: Set[Tuple[int, int]] = {
+            (int(i), int(j))
+            for rows in dict(getattr(cfg, "fixed_route_arcs_by_robot", None) or {}).values()
+            for i, j in (rows or [])
+        }
+        missing_rows: List[Dict[str, Any]] = []
+        sequence_by_robot = dict(getattr(cfg, "fixed_route_task_sequence_by_robot", None) or {})
+        for robot_key, raw_rows in sequence_by_robot.items():
+            robot_id = int(robot_key)
+            start_node = int(route_start_nodes.get(robot_id, -1))
+            end_node = int(route_end_nodes.get(robot_id, -1))
+            if start_node < 0 or end_node < 0:
+                missing_rows.append({"robot_id": robot_id, "reason": "missing_robot_start_or_end"})
+                continue
+            prev_node = int(start_node)
+            rows = sorted(
+                [dict(row or {}) for row in (raw_rows or [])],
+                key=lambda row: (
+                    int(row.get("trip_id", 0) or 0),
+                    float(row.get("arrival_stack", row.get("arrival_time", 0.0)) or 0.0),
+                    int(row.get("sequence", row.get("task_id", 0)) or 0),
+                ),
+            )
+            for row in rows:
+                if "slot_id" in row:
+                    slot_id = int(row.get("slot_id", -1))
+                elif "order_id" in row and "local_slot_index" in row:
+                    order_id = int(row.get("order_id", -1))
+                    local_idx = int(row.get("local_slot_index", -1))
+                    slot_ids = list(slot_ids_by_order.get(order_id, []) or [])
+                    slot_id = int(slot_ids[local_idx]) if 0 <= local_idx < len(slot_ids) else -1
+                else:
+                    slot_id = int(row.get("subtask_id", -1))
+                stack_id = int(row.get("stack_id", row.get("target_stack_id", -1)))
+                station_id = int(row.get("station_id", row.get("target_station_id", -1)))
+                task_key = route_task_by_tuple.get((int(slot_id), int(stack_id), int(station_id)))
+                if task_key is None or int(task_key) not in route_tasks:
+                    missing_rows.append(
+                        {
+                            "robot_id": robot_id,
+                            "slot_id": int(slot_id),
+                            "stack_id": int(stack_id),
+                            "station_id": int(station_id),
+                            "reason": "missing_route_task_tuple",
+                        }
+                    )
+                    continue
+                spec = route_tasks[int(task_key)]
+                arcs.add((int(prev_node), int(spec.pickup_node)))
+                arcs.add((int(spec.pickup_node), int(spec.delivery_node)))
+                prev_node = int(spec.delivery_node)
+            arcs.add((int(prev_node), int(end_node)))
+        return arcs, {
+            "fixgurobi_fixed_route_arc_count_from_cfg": int(len(arcs)),
+            "fixgurobi_fixed_route_sequence_robot_count": int(len(sequence_by_robot)),
+            "fixgurobi_fixed_route_sequence_missing_count": int(len(missing_rows)),
+            "fixgurobi_fixed_route_sequence_missing_rows": missing_rows[:50],
+        }
+
+    def _apply_fixed_decision_constraints(
+        self,
+        model: gp.Model,
+        payload: Dict[str, Any],
+        prepared: Dict[str, Any],
+        cfg: GlobalXYZUConfig,
+    ) -> Dict[str, Any]:
+        fixed_units = dict(getattr(cfg, "fixed_work_units_by_order_slot", None) or {})
+        fixed_y = dict(getattr(cfg, "fixed_station_rank_by_order_slot", None) or {})
+        fixed_z = dict(getattr(cfg, "fixed_z_descriptors_by_order_slot", None) or {})
+        fixed_used_stacks = dict(getattr(cfg, "fixed_used_stack_ids_by_order", None) or {})
+        fixed_route_arcs = dict(getattr(cfg, "fixed_route_arcs_by_robot", None) or {})
+        fixed_route_sequences = dict(getattr(cfg, "fixed_route_task_sequence_by_robot", None) or {})
+        if not any([fixed_units, fixed_y, fixed_z, fixed_used_stacks, fixed_route_arcs, fixed_route_sequences]):
+            return {"fixgurobi_fixed_constraint_count": 0, "fixgurobi_invalid_fix_count": 0}
+
+        x = payload["x"]
+        a = payload["a"]
+        y = payload["y"]
+        flip = payload["flip"]
+        sort_var = payload["sort"]
+        carry = payload["carry"]
+        hit = payload["hit"]
+        noise = payload["noise"]
+        flip_hit = payload["flip_hit"]
+        route_arc = payload.get("route_arc")
+        interval_lookup: Dict[Tuple[int, int, int, int], SortIntervalSpec] = payload.get("interval_lookup", {})
+        stack_use_expr_by_slot_stack = payload.get("stack_use_expr_by_slot_stack", {})
+        route_task_by_tuple: Dict[Tuple[int, int, int], int] = payload.get("route_task_by_tuple", {})
+        route_tasks: Dict[int, RouteTaskSpec] = payload.get("route_tasks", {})
+        route_start_nodes: Dict[int, int] = payload.get("route_start_nodes", {})
+        route_end_nodes: Dict[int, int] = payload.get("route_end_nodes", {})
+
+        slot_ids_by_order: Dict[int, List[int]] = prepared["slot_ids_by_order"]
+        units_by_order_sku: Dict[Tuple[int, int], List[str]] = prepared["units_by_order_sku"]
+        candidate_stacks_by_order: Dict[int, List[int]] = prepared["candidate_stacks_by_order"]
+        demand_hit_totes_by_order: Dict[int, List[int]] = prepared.get("demand_hit_totes_by_order", {})
+        support_totes_by_order: Dict[int, List[int]] = prepared.get("support_totes_by_order", {})
+
+        constraint_count = 0
+        invalid_count = 0
+
+        def _invalid(reason: str) -> None:
+            nonlocal invalid_count, constraint_count
+            invalid_count += 1
+            model.addConstr(payload["cmax"] <= -1.0, name=f"FixGurobiInvalid_{invalid_count}_{str(reason)[:40]}")
+            constraint_count += 1
+
+        def _slot_id(order_id: int, local_idx: int) -> Optional[int]:
+            slot_ids = list(slot_ids_by_order.get(int(order_id), []) or [])
+            if 0 <= int(local_idx) < len(slot_ids):
+                return int(slot_ids[int(local_idx)])
+            _invalid(f"missing_slot_{order_id}_{local_idx}")
+            return None
+
+        for order_key, rows_raw in fixed_units.items():
+            order_id = int(order_key)
+            rows = list(rows_raw or [])
+            slot_ids = list(slot_ids_by_order.get(order_id, []) or [])
+            order_unit_ids = [
+                str(unit_id)
+                for (oid, _sku_id), unit_ids in units_by_order_sku.items()
+                if int(oid) == order_id
+                for unit_id in unit_ids
+            ]
+            assigned_by_unit: Dict[str, int] = {}
+            for local_idx, unit_ids_raw in enumerate(rows):
+                sid = _slot_id(order_id, int(local_idx))
+                if sid is None:
+                    continue
+                unit_ids = {str(unit_id) for unit_id in (unit_ids_raw or [])}
+                model.addConstr(a[sid] == (1 if unit_ids else 0), name=f"FixXActive_{order_id}_{local_idx}_{sid}")
+                constraint_count += 1
+                for unit_id in unit_ids:
+                    assigned_by_unit[str(unit_id)] = sid
+            for unit_id in order_unit_ids:
+                target_sid = assigned_by_unit.get(str(unit_id), None)
+                for sid in slot_ids:
+                    if (str(unit_id), int(sid)) in x:
+                        model.addConstr(x[str(unit_id), int(sid)] == (1 if target_sid == int(sid) else 0), name=f"FixX_{unit_id}_{sid}")
+                        constraint_count += 1
+            for sid in slot_ids[len(rows):]:
+                model.addConstr(a[int(sid)] == 0, name=f"FixXInactiveTail_{order_id}_{sid}")
+                constraint_count += 1
+
+        for order_key, rows_raw in fixed_y.items():
+            order_id = int(order_key)
+            for local_idx, station_rank in enumerate(list(rows_raw or [])):
+                if station_rank is None:
+                    continue
+                sid = _slot_id(order_id, int(local_idx))
+                if sid is None:
+                    continue
+                station_id, rank = int(station_rank[0]), int(station_rank[1])
+                if (sid, station_id, rank) not in y:
+                    _invalid(f"missing_y_{sid}_{station_id}_{rank}")
+                    continue
+                for key in list(y.keys()):
+                    if int(key[0]) == int(sid):
+                        model.addConstr(y[key] == (1 if key == (sid, station_id, rank) else 0), name=f"FixY_{key[0]}_{key[1]}_{key[2]}")
+                        constraint_count += 1
+
+        for order_key, rows_raw in fixed_z.items():
+            order_id = int(order_key)
+            for local_idx, descriptors_raw in enumerate(list(rows_raw or [])):
+                sid = _slot_id(order_id, int(local_idx))
+                if sid is None:
+                    continue
+                descriptors = [dict(item or {}) for item in (descriptors_raw or [])]
+                selected_stacks = {int(item.get("stack_id", -1)) for item in descriptors if int(item.get("stack_id", -1)) >= 0}
+                selected_flip_stacks: Set[int] = set()
+                selected_sort_keys: Set[Tuple[int, int, int, int]] = set()
+                selected_carry_totes: Set[int] = set()
+                selected_hit_totes: Set[int] = set()
+                selected_noise_totes: Set[int] = set()
+                selected_flip_hit_totes: Set[int] = set()
+                for item in descriptors:
+                    stack_id = int(item.get("stack_id", -1))
+                    mode = str(item.get("mode", "FLIP") or "FLIP").upper()
+                    target_totes = [int(v) for v in (item.get("target_tote_ids", []) or [])]
+                    hit_totes = [int(v) for v in (item.get("hit_tote_ids", []) or [])] or list(target_totes)
+                    noise_totes = [int(v) for v in (item.get("noise_tote_ids", []) or [])]
+                    selected_carry_totes.update(int(v) for v in target_totes)
+                    selected_hit_totes.update(int(v) for v in hit_totes)
+                    selected_noise_totes.update(int(v) for v in noise_totes)
+                    if mode != "SORT":
+                        if stack_id >= 0:
+                            selected_flip_stacks.add(int(stack_id))
+                        selected_flip_hit_totes.update(int(v) for v in hit_totes)
+                    else:
+                        sort_range = item.get("sort_layer_range", None)
+                        chosen_key = None
+                        if sort_range is not None:
+                            key = (sid, stack_id, int(sort_range[0]), int(sort_range[1]))
+                            if key in sort_var:
+                                chosen_key = key
+                        if chosen_key is None:
+                            required = set(target_totes) | set(hit_totes) | set(noise_totes)
+                            for key, interval in interval_lookup.items():
+                                if int(key[0]) == sid and int(key[1]) == stack_id and required.issubset(set(int(v) for v in interval.tote_ids)):
+                                    chosen_key = key
+                                    break
+                        if chosen_key is not None:
+                            selected_sort_keys.add(chosen_key)
+                for stack_id in candidate_stacks_by_order.get(order_id, []):
+                    if (sid, int(stack_id)) in flip and int(stack_id) not in selected_flip_stacks:
+                        model.addConstr(flip[sid, int(stack_id)] == 0, name=f"FixZFlipZero_{sid}_{stack_id}")
+                        constraint_count += 1
+                    for key in list(sort_var.keys()):
+                        if int(key[0]) == sid and int(key[1]) == int(stack_id) and key not in selected_sort_keys:
+                            model.addConstr(sort_var[key] == 0, name=f"FixZSortZero_{key[0]}_{key[1]}_{key[2]}_{key[3]}")
+                            constraint_count += 1
+                for tote_id in support_totes_by_order.get(order_id, []):
+                    if (sid, int(tote_id)) in carry and int(tote_id) not in selected_carry_totes:
+                        model.addConstr(carry[sid, int(tote_id)] == 0, name=f"FixZCarryZero_{sid}_{tote_id}")
+                        constraint_count += 1
+                    if (sid, int(tote_id)) in noise and int(tote_id) not in selected_noise_totes:
+                        model.addConstr(noise[sid, int(tote_id)] == 0, name=f"FixZNoiseZero_{sid}_{tote_id}")
+                        constraint_count += 1
+                for tote_id in demand_hit_totes_by_order.get(order_id, []):
+                    if (sid, int(tote_id)) in hit and int(tote_id) not in selected_hit_totes:
+                        model.addConstr(hit[sid, int(tote_id)] == 0, name=f"FixZHitZero_{sid}_{tote_id}")
+                        constraint_count += 1
+                    if (sid, int(tote_id)) in flip_hit and int(tote_id) not in selected_flip_hit_totes:
+                        model.addConstr(flip_hit[sid, int(tote_id)] == 0, name=f"FixZFlipHitZero_{sid}_{tote_id}")
+                        constraint_count += 1
+
+                for desc_idx, item in enumerate(descriptors):
+                    stack_id = int(item.get("stack_id", -1))
+                    mode = str(item.get("mode", "FLIP") or "FLIP").upper()
+                    target_totes = [int(v) for v in (item.get("target_tote_ids", []) or [])]
+                    hit_totes = [int(v) for v in (item.get("hit_tote_ids", []) or [])]
+                    noise_totes = [int(v) for v in (item.get("noise_tote_ids", []) or [])]
+                    if not hit_totes:
+                        hit_totes = list(target_totes)
+                    if mode == "SORT":
+                        sort_range = item.get("sort_layer_range", None)
+                        chosen_key = None
+                        if sort_range is not None:
+                            low, high = int(sort_range[0]), int(sort_range[1])
+                            key = (sid, stack_id, low, high)
+                            if key in sort_var:
+                                chosen_key = key
+                        if chosen_key is None:
+                            required = set(target_totes) | set(hit_totes) | set(noise_totes)
+                            for key, interval in interval_lookup.items():
+                                if int(key[0]) == sid and int(key[1]) == stack_id and required.issubset(set(int(v) for v in interval.tote_ids)):
+                                    chosen_key = key
+                                    break
+                        if chosen_key is None:
+                            _invalid(f"missing_sort_{sid}_{stack_id}_{desc_idx}")
+                            continue
+                        model.addConstr(sort_var[chosen_key] == 1, name=f"FixZSortOne_{chosen_key[0]}_{chosen_key[1]}_{chosen_key[2]}_{chosen_key[3]}")
+                        constraint_count += 1
+                    else:
+                        if (sid, stack_id) not in flip:
+                            _invalid(f"missing_flip_{sid}_{stack_id}_{desc_idx}")
+                            continue
+                        model.addConstr(flip[sid, stack_id] == 1, name=f"FixZFlipOne_{sid}_{stack_id}_{desc_idx}")
+                        constraint_count += 1
+                    for tote_id in target_totes:
+                        if (sid, int(tote_id)) in carry:
+                            model.addConstr(carry[sid, int(tote_id)] == 1, name=f"FixZCarryOne_{sid}_{tote_id}_{desc_idx}")
+                            constraint_count += 1
+                    for tote_id in hit_totes:
+                        if (sid, int(tote_id)) in hit:
+                            model.addConstr(hit[sid, int(tote_id)] == 1, name=f"FixZHitOne_{sid}_{tote_id}_{desc_idx}")
+                            constraint_count += 1
+                        if mode != "SORT" and (sid, int(tote_id)) in flip_hit:
+                            model.addConstr(flip_hit[sid, int(tote_id)] == 1, name=f"FixZFlipHitOne_{sid}_{tote_id}_{desc_idx}")
+                            constraint_count += 1
+                    for tote_id in noise_totes:
+                        if (sid, int(tote_id)) in noise:
+                            model.addConstr(noise[sid, int(tote_id)] == 1, name=f"FixZNoiseOne_{sid}_{tote_id}_{desc_idx}")
+                            constraint_count += 1
+                if selected_stacks:
+                    for stack_id in selected_stacks:
+                        if (sid, int(stack_id)) not in stack_use_expr_by_slot_stack:
+                            _invalid(f"missing_stack_use_{sid}_{stack_id}")
+
+        for order_key, stack_ids_raw in fixed_used_stacks.items():
+            order_id = int(order_key)
+            allowed = {int(v) for v in (stack_ids_raw or [])}
+            slot_ids = list(slot_ids_by_order.get(order_id, []) or [])
+            for stack_id in candidate_stacks_by_order.get(order_id, []):
+                terms = [
+                    stack_use_expr_by_slot_stack[(int(sid), int(stack_id))]
+                    for sid in slot_ids
+                    if (int(sid), int(stack_id)) in stack_use_expr_by_slot_stack
+                ]
+                if not terms:
+                    continue
+                if int(stack_id) in allowed:
+                    model.addConstr(gp.quicksum(terms) >= 1, name=f"FixUsedStackOne_{order_id}_{stack_id}")
+                else:
+                    model.addConstr(gp.quicksum(terms) == 0, name=f"FixUsedStackZero_{order_id}_{stack_id}")
+                constraint_count += 1
+
+        if (fixed_route_arcs or fixed_route_sequences) and route_arc is not None:
+            fixed_sequence_arcs, fixed_sequence_diag = self._fixed_route_arcs_from_cfg(
+                cfg=cfg,
+                route_task_by_tuple=route_task_by_tuple,
+                route_tasks=route_tasks,
+                route_start_nodes=route_start_nodes,
+                route_end_nodes=route_end_nodes,
+                slot_ids_by_order=slot_ids_by_order,
+            )
+            allowed_arcs = {
+                (int(i), int(j))
+                for arcs in fixed_route_arcs.values()
+                for i, j in (arcs or [])
+            } | set(fixed_sequence_arcs)
+            for key in list(route_arc.keys()):
+                model.addConstr(route_arc[key] == (1 if (int(key[0]), int(key[1])) in allowed_arcs else 0), name=f"FixRouteArc_{key[0]}_{key[1]}")
+                constraint_count += 1
+            for arc in sorted(allowed_arcs):
+                if (int(arc[0]), int(arc[1])) not in route_arc:
+                    _invalid(f"missing_route_arc_{int(arc[0])}_{int(arc[1])}")
+            route_sequence_missing_count = int(fixed_sequence_diag.get("fixgurobi_fixed_route_sequence_missing_count", 0) or 0)
+        else:
+            route_sequence_missing_count = 0
+
+        return {
+            "fixgurobi_fixed_constraint_count": int(constraint_count),
+            "fixgurobi_invalid_fix_count": int(invalid_count),
+            "fixgurobi_fixed_x_order_count": int(len(fixed_units)),
+            "fixgurobi_fixed_y_order_count": int(len(fixed_y)),
+            "fixgurobi_fixed_z_order_count": int(len(fixed_z)),
+            "fixgurobi_fixed_used_stack_order_count": int(len(fixed_used_stacks)),
+            "fixgurobi_fixed_route_arc_robot_count": int(len(fixed_route_arcs)),
+            "fixgurobi_fixed_route_sequence_robot_count": int(len(fixed_route_sequences)),
+            "fixgurobi_fixed_route_sequence_missing_count": int(route_sequence_missing_count),
+        }
 
     @staticmethod
     def _status_label(status_code: int) -> str:
@@ -745,8 +1121,9 @@ class GlobalXYZUSolver:
             required_unit_count = max(1, unique_count)
             lower_bound = max(1, int(math.ceil(float(required_unit_count) / max(1, cap_limit))))
             heur_count = int(len(heuristic_subtasks_by_order.get(order_id, [])))
+            fixed_count = int(dict(getattr(cfg, "fixed_slot_count_by_order", None) or {}).get(int(order_id), 0) or 0)
             slot_count = self._slot_upper_bound(required_unit_count, heur_count, cap_limit, cfg)
-            slot_count = max(slot_count, lower_bound)
+            slot_count = max(slot_count, lower_bound, fixed_count)
             for local_idx in range(slot_count):
                 slot_specs.append(SlotSpec(slot_id=slot_id, order_id=order_id, local_index=local_idx))
                 slot_ids_by_order[order_id].append(slot_id)
@@ -3302,7 +3679,17 @@ class GlobalXYZUSolver:
                 (int(route_start_nodes[int(robot_id)]), int(route_end_nodes[int(robot_id)]))
                 for robot_id in robot_ids
             )
+            fixed_route_arcs_from_sequence, fixed_route_arc_diag = self._fixed_route_arcs_from_cfg(
+                cfg=cfg,
+                route_task_by_tuple=route_task_by_tuple,
+                route_tasks=route_tasks,
+                route_start_nodes=route_start_nodes,
+                route_end_nodes=route_end_nodes,
+                slot_ids_by_order=slot_ids_by_order,
+            )
+            time_big_m_diagnostics.update(fixed_route_arc_diag)
             protected_route_arcs = set(protected_route_arcs) | required_route_arcs
+            protected_route_arcs.update(fixed_route_arcs_from_sequence)
             resource_route_arcs, resource_prune_diag = self._prune_route_arcs_by_resource_bounds(
                 route_nodes=route_nodes,
                 route_tasks=route_tasks,
@@ -4617,6 +5004,9 @@ class GlobalXYZUSolver:
             "hit": hit,
             "noise": noise,
             "flip_hit": flip_hit,
+            "stack_use_expr_by_slot_stack": stack_use_expr_by_slot_stack,
+            "stack_load_expr_by_slot_stack": stack_load_expr_by_slot_stack,
+            "stack_robot_service_expr_by_slot_stack": stack_robot_service_expr_by_slot_stack,
             "pair_activate": pair_activate,
             "arrival": arrival,
             "start": start,

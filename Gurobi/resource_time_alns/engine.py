@@ -36,6 +36,7 @@ from .reporting import build_iter_row
 from .state import OperatorArm, ResourceConfig, UpperEvalResult, ValidatedIncumbent
 from .surrogate import ResourceSurrogateScorer, config_distance
 from .validator import ResourceValidator
+from .fixgurobi_evaluator import FixGurobiEvaluator
 
 
 class ResourceTimeALNSEngine:
@@ -45,33 +46,51 @@ class ResourceTimeALNSEngine:
         self.rng = random.Random(int(getattr(self.cfg, "seed", 42)) + 7919)
         self.validator = ResourceValidator(opt)
         self.scorer = ResourceSurrogateScorer(opt)
+        self.eval_backend = str(getattr(self.cfg, "resource_eval_backend", "surrogate") or "surrogate").strip().lower()
+        self.fixgurobi_evaluator = FixGurobiEvaluator(opt, surrogate_scorer=self.scorer) if self.eval_backend == "fixgurobi_prefix" else None
+        self.fixgurobi_only_eval = bool(
+            self.eval_backend == "fixgurobi_prefix"
+            and bool(getattr(self.cfg, "resource_fixgurobi_skip_ortools_validation", False))
+        )
         self.current_config: ResourceConfig = build_initial_resource_config(opt)
         self.initial_config: ResourceConfig = self.current_config.clone()
-        self.current_eval = self.scorer.evaluate(self.current_config)
-        initial_validation = self.validator.validate(self.current_config, 0)
-        initial_hard_reject_reason = str(initial_validation.get("hard_reject_reason", "") or "")
-        initial_validated_makespans: List[float] = []
-        if not initial_hard_reject_reason:
-            initial_makespan = float(initial_validation.get("makespan", float(getattr(opt.best, "z", float("inf")))))
-            initial_snapshot = initial_validation.get("snapshot", getattr(opt, "best", None))
+        self.current_eval = self._evaluate_config(self.current_config, layer="XYZ")
+        if self.fixgurobi_only_eval:
+            initial_hard_reject_reason = ""
+            initial_makespan = float(self.current_eval.F_raw)
             self.best_validated = ValidatedIncumbent(
                 config=self.current_config.clone(),
                 makespan=float(initial_makespan),
                 iter_id=0,
-                snapshot=initial_snapshot,
-            )
-            initial_validated_makespans = [float(initial_makespan)]
-            if initial_snapshot is not None:
-                self.opt.best = initial_snapshot
-                self.opt.work = initial_snapshot
-                self.opt.work_z = float(initial_makespan)
-        else:
-            self.best_validated = ValidatedIncumbent(
-                config=self.current_config.clone(),
-                makespan=float("inf"),
-                iter_id=0,
                 snapshot=None,
             )
+            initial_validated_makespans = [float(initial_makespan)]
+            self._sync_fixgurobi_best_snapshot(float(initial_makespan), 0)
+        else:
+            initial_validation = self.validator.validate(self.current_config, 0)
+            initial_hard_reject_reason = str(initial_validation.get("hard_reject_reason", "") or "")
+            initial_validated_makespans: List[float] = []
+            if not initial_hard_reject_reason:
+                initial_makespan = float(initial_validation.get("makespan", float(getattr(opt.best, "z", float("inf")))))
+                initial_snapshot = initial_validation.get("snapshot", getattr(opt, "best", None))
+                self.best_validated = ValidatedIncumbent(
+                    config=self.current_config.clone(),
+                    makespan=float(initial_makespan),
+                    iter_id=0,
+                    snapshot=initial_snapshot,
+                )
+                initial_validated_makespans = [float(initial_makespan)]
+                if initial_snapshot is not None:
+                    self.opt.best = initial_snapshot
+                    self.opt.work = initial_snapshot
+                    self.opt.work_z = float(initial_makespan)
+            else:
+                self.best_validated = ValidatedIncumbent(
+                    config=self.current_config.clone(),
+                    makespan=float("inf"),
+                    iter_id=0,
+                    snapshot=None,
+                )
         self.current_eval.metadata.update(
             {
                 "last_validation_iter": 0,
@@ -142,6 +161,50 @@ class ResourceTimeALNSEngine:
         }
         self.opt.joint_colocated_sort_postprocess_stats = self.joint_colocated_sort_postprocess_stats
         self._refresh_operator_stats_payload()
+
+    def _evaluate_config(
+        self,
+        config: ResourceConfig,
+        *,
+        layer: str,
+        score_cache=None,
+        affected_subtask_ids=None,
+        fallback_penalty: float = 0.0,
+        iterations_since_last_validation: int = 0,
+        distance_to_last_validated: float = 0.0,
+    ) -> UpperEvalResult:
+        base_eval = self.scorer.evaluate(
+            config=config,
+            score_cache=score_cache,
+            affected_subtask_ids=affected_subtask_ids,
+            fallback_penalty=float(fallback_penalty),
+            iterations_since_last_validation=int(iterations_since_last_validation),
+            distance_to_last_validated=float(distance_to_last_validated),
+        )
+        if self.fixgurobi_evaluator is None:
+            return base_eval
+        return self.fixgurobi_evaluator.evaluate(
+            config,
+            layer=str(layer),
+            base_eval=base_eval,
+            affected_subtask_ids=affected_subtask_ids,
+        )
+
+    def _sync_fixgurobi_best_snapshot(self, value: float, iter_id: int) -> None:
+        """Keep TRA summary fields aligned when FixGurobi is the only evaluator."""
+        self.opt.work_z = float(value)
+        for attr in ("best", "work"):
+            snapshot = getattr(self.opt, attr, None)
+            if snapshot is None:
+                continue
+            try:
+                snapshot.z = float(value)
+            except Exception:
+                pass
+            try:
+                snapshot.iter_id = int(iter_id)
+            except Exception:
+                pass
 
     def _snapshot_tail_metrics(self, snapshot, config: Optional[ResourceConfig] = None) -> Dict[str, object]:
         rows = list(getattr(snapshot, "subtask_state", []) or [])
@@ -244,20 +307,22 @@ class ResourceTimeALNSEngine:
             arms["Z"]["destroy"].pop("z_destroy_shared_stack_window", None)
             arms["Z"]["repair"].pop("z_repair_cross_subtask_shared_stack", None)
             arms["Z"]["repair"].pop("z_repair_multistack_cover_compact", None)
-        # Keep the default Z search space aligned with the older 161626 baseline.
-        # Later-added diversification operators change the sampled operator pool and
-        # split probability mass away from the historical sort/flip repair path.
-        for name in (
-            "z_destroy_spread_hotspot_window",
-            "z_destroy_random_window",
-            "z_destroy_related_stack_window",
-        ):
-            arms["Z"]["destroy"].pop(name, None)
-        for name in (
-            "z_repair_same_stack_window",
-            "z_repair_load_balance_idle_robot",
-        ):
-            arms["Z"]["repair"].pop(name, None)
+        profile = str(getattr(self.cfg, "resource_operator_profile", "baseline_safe") or "baseline_safe").strip().lower()
+        if profile == "baseline_safe":
+            # Keep the default Z search space aligned with the older 161626 baseline.
+            # Later-added diversification operators change the sampled operator pool and
+            # split probability mass away from the historical sort/flip repair path.
+            for name in (
+                "z_destroy_spread_hotspot_window",
+                "z_destroy_random_window",
+                "z_destroy_related_stack_window",
+            ):
+                arms["Z"]["destroy"].pop(name, None)
+            for name in (
+                "z_repair_same_stack_window",
+                "z_repair_load_balance_idle_robot",
+            ):
+                arms["Z"]["repair"].pop(name, None)
         if not bool(getattr(self.cfg, "resource_enable_experimental_x_repartition", False)):
             arms["X"]["destroy"].pop("x_destroy_order_repartition", None)
             arms["X"]["destroy"].pop("x_destroy_critical_order_cluster", None)
@@ -279,6 +344,13 @@ class ResourceTimeALNSEngine:
             arms["Y"]["repair"].pop("y_repair_station_rank_permutation", None)
         if not bool(getattr(self.cfg, "resource_enable_experimental_z_joint_polish", False)):
             arms["Z"]["repair"].pop("z_repair_stack_mode_joint_polish", None)
+        if profile == "route_polish_exact":
+            if "z_destroy_critical_path_window" in arms["Z"]["destroy"]:
+                arms["Z"]["destroy"]["z_destroy_critical_path_window"].weight = 4.0
+            if "y_destroy_critical_path_block" in arms["Y"]["destroy"]:
+                arms["Y"]["destroy"]["y_destroy_critical_path_block"].weight = 3.5
+            if "x_destroy_critical_order_cluster" in arms["X"]["destroy"]:
+                arms["X"]["destroy"]["x_destroy_critical_order_cluster"].weight = 4.0
         for name, weight in {
             "z_repair_gurobi_like_sort": 3.0,
             "z_repair_sort_range_shrink_first": 2.0,
@@ -670,8 +742,9 @@ class ResourceTimeALNSEngine:
         if payload is None:
             return None
         candidate_signature = payload["config"].validation_signature()
-        candidate_eval = self.scorer.evaluate(
+        candidate_eval = self._evaluate_config(
             config=payload["config"],
+            layer="X",
             score_cache=payload.get("score_cache", None),
             affected_subtask_ids=payload.get("affected_ids", set()),
             fallback_penalty=0.15 if bool(payload.get("fallback_used", False)) else 0.0,
@@ -697,6 +770,14 @@ class ResourceTimeALNSEngine:
             "projection_repaired_subtask_count": int(payload.get("projection_repaired_subtask_count", 0)),
             "F_raw": float(candidate_eval.F_raw),
             "F_cal": float(candidate_eval.F_cal),
+            "eval_backend": str(candidate_eval.metadata.get("eval_backend", "surrogate")),
+            "fixgurobi_status": str(candidate_eval.metadata.get("fixgurobi_status", "")),
+            "fixgurobi_obj": candidate_eval.metadata.get("fixgurobi_obj", ""),
+            "fixgurobi_bound": candidate_eval.metadata.get("fixgurobi_bound", ""),
+            "fixgurobi_gap": candidate_eval.metadata.get("fixgurobi_gap", ""),
+            "fixgurobi_solve_time": candidate_eval.metadata.get("fixgurobi_solve_time", ""),
+            "fixgurobi_fixed_scope": str(candidate_eval.metadata.get("fixgurobi_fixed_scope", "")),
+            "fixgurobi_infeasible_reason": str(candidate_eval.metadata.get("fixgurobi_infeasible_reason", "")),
             "duplicate_tote_count": int(candidate_eval.duplicate_tote_count),
             "duplicate_tote_penalty": float(candidate_eval.duplicate_tote_penalty),
             "candidate_signature": self._candidate_signature_text(candidate_signature),
@@ -846,8 +927,9 @@ class ResourceTimeALNSEngine:
             "projection_repaired_subtask_count": int(projection_count),
         }
         candidate_signature = candidate.validation_signature()
-        candidate_eval = self.scorer.evaluate(
+        candidate_eval = self._evaluate_config(
             config=candidate,
+            layer="XYZ",
             score_cache=None,
             affected_subtask_ids=touched_ids,
             fallback_penalty=0.20 if bool(fallback_used) else 0.0,
@@ -873,6 +955,14 @@ class ResourceTimeALNSEngine:
             "projection_repaired_subtask_count": int(projection_count),
             "F_raw": float(candidate_eval.F_raw),
             "F_cal": float(candidate_eval.F_cal),
+            "eval_backend": str(candidate_eval.metadata.get("eval_backend", "surrogate")),
+            "fixgurobi_status": str(candidate_eval.metadata.get("fixgurobi_status", "")),
+            "fixgurobi_obj": candidate_eval.metadata.get("fixgurobi_obj", ""),
+            "fixgurobi_bound": candidate_eval.metadata.get("fixgurobi_bound", ""),
+            "fixgurobi_gap": candidate_eval.metadata.get("fixgurobi_gap", ""),
+            "fixgurobi_solve_time": candidate_eval.metadata.get("fixgurobi_solve_time", ""),
+            "fixgurobi_fixed_scope": str(candidate_eval.metadata.get("fixgurobi_fixed_scope", "")),
+            "fixgurobi_infeasible_reason": str(candidate_eval.metadata.get("fixgurobi_infeasible_reason", "")),
             "duplicate_tote_count": int(candidate_eval.duplicate_tote_count),
             "duplicate_tote_penalty": float(candidate_eval.duplicate_tote_penalty),
             "candidate_signature": self._candidate_signature_text(candidate_signature),
@@ -1057,8 +1147,9 @@ class ResourceTimeALNSEngine:
                 continue
             exact_count += 1
             candidate_signature = exact_payload["config"].validation_signature()
-            candidate_eval = self.scorer.evaluate(
+            candidate_eval = self._evaluate_config(
                 config=exact_payload["config"],
+                layer=str(layer).upper(),
                 score_cache=exact_payload.get("score_cache", None),
                 affected_subtask_ids=exact_payload.get("affected_ids", set()),
                 fallback_penalty=0.15 if bool(exact_payload.get("fallback_used", False)) else 0.0,
@@ -1084,6 +1175,14 @@ class ResourceTimeALNSEngine:
                 "projection_repaired_subtask_count": int(exact_payload.get("projection_repaired_subtask_count", 0)),
                 "F_raw": float(candidate_eval.F_raw),
                 "F_cal": float(candidate_eval.F_cal),
+                "eval_backend": str(candidate_eval.metadata.get("eval_backend", "surrogate")),
+                "fixgurobi_status": str(candidate_eval.metadata.get("fixgurobi_status", "")),
+                "fixgurobi_obj": candidate_eval.metadata.get("fixgurobi_obj", ""),
+                "fixgurobi_bound": candidate_eval.metadata.get("fixgurobi_bound", ""),
+                "fixgurobi_gap": candidate_eval.metadata.get("fixgurobi_gap", ""),
+                "fixgurobi_solve_time": candidate_eval.metadata.get("fixgurobi_solve_time", ""),
+                "fixgurobi_fixed_scope": str(candidate_eval.metadata.get("fixgurobi_fixed_scope", "")),
+                "fixgurobi_infeasible_reason": str(candidate_eval.metadata.get("fixgurobi_infeasible_reason", "")),
                 "duplicate_tote_count": int(candidate_eval.duplicate_tote_count),
                 "duplicate_tote_penalty": float(candidate_eval.duplicate_tote_penalty),
                 "candidate_signature": self._candidate_signature_text(candidate_signature),
@@ -1184,8 +1283,9 @@ class ResourceTimeALNSEngine:
     def _restart_current_search_state(self, iter_id: int) -> None:
         self.multi_start_restart_count = int(getattr(self, "multi_start_restart_count", 0)) + 1
         self.current_config = getattr(self, "initial_config", self.current_config).clone()
-        self.current_eval = self.scorer.evaluate(
+        self.current_eval = self._evaluate_config(
             config=self.current_config,
+            layer="XYZ",
             iterations_since_last_validation=0,
             distance_to_last_validated=config_distance(self.current_config, self.last_validated_config),
         )
@@ -1216,8 +1316,9 @@ class ResourceTimeALNSEngine:
                     payload = applier(self.opt, self.current_config, plan, self.rng)
             if payload is not None and bool(payload.get("success", True)) and payload.get("config", None) is not None:
                 self.current_config = payload["config"]
-                self.current_eval = self.scorer.evaluate(
+                self.current_eval = self._evaluate_config(
                     config=self.current_config,
+                    layer=str(layer),
                     affected_subtask_ids=payload.get("affected_ids", set()),
                     fallback_penalty=0.15 if bool(payload.get("fallback_used", False)) else 0.0,
                     iterations_since_last_validation=0,
@@ -1647,8 +1748,9 @@ class ResourceTimeALNSEngine:
             if enhanced_config.subtasks[int(subtask_id)].validation_signature()
             != candidate_config.subtasks.get(int(subtask_id), enhanced_config.subtasks[int(subtask_id)]).validation_signature()
         )
-        enhanced_eval = self.scorer.evaluate(
+        enhanced_eval = self._evaluate_config(
             config=enhanced_config,
+            layer="Z",
             score_cache=enhanced_payload.get("score_cache", None),
             affected_subtask_ids=enhanced_payload.get("affected_ids", set()),
             fallback_penalty=0.15 if bool(enhanced_payload.get("fallback_used", False)) else 0.0,
@@ -1681,6 +1783,14 @@ class ResourceTimeALNSEngine:
         updated_row["candidate_eval"] = enhanced_eval
         updated_row["F_raw"] = float(enhanced_eval.F_raw)
         updated_row["F_cal"] = float(enhanced_eval.F_cal)
+        updated_row["eval_backend"] = str(enhanced_eval.metadata.get("eval_backend", "surrogate"))
+        updated_row["fixgurobi_status"] = str(enhanced_eval.metadata.get("fixgurobi_status", ""))
+        updated_row["fixgurobi_obj"] = enhanced_eval.metadata.get("fixgurobi_obj", "")
+        updated_row["fixgurobi_bound"] = enhanced_eval.metadata.get("fixgurobi_bound", "")
+        updated_row["fixgurobi_gap"] = enhanced_eval.metadata.get("fixgurobi_gap", "")
+        updated_row["fixgurobi_solve_time"] = enhanced_eval.metadata.get("fixgurobi_solve_time", "")
+        updated_row["fixgurobi_fixed_scope"] = str(enhanced_eval.metadata.get("fixgurobi_fixed_scope", ""))
+        updated_row["fixgurobi_infeasible_reason"] = str(enhanced_eval.metadata.get("fixgurobi_infeasible_reason", ""))
         updated_row["duplicate_tote_count"] = int(enhanced_eval.duplicate_tote_count)
         updated_row["duplicate_tote_penalty"] = float(enhanced_eval.duplicate_tote_penalty)
         updated_row["candidate_signature_tuple"] = enhanced_config.validation_signature()
@@ -1789,18 +1899,28 @@ class ResourceTimeALNSEngine:
                 coverage_hard_reject = bool(not getattr(candidate_eval, "coverage_feasible", True))
                 unmet_sku_total = int(getattr(candidate_eval, "unmet_sku_total", 0) or 0)
                 force_validation_cap = max(1, int(getattr(self.cfg, "resource_force_exact_validation_subtask_cap", 6)))
-                if bool(coverage_hard_reject):
+                if not math.isfinite(float(candidate_eval.F_raw)):
+                    candidate_hard_reject_reason = str(
+                        candidate_eval.metadata.get("fixgurobi_infeasible_reason", "nonfinite_candidate_eval")
+                    )
+                    coverage_hard_reject = True
+                    reward = -6.0
+                elif bool(coverage_hard_reject):
                     candidate_hard_reject_reason = "coverage_hard_reject"
                     reward = -6.0
                 else:
-                    if str(layer).upper() in {"X", "XYZ"} and len(set(int(x) for x in (candidate_payload.get("affected_ids", set()) or set()))) <= int(force_validation_cap):
+                    if (
+                        not self.fixgurobi_only_eval
+                        and str(layer).upper() in {"X", "XYZ"}
+                        and len(set(int(x) for x in (candidate_payload.get("affected_ids", set()) or set()))) <= int(force_validation_cap)
+                    ):
                         precomputed_validation = self.validator.validate(candidate_config, iter_id)
                         precomputed_validation["_trigger_reason"] = "force_exact_validation"
                         if str(precomputed_validation.get("hard_reject_reason", "") or ""):
                             coverage_hard_reject = True
                             candidate_hard_reject_reason = str(precomputed_validation.get("hard_reject_reason", "") or "pre_accept_validation_fail")
                             reward = -6.0
-                    if not bool(getattr(self.cfg, "resource_joint_colocated_sort_on_accepted_only", True)):
+                    if (not self.fixgurobi_only_eval) and not bool(getattr(self.cfg, "resource_joint_colocated_sort_on_accepted_only", True)):
                         selected_candidate, precomputed_validation, joint_postprocess_stats, joint_postprocess_time_sec = self._maybe_apply_joint_colocated_sort_postprocess(
                             int(iter_id),
                             str(layer),
@@ -1814,7 +1934,12 @@ class ResourceTimeALNSEngine:
                             candidate_signature = candidate_payload["config"].validation_signature()
                     accepted, accept_prob, effective_sa_temperature, acceptance_mode, lahc_threshold = self._accept_candidate(candidate_eval, layer)
                     x_temp_boost_used = bool(str(layer) == "X")
-                if accepted and not bool(coverage_hard_reject) and bool(getattr(self.cfg, "resource_joint_colocated_sort_on_accepted_only", True)):
+                if (
+                    accepted
+                    and not bool(coverage_hard_reject)
+                    and (not self.fixgurobi_only_eval)
+                    and bool(getattr(self.cfg, "resource_joint_colocated_sort_on_accepted_only", True))
+                ):
                     selected_candidate, precomputed_validation, joint_postprocess_stats, joint_postprocess_time_sec = self._maybe_apply_joint_colocated_sort_postprocess(
                         int(iter_id),
                         str(layer),
@@ -1834,121 +1959,149 @@ class ResourceTimeALNSEngine:
                     if precomputed_validation is not None and precomputed_validation.get("snapshot", None) is not None:
                         self.opt.restore_snapshot(precomputed_validation["snapshot"])
                     reward = 1.0 if bool(fallback_used) else 3.0
-                    validation_trigger = self._candidate_validation_trigger(
-                        int(iter_id),
-                        candidate_eval,
-                        candidate_signature,
-                        precomputed_validation,
-                    )
-                    if validation_trigger == "periodic_skip_same_config":
+                    if self.fixgurobi_only_eval:
+                        validated_makespan = float(candidate_eval.F_raw)
+                        validation_trigger = "fixgurobi_only"
+                        val_time = float(candidate_eval.metadata.get("fixgurobi_solve_time", 0.0) or 0.0)
+                        self.recent_validated_makespans.append(float(validated_makespan))
                         self.last_validation_iter = int(iter_id)
-                    elif validation_trigger:
-                        t_val0 = time.perf_counter()
-                        validation = precomputed_validation if precomputed_validation is not None else self.validator.validate(self.current_config, iter_id)
-                        val_time = float(time.perf_counter() - t_val0) + float(joint_postprocess_time_sec)
-                        self.opt.layer_runtime_sec_by_name["U"] = float(self.opt.layer_runtime_sec_by_name.get("U", 0.0)) + val_time
-                        actual_lkh_calls = int(validation.get("validation_call_count", validation.get("lkh_call_count", 1)) or 0)
-                        self.opt.global_eval_count = int(getattr(self.opt, "global_eval_count", 0)) + int(actual_lkh_calls)
-                        self.lkh_call_count += int(actual_lkh_calls)
-                        coverage_hard_reject = bool(validation.get("coverage_hard_reject", False))
-                        unmet_sku_total = int(validation.get("unmet_sku_total", 0) or 0)
-                        validation_hard_reject_reason = str(validation.get("hard_reject_reason", "") or "")
-                        if str(validation_hard_reject_reason) == "coverage_hard_reject":
-                            self.coverage_hard_reject_count += 1
-                        if str(validation_hard_reject_reason):
-                            repaired_config = None
-                            repaired_validation = None
-                            if str(validation_hard_reject_reason) == "unassigned_robot_task_hard_reject":
-                                repaired_config, repaired_validation = self._attempt_constrained_reentry(
-                                    int(iter_id),
-                                    previous_config=pre_accept_config,
-                                    previous_eval=pre_accept_eval,
-                                    candidate_config=self.current_config,
-                                    validation=validation,
-                                )
-                            if repaired_config is not None and repaired_validation is not None:
-                                validation = dict(repaired_validation)
-                                validation_hard_reject_reason = str(validation.get("hard_reject_reason", "") or "")
-                                self.current_config = repaired_config
-                                self.current_eval = self.scorer.evaluate(
-                                    config=self.current_config,
-                                    iterations_since_last_validation=int(iter_id) - int(self.last_validation_iter),
-                                    distance_to_last_validated=config_distance(self.current_config, self.last_validated_config),
-                                )
-                                candidate_eval = self.current_eval
-                            if str(validation_hard_reject_reason):
-                                candidate_hard_reject_reason = str(validation_hard_reject_reason)
-                                reward = -6.0
-                                self.current_config = self.best_validated.config.clone()
-                                self.last_validated_config = self.best_validated.config.clone()
-                                self.last_validated_signature = self.best_validated.config.validation_signature()
-                                self.opt._clear_z_detour_cache()
-                                self.current_eval = self.scorer.evaluate(
-                                    config=self.current_config,
-                                    iterations_since_last_validation=0,
-                                    distance_to_last_validated=0.0,
-                                )
-                                accepted = False
-                                validation_trigger = str(validation_hard_reject_reason)
-                                validated_makespan = float("inf")
-                        if not str(validation_hard_reject_reason):
-                            guard_reason, guard_meta = self._tail_guard_reason(validation, self.current_config)
-                            tail_guard_reason = str(guard_reason)
-                            tail_guard_meta = dict(guard_meta or {})
-                            if str(guard_reason):
-                                tail_guard_rejected = True
-                                candidate_hard_reject_reason = f"tail_guard:{guard_reason}"
-                                reward = -6.0
-                                self.current_config = self.best_validated.config.clone()
-                                self.last_validated_config = self.best_validated.config.clone()
-                                self.last_validated_signature = self.best_validated.config.validation_signature()
-                                self.opt._clear_z_detour_cache()
-                                self.current_eval = self.scorer.evaluate(
-                                    config=self.current_config,
-                                    iterations_since_last_validation=0,
-                                    distance_to_last_validated=0.0,
-                                )
-                                accepted = False
-                                validation_trigger = f"tail_guard:{guard_reason}"
-                                validated_makespan = float(validation.get("makespan", float("inf")))
-                        if not str(validation_hard_reject_reason) and not bool(tail_guard_rejected):
-                            validated_makespan = float(validation["makespan"])
-                            self.recent_validated_makespans.append(float(validated_makespan))
+                        self.last_validation_f_raw = float(candidate_eval.F_raw)
+                        self.last_validated_config = self.current_config.clone()
+                        self.last_validated_signature = candidate_signature
+                        self.opt._clear_z_detour_cache()
+                        prev_best = float(self.best_validated.makespan)
+                        if float(validated_makespan) + 1e-9 < float(prev_best):
+                            self.best_validated = ValidatedIncumbent(
+                                config=self.current_config.clone(),
+                                makespan=float(validated_makespan),
+                                iter_id=int(iter_id),
+                                snapshot=None,
+                            )
+                            self._sync_fixgurobi_best_snapshot(float(validated_makespan), int(iter_id))
+                            improved_best = True
+                            reward = 8.0
+                        else:
+                            reward = 6.0
+                    else:
+                        validation_trigger = self._candidate_validation_trigger(
+                            int(iter_id),
+                            candidate_eval,
+                            candidate_signature,
+                            precomputed_validation,
+                        )
+                        if validation_trigger == "periodic_skip_same_config":
                             self.last_validation_iter = int(iter_id)
-                            self.last_validation_f_raw = float(candidate_eval.F_raw)
-                            self.last_validated_config = self.current_config.clone()
-                            self.last_validated_signature = candidate_signature
-                            self.opt._clear_z_detour_cache()
-                            self.scorer.update_with_validation(candidate_eval, validated_makespan)
-                            prev_best = float(self.best_validated.makespan)
-                            if float(validated_makespan) + 1e-9 < float(prev_best):
-                                self.best_validated = ValidatedIncumbent(
-                                    config=self.current_config.clone(),
-                                    makespan=float(validated_makespan),
-                                    iter_id=int(iter_id),
-                                    snapshot=validation["snapshot"],
-                                )
-                                self.opt.best = validation["snapshot"]
-                                self.opt.work = validation["snapshot"]
-                                self.opt.work_z = float(validated_makespan)
-                                improved_best = True
-                                reward = 8.0
-                            else:
-                                reward = 6.0
-                                catastrophic_threshold = self._catastrophic_threshold()
-                                if float(validated_makespan) > float(self.best_validated.makespan) * catastrophic_threshold + 1e-9:
-                                    catastrophic_rollback = True
+                        elif validation_trigger:
+                            t_val0 = time.perf_counter()
+                            validation = precomputed_validation if precomputed_validation is not None else self.validator.validate(self.current_config, iter_id)
+                            val_time = float(time.perf_counter() - t_val0) + float(joint_postprocess_time_sec)
+                            self.opt.layer_runtime_sec_by_name["U"] = float(self.opt.layer_runtime_sec_by_name.get("U", 0.0)) + val_time
+                            actual_lkh_calls = int(validation.get("validation_call_count", validation.get("lkh_call_count", 1)) or 0)
+                            self.opt.global_eval_count = int(getattr(self.opt, "global_eval_count", 0)) + int(actual_lkh_calls)
+                            self.lkh_call_count += int(actual_lkh_calls)
+                            coverage_hard_reject = bool(validation.get("coverage_hard_reject", False))
+                            unmet_sku_total = int(validation.get("unmet_sku_total", 0) or 0)
+                            validation_hard_reject_reason = str(validation.get("hard_reject_reason", "") or "")
+                            if str(validation_hard_reject_reason) == "coverage_hard_reject":
+                                self.coverage_hard_reject_count += 1
+                            if str(validation_hard_reject_reason):
+                                repaired_config = None
+                                repaired_validation = None
+                                if str(validation_hard_reject_reason) == "unassigned_robot_task_hard_reject":
+                                    repaired_config, repaired_validation = self._attempt_constrained_reentry(
+                                        int(iter_id),
+                                        previous_config=pre_accept_config,
+                                        previous_eval=pre_accept_eval,
+                                        candidate_config=self.current_config,
+                                        validation=validation,
+                                    )
+                                if repaired_config is not None and repaired_validation is not None:
+                                    validation = dict(repaired_validation)
+                                    validation_hard_reject_reason = str(validation.get("hard_reject_reason", "") or "")
+                                    self.current_config = repaired_config
+                                    self.current_eval = self._evaluate_config(
+                                        config=self.current_config,
+                                        layer=str(layer),
+                                        iterations_since_last_validation=int(iter_id) - int(self.last_validation_iter),
+                                        distance_to_last_validated=config_distance(self.current_config, self.last_validated_config),
+                                    )
+                                    candidate_eval = self.current_eval
+                                if str(validation_hard_reject_reason):
+                                    candidate_hard_reject_reason = str(validation_hard_reject_reason)
                                     reward = -6.0
                                     self.current_config = self.best_validated.config.clone()
                                     self.last_validated_config = self.best_validated.config.clone()
                                     self.last_validated_signature = self.best_validated.config.validation_signature()
                                     self.opt._clear_z_detour_cache()
-                                    self.current_eval = self.scorer.evaluate(
+                                    self.current_eval = self._evaluate_config(
                                         config=self.current_config,
+                                        layer="XYZ",
                                         iterations_since_last_validation=0,
                                         distance_to_last_validated=0.0,
                                     )
-                                    self.temperature = float(max(self.temperature, reheat * self.temperature))
+                                    accepted = False
+                                    validation_trigger = str(validation_hard_reject_reason)
+                                    validated_makespan = float("inf")
+                            if not str(validation_hard_reject_reason):
+                                guard_reason, guard_meta = self._tail_guard_reason(validation, self.current_config)
+                                tail_guard_reason = str(guard_reason)
+                                tail_guard_meta = dict(guard_meta or {})
+                                if str(guard_reason):
+                                    tail_guard_rejected = True
+                                    candidate_hard_reject_reason = f"tail_guard:{guard_reason}"
+                                    reward = -6.0
+                                    self.current_config = self.best_validated.config.clone()
+                                    self.last_validated_config = self.best_validated.config.clone()
+                                    self.last_validated_signature = self.best_validated.config.validation_signature()
+                                    self.opt._clear_z_detour_cache()
+                                    self.current_eval = self._evaluate_config(
+                                        config=self.current_config,
+                                        layer="XYZ",
+                                        iterations_since_last_validation=0,
+                                        distance_to_last_validated=0.0,
+                                    )
+                                    accepted = False
+                                    validation_trigger = f"tail_guard:{guard_reason}"
+                                    validated_makespan = float(validation.get("makespan", float("inf")))
+                            if not str(validation_hard_reject_reason) and not bool(tail_guard_rejected):
+                                validated_makespan = float(validation["makespan"])
+                                self.recent_validated_makespans.append(float(validated_makespan))
+                                self.last_validation_iter = int(iter_id)
+                                self.last_validation_f_raw = float(candidate_eval.F_raw)
+                                self.last_validated_config = self.current_config.clone()
+                                self.last_validated_signature = candidate_signature
+                                self.opt._clear_z_detour_cache()
+                                self.scorer.update_with_validation(candidate_eval, validated_makespan)
+                                prev_best = float(self.best_validated.makespan)
+                                if float(validated_makespan) + 1e-9 < float(prev_best):
+                                    self.best_validated = ValidatedIncumbent(
+                                        config=self.current_config.clone(),
+                                        makespan=float(validated_makespan),
+                                        iter_id=int(iter_id),
+                                        snapshot=validation["snapshot"],
+                                    )
+                                    self.opt.best = validation["snapshot"]
+                                    self.opt.work = validation["snapshot"]
+                                    self.opt.work_z = float(validated_makespan)
+                                    improved_best = True
+                                    reward = 8.0
+                                else:
+                                    reward = 6.0
+                                    catastrophic_threshold = self._catastrophic_threshold()
+                                    if float(validated_makespan) > float(self.best_validated.makespan) * catastrophic_threshold + 1e-9:
+                                        catastrophic_rollback = True
+                                        reward = -6.0
+                                        self.current_config = self.best_validated.config.clone()
+                                        self.last_validated_config = self.best_validated.config.clone()
+                                        self.last_validated_signature = self.best_validated.config.validation_signature()
+                                        self.opt._clear_z_detour_cache()
+                                        self.current_eval = self._evaluate_config(
+                                            config=self.current_config,
+                                            layer="XYZ",
+                                            iterations_since_last_validation=0,
+                                            distance_to_last_validated=0.0,
+                                        )
+                                        self.temperature = float(max(self.temperature, reheat * self.temperature))
             else:
                 candidate_hard_reject_reason = str(candidate_pool_info.get("hard_reject_reason", "") or "no_candidate_pool")
                 if int(candidate_pool_info.get("generated_count", 0)) <= 0:
@@ -2001,6 +2154,7 @@ class ResourceTimeALNSEngine:
                 catastrophic_rollback=bool(catastrophic_rollback),
                 lkh_budget_consumed_by_rollback=int(self.lkh_budget_consumed_by_rollback),
                 extra={
+                    "case": str(getattr(self.cfg, "scale", "")),
                     "prev_f_raw": float(prev_f_raw),
                     "local_obj": float(candidate_eval.F_raw),
                     "sa_temperature": float(effective_sa_temperature),
@@ -2089,6 +2243,10 @@ class ResourceTimeALNSEngine:
             else:
                 self.no_best_z_change_rounds = float(self.no_best_z_change_rounds) + float(stagnation_increment)
                 self.validated_best_no_change_rounds = int(self.validated_best_no_change_rounds) + 1
+            target_cmax = float(getattr(self.cfg, "resource_target_cmax", float("nan")))
+            if math.isfinite(target_cmax) and float(self.best_validated.makespan) <= float(target_cmax) + 1e-9:
+                self.opt.stop_reason = "target_reached"
+                break
             hard_stop_rounds = int(getattr(
                 self.cfg,
                 "resource_stop_if_validated_best_no_change_rounds",
@@ -2111,9 +2269,14 @@ class ResourceTimeALNSEngine:
         self.opt.adaptive_destroy_bonus = float(self.adaptive_destroy_bonus)
         if not str(getattr(self.opt, "stop_reason", "") or ""):
             self.opt.stop_reason = "max_iters_reached"
-        z_polish_stats = self._best_z_sortify_polish()
-        polish_stats = self._best_y_assignment_polish()
-        z_polish_stats_after_y = self._best_z_sortify_polish()
+        if self.fixgurobi_only_eval:
+            z_polish_stats = {"enabled": False, "applied": False}
+            polish_stats = {"enabled": False, "applied": False}
+            z_polish_stats_after_y = {"enabled": False, "applied": False}
+        else:
+            z_polish_stats = self._best_z_sortify_polish()
+            polish_stats = self._best_y_assignment_polish()
+            z_polish_stats_after_y = self._best_z_sortify_polish()
         if bool(polish_stats.get("applied", False)):
             self.opt.stop_reason = f"{self.opt.stop_reason}+best_y_polish"
         if bool(z_polish_stats.get("applied", False)) or bool(z_polish_stats_after_y.get("applied", False)):

@@ -225,6 +225,21 @@ class TRARunConfig:
     resource_xyz_stagnation_gate: bool = True
     resource_critical_path_window_size: int = 4
     resource_assert_sp4_ortools_only: bool = True
+    resource_eval_backend: str = "surrogate"
+    resource_fixgurobi_skip_ortools_validation: bool = False
+    resource_target_cmax: float = float("nan")
+    fixgurobi_time_limit_sec: float = 20.0
+    fixgurobi_mip_gap: float = 0.01
+    fixgurobi_candidate_trial_limit: int = 1
+    fixgurobi_cache_size: int = 128
+    fixgurobi_candidate_stack_topk: int = 999
+    fixgurobi_candidate_station_topk_per_stack: int = 999
+    fixgurobi_route_arc_prune: bool = True
+    fixgurobi_route_time_window_arc_prune: bool = True
+    fixgurobi_route_load_interval_arc_prune: bool = True
+    fixgurobi_enable_symmetry: bool = True
+    fixgurobi_fix_used_stack_ids: bool = False
+    fixgurobi_output: bool = False
     resource_enable_single_flip_sortify: bool = False
     resource_enable_best_sortify_polish: bool = False
     resource_enable_best_rank_sortify_polish: bool = False
@@ -8581,7 +8596,11 @@ class TRAOptimizer:
         self.resource_engine = engine
         z_final = float(engine.run())
         self.run_total_time_sec = float(self._runtime_elapsed_sec())
-        if self.best is not None and math.isfinite(float(getattr(self.best, "z", float("inf")))):
+        if (
+            bool(getattr(self.cfg, "export_best_solution", True))
+            and self.best is not None
+            and math.isfinite(float(getattr(self.best, "z", float("inf"))))
+        ):
             self.export_best()
         return float(z_final)
 

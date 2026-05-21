@@ -3,6 +3,7 @@ import ast
 import json
 import math
 import os
+import re
 import sys
 from collections import defaultdict
 from datetime import datetime
@@ -82,6 +83,55 @@ def _parse_kv_line(line: str) -> Dict[str, Any]:
         key, value = token.split("=", 1)
         result[key.strip()] = _parse_value(value)
     return result
+
+
+def _parse_full_route_sequence_line(row: Dict[str, Any]) -> List[Dict[str, Any]]:
+    robot_raw = row.get("robot_id", -1)
+    robot_id = int(robot_raw) if robot_raw is not None else -1
+    sequence = str(row.get("sequence", "") or "").strip()
+    if robot_id < 0 or not sequence:
+        return []
+    parsed: List[Dict[str, Any]] = []
+    for seq, token in enumerate(part.strip() for part in sequence.split("->")):
+        if not token:
+            continue
+        lower = token.lower()
+        if lower.startswith("start"):
+            match = re.search(r"t=([-+0-9.eE]+)", token)
+            parsed.append({
+                "robot_id": int(robot_id),
+                "seq": int(seq),
+                "node_type": "start",
+                "task_id": -1,
+                "subtask_id": -1,
+                "time": float(match.group(1)) if match else 0.0,
+                "load": 0,
+            })
+            continue
+        if lower.startswith("end"):
+            match = re.search(r"t=([-+0-9.eE]+)", token)
+            parsed.append({
+                "robot_id": int(robot_id),
+                "seq": int(seq),
+                "node_type": "end",
+                "task_id": -1,
+                "subtask_id": -1,
+                "time": float(match.group(1)) if match else 0.0,
+                "load": 0,
+            })
+            continue
+        match = re.match(r"(pickup|delivery)\(task=(-?\d+),[^,)]*=[^,)]*,t=([-+0-9.eE]+)\)", token, flags=re.IGNORECASE)
+        if match:
+            parsed.append({
+                "robot_id": int(robot_id),
+                "seq": int(seq),
+                "node_type": str(match.group(1)).lower(),
+                "task_id": int(match.group(2)),
+                "subtask_id": -1,
+                "time": float(match.group(3)),
+                "load": 0,
+            })
+    return parsed
 
 
 def _parse_alns_export(export_dir: str) -> Dict[str, Any]:
@@ -211,6 +261,12 @@ def _parse_alns_export(export_dir: str) -> Dict[str, Any]:
                 "load": int(row.get("load", 0) or 0),
             }
         )
+    if not route_nodes_by_robot:
+        for row in sections.get("SP4 Full Node Sequence By Robot", []):
+            for node_row in _parse_full_route_sequence_line(row):
+                robot_id = int(node_row.get("robot_id", -1))
+                if robot_id >= 0:
+                    route_nodes_by_robot[int(robot_id)].append(node_row)
     route_nodes_by_robot = {
         int(robot_id): sorted(rows, key=lambda item: (int(item.get("seq", 0)), str(item.get("node_type", "")), int(item.get("task_id", -1))))
         for robot_id, rows in route_nodes_by_robot.items()
