@@ -1,0 +1,942 @@
+[
+  {
+    "case": "GUROBI-M1",
+    "status": "OPTIMAL",
+    "orders": 6,
+    "skus": 42,
+    "totes": 172,
+    "stations": 4,
+    "robots": 5,
+    "stacks": 30,
+    "slot_count": 6,
+    "candidate_stack_count_total": 15,
+    "route_task_count_before_station_prune": 60,
+    "route_task_count_after_station_prune": 60,
+    "runtime_sec": 1118.5147872001398,
+    "solver_runtime_sec": 1116.3672776999883,
+    "gurobi_runtime_sec": 1115.601000070572,
+    "gurobi_solve_time_sec": 1115.6312587999273,
+    "model_cmax": 489.0,
+    "model_objective": 489.6200000000001,
+    "model_best_bound": 489.51158761528336,
+    "model_gap": 0.0002214214793447112,
+    "model_status_code": 2,
+    "model_sol_count": 10,
+    "config": {
+      "map_size": [
+        4,
+        5
+      ],
+      "resources": [
+        5,
+        4,
+        172
+      ],
+      "data": [
+        6,
+        42
+      ],
+      "bom_complexity": [
+        8,
+        1
+      ],
+      "target_stack_count": 30,
+      "inventory_cold_filler_probability": 0.25,
+      "exact_order_sku_counts": [
+        6,
+        6,
+        6,
+        6,
+        6,
+        6
+      ],
+      "exact_order_sku_quantity_range": [
+        11,
+        13
+      ],
+      "bom_colocated_inventory": true,
+      "bom_colocated_stack_counts": [
+        2,
+        2,
+        3,
+        3,
+        3,
+        3
+      ],
+      "bom_colocated_disjoint_stack_groups": true,
+      "bom_colocated_support_multiplier": 1.2
+    },
+    "spec": {
+      "map_size": [
+        4,
+        5
+      ],
+      "order_count": 6,
+      "qty_range": [
+        11,
+        13
+      ],
+      "robot_count": 5,
+      "sku_count": 42,
+      "stack_counts": [
+        2,
+        2,
+        3,
+        3,
+        3,
+        3
+      ],
+      "station_count": 4,
+      "target_stack_count": 30,
+      "tote_count": 172
+    },
+    "fixed_source": "result/gurobi_m1_design_route_arc_load_only_1200s_gap001_v9"
+  },
+  {
+    "acceptance_ok": true,
+    "acceptance_reason": "accepted",
+    "candidate_key": "{\"bom_colocated_disjoint_stack_groups\": true, \"bom_colocated_inventory\": true, \"bom_colocated_stack_counts\": [2, 2, 3, 3, 3, 3, 3], \"bom_colocated_support_multiplier\": 1.2, \"bom_complexity\": [8, 1], \"data\": [7, 44], \"exact_order_sku_counts\": [6, 6, 6, 6, 6, 6, 6], \"exact_order_sku_quantity_range\": [13, 15], \"inventory_cold_filler_probability\": 0.25, \"map_size\": [4, 5], \"resources\": [5, 5, 184], \"target_stack_count\": 33}",
+    "candidate_stack_count_total": 17,
+    "case": "GUROBI-M2",
+    "config": {
+      "bom_colocated_disjoint_stack_groups": true,
+      "bom_colocated_inventory": true,
+      "bom_colocated_stack_counts": [
+        2,
+        2,
+        3,
+        3,
+        3,
+        3,
+        3
+      ],
+      "bom_colocated_support_multiplier": 1.2,
+      "bom_complexity": [
+        8,
+        1
+      ],
+      "data": [
+        7,
+        44
+      ],
+      "exact_order_sku_counts": [
+        6,
+        6,
+        6,
+        6,
+        6,
+        6,
+        6
+      ],
+      "exact_order_sku_quantity_range": [
+        13,
+        15
+      ],
+      "inventory_cold_filler_probability": 0.25,
+      "map_size": [
+        4,
+        5
+      ],
+      "resources": [
+        5,
+        5,
+        184
+      ],
+      "target_stack_count": 33
+    },
+    "gurobi_runtime_sec": 1664.9429998397827,
+    "gurobi_solve_time_sec": 1664.9516793999355,
+    "model_best_bound": 546.4071523676321,
+    "model_cmax": 546.0,
+    "model_gap": 0.00030708984561652545,
+    "model_objective": 546.5749999999999,
+    "model_sol_count": 10,
+    "model_status_code": 2,
+    "orders": 7,
+    "robots": 5,
+    "route_task_count_after_station_prune": 85,
+    "route_task_count_before_station_prune": 85,
+    "runtime_sec": 1667.088658499997,
+    "skus": 44,
+    "slot_count": 7,
+    "solver_runtime_sec": 1666.9100285000168,
+    "spec": {
+      "map_size": [
+        4,
+        5
+      ],
+      "order_count": 7,
+      "qty_range": [
+        13,
+        15
+      ],
+      "robot_count": 5,
+      "sku_count": 44,
+      "stack_counts": [
+        2,
+        2,
+        3,
+        3,
+        3,
+        3,
+        3
+      ],
+      "station_count": 5,
+      "target_stack_count": 33,
+      "tote_count": 184
+    },
+    "stacks": 33,
+    "stage": 2,
+    "stations": 5,
+    "status": "OPTIMAL",
+    "totes": 184,
+    "u_arc_count": 0,
+    "u_directional_pruned_arc_count": 0,
+    "u_knn_pruned_arc_count": 0,
+    "u_load_interval_pruned_arc_count": 0,
+    "u_time_window_pruned_arc_count": 0
+  },
+  {
+    "acceptance_ok": true,
+    "acceptance_reason": "accepted",
+    "candidate_key": "{\"bom_colocated_disjoint_stack_groups\": true, \"bom_colocated_inventory\": true, \"bom_colocated_stack_counts\": [2, 2, 2, 3, 3, 3, 3], \"bom_colocated_support_multiplier\": 1.2, \"bom_complexity\": [8, 1], \"data\": [7, 49], \"exact_order_sku_counts\": [6, 6, 6, 6, 6, 6, 6], \"exact_order_sku_quantity_range\": [13, 15], \"inventory_cold_filler_probability\": 0.25, \"map_size\": [4, 5], \"resources\": [5, 5, 197], \"target_stack_count\": 36}",
+    "candidate_stack_count_total": 18,
+    "case": "GUROBI-M3",
+    "config": {
+      "bom_colocated_disjoint_stack_groups": true,
+      "bom_colocated_inventory": true,
+      "bom_colocated_stack_counts": [
+        2,
+        2,
+        2,
+        3,
+        3,
+        3,
+        3
+      ],
+      "bom_colocated_support_multiplier": 1.2,
+      "bom_complexity": [
+        8,
+        1
+      ],
+      "data": [
+        7,
+        49
+      ],
+      "exact_order_sku_counts": [
+        6,
+        6,
+        6,
+        6,
+        6,
+        6,
+        6
+      ],
+      "exact_order_sku_quantity_range": [
+        13,
+        15
+      ],
+      "inventory_cold_filler_probability": 0.25,
+      "map_size": [
+        4,
+        5
+      ],
+      "resources": [
+        5,
+        5,
+        197
+      ],
+      "target_stack_count": 36
+    },
+    "gurobi_runtime_sec": 1992.8040001392365,
+    "gurobi_solve_time_sec": 1992.8084504001308,
+    "model_best_bound": 553.2340090909022,
+    "model_cmax": 558.0,
+    "model_gap": 0.009554722513517033,
+    "model_objective": 558.5709999999999,
+    "model_sol_count": 10,
+    "model_status_code": 2,
+    "orders": 7,
+    "robots": 5,
+    "route_task_count_after_station_prune": 90,
+    "route_task_count_before_station_prune": 90,
+    "runtime_sec": 1994.365330599947,
+    "skus": 49,
+    "slot_count": 7,
+    "solver_runtime_sec": 1994.1073503999505,
+    "spec": {
+      "map_size": [
+        4,
+        5
+      ],
+      "order_count": 7,
+      "qty_range": [
+        13,
+        15
+      ],
+      "robot_count": 5,
+      "sku_count": 49,
+      "stack_counts": [
+        2,
+        2,
+        2,
+        3,
+        3,
+        3,
+        3
+      ],
+      "station_count": 5,
+      "target_stack_count": 36,
+      "tote_count": 197
+    },
+    "stacks": 36,
+    "stage": 3,
+    "stations": 5,
+    "status": "OPTIMAL",
+    "totes": 197,
+    "u_arc_count": 0,
+    "u_directional_pruned_arc_count": 0,
+    "u_knn_pruned_arc_count": 0,
+    "u_load_interval_pruned_arc_count": 0,
+    "u_time_window_pruned_arc_count": 0
+  },
+  {
+    "acceptance_ok": false,
+    "acceptance_reason": "runtime_not_increasing",
+    "candidate_key": "{\"bom_colocated_disjoint_stack_groups\": true, \"bom_colocated_inventory\": true, \"bom_colocated_stack_counts\": [2, 2, 2, 2, 2, 3, 3], \"bom_colocated_support_multiplier\": 1.2, \"bom_complexity\": [8, 1], \"data\": [7, 56], \"exact_order_sku_counts\": [6, 6, 6, 6, 6, 6, 6], \"exact_order_sku_quantity_range\": [15, 17], \"inventory_cold_filler_probability\": 0.25, \"map_size\": [4, 5], \"resources\": [5, 5, 225], \"target_stack_count\": 41}",
+    "candidate_stack_count_total": 13,
+    "case": "GUROBI-M4",
+    "config": {
+      "bom_colocated_disjoint_stack_groups": true,
+      "bom_colocated_inventory": true,
+      "bom_colocated_stack_counts": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        3,
+        3
+      ],
+      "bom_colocated_support_multiplier": 1.2,
+      "bom_complexity": [
+        8,
+        1
+      ],
+      "data": [
+        7,
+        56
+      ],
+      "exact_order_sku_counts": [
+        6,
+        6,
+        6,
+        6,
+        6,
+        6,
+        6
+      ],
+      "exact_order_sku_quantity_range": [
+        15,
+        17
+      ],
+      "inventory_cold_filler_probability": 0.25,
+      "map_size": [
+        4,
+        5
+      ],
+      "resources": [
+        5,
+        5,
+        225
+      ],
+      "target_stack_count": 41
+    },
+    "gurobi_runtime_sec": 2087.3689999580383,
+    "gurobi_solve_time_sec": 2087.372606500052,
+    "model_best_bound": 624.453750000002,
+    "model_cmax": 630.0,
+    "model_gap": 0.009641446205032994,
+    "model_objective": 630.533,
+    "model_sol_count": 10,
+    "model_status_code": 2,
+    "orders": 7,
+    "robots": 5,
+    "route_task_count_after_station_prune": 65,
+    "route_task_count_before_station_prune": 65,
+    "runtime_sec": 2088.4807033999823,
+    "skus": 56,
+    "slot_count": 7,
+    "solver_runtime_sec": 2088.1369400999974,
+    "spec": {
+      "map_size": [
+        4,
+        5
+      ],
+      "order_count": 7,
+      "qty_range": [
+        15,
+        17
+      ],
+      "robot_count": 5,
+      "sku_count": 56,
+      "stack_counts": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        3,
+        3
+      ],
+      "station_count": 5,
+      "target_stack_count": 41,
+      "tote_count": 225
+    },
+    "stacks": 41,
+    "stage": 6,
+    "stations": 5,
+    "status": "OPTIMAL",
+    "totes": 225,
+    "u_arc_count": 0,
+    "u_directional_pruned_arc_count": 0,
+    "u_knn_pruned_arc_count": 0,
+    "u_load_interval_pruned_arc_count": 0,
+    "u_time_window_pruned_arc_count": 0
+  },
+  {
+    "acceptance_ok": false,
+    "acceptance_reason": "runtime_not_increasing",
+    "candidate_key": "{\"bom_colocated_disjoint_stack_groups\": true, \"bom_colocated_inventory\": true, \"bom_colocated_stack_counts\": [2, 2, 2, 2, 3, 3, 3, 3], \"bom_colocated_support_multiplier\": 1.2, \"bom_complexity\": [8, 1], \"data\": [8, 58], \"exact_order_sku_counts\": [6, 6, 6, 6, 6, 6, 6, 6], \"exact_order_sku_quantity_range\": [16, 18], \"inventory_cold_filler_probability\": 0.25, \"map_size\": [4, 5], \"resources\": [5, 5, 237], \"target_stack_count\": 44}",
+    "candidate_stack_count_total": 16,
+    "case": "GUROBI-M5",
+    "config": {
+      "bom_colocated_disjoint_stack_groups": true,
+      "bom_colocated_inventory": true,
+      "bom_colocated_stack_counts": [
+        2,
+        2,
+        2,
+        2,
+        3,
+        3,
+        3,
+        3
+      ],
+      "bom_colocated_support_multiplier": 1.2,
+      "bom_complexity": [
+        8,
+        1
+      ],
+      "data": [
+        8,
+        58
+      ],
+      "exact_order_sku_counts": [
+        6,
+        6,
+        6,
+        6,
+        6,
+        6,
+        6,
+        6
+      ],
+      "exact_order_sku_quantity_range": [
+        16,
+        18
+      ],
+      "inventory_cold_filler_probability": 0.25,
+      "map_size": [
+        4,
+        5
+      ],
+      "resources": [
+        5,
+        5,
+        237
+      ],
+      "target_stack_count": 44
+    },
+    "gurobi_runtime_sec": 2097.246999979019,
+    "gurobi_solve_time_sec": 2097.2503877000418,
+    "model_best_bound": 677.5291818181817,
+    "model_cmax": 679.0,
+    "model_gap": 0.0032377829164793024,
+    "model_objective": 679.7300000000001,
+    "model_sol_count": 10,
+    "model_status_code": 2,
+    "orders": 8,
+    "robots": 5,
+    "route_task_count_after_station_prune": 80,
+    "route_task_count_before_station_prune": 80,
+    "runtime_sec": 2098.5835400000215,
+    "skus": 58,
+    "slot_count": 8,
+    "solver_runtime_sec": 2098.3568156000692,
+    "spec": {
+      "map_size": [
+        4,
+        5
+      ],
+      "order_count": 8,
+      "qty_range": [
+        16,
+        18
+      ],
+      "robot_count": 5,
+      "sku_count": 58,
+      "stack_counts": [
+        2,
+        2,
+        2,
+        2,
+        3,
+        3,
+        3,
+        3
+      ],
+      "station_count": 5,
+      "target_stack_count": 44,
+      "tote_count": 237
+    },
+    "stacks": 44,
+    "stage": 7,
+    "stations": 5,
+    "status": "OPTIMAL",
+    "totes": 237,
+    "u_arc_count": 0,
+    "u_directional_pruned_arc_count": 0,
+    "u_knn_pruned_arc_count": 0,
+    "u_load_interval_pruned_arc_count": 0,
+    "u_time_window_pruned_arc_count": 0
+  },
+  {
+    "acceptance_ok": false,
+    "acceptance_reason": "runtime_not_increasing",
+    "candidate_key": "{\"bom_colocated_disjoint_stack_groups\": true, \"bom_colocated_inventory\": true, \"bom_colocated_stack_counts\": [2, 2, 2, 2, 2, 2, 2, 2], \"bom_colocated_support_multiplier\": 1.2, \"bom_complexity\": [8, 1], \"data\": [8, 61], \"exact_order_sku_counts\": [6, 6, 6, 6, 6, 6, 6, 6], \"exact_order_sku_quantity_range\": [17, 18], \"inventory_cold_filler_probability\": 0.25, \"map_size\": [4, 5], \"resources\": [5, 5, 249], \"target_stack_count\": 47}",
+    "candidate_stack_count_total": 11,
+    "case": "GUROBI-M6",
+    "config": {
+      "bom_colocated_disjoint_stack_groups": true,
+      "bom_colocated_inventory": true,
+      "bom_colocated_stack_counts": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "bom_colocated_support_multiplier": 1.2,
+      "bom_complexity": [
+        8,
+        1
+      ],
+      "data": [
+        8,
+        61
+      ],
+      "exact_order_sku_counts": [
+        6,
+        6,
+        6,
+        6,
+        6,
+        6,
+        6,
+        6
+      ],
+      "exact_order_sku_quantity_range": [
+        17,
+        18
+      ],
+      "inventory_cold_filler_probability": 0.25,
+      "map_size": [
+        4,
+        5
+      ],
+      "resources": [
+        5,
+        5,
+        249
+      ],
+      "target_stack_count": 47
+    },
+    "gurobi_runtime_sec": 2287.356000185013,
+    "gurobi_solve_time_sec": 2287.372257000068,
+    "model_best_bound": 687.4667319999998,
+    "model_cmax": 687.0,
+    "model_gap": 4.838981818201402e-05,
+    "model_objective": 687.4999999999999,
+    "model_sol_count": 10,
+    "model_status_code": 2,
+    "orders": 8,
+    "robots": 5,
+    "route_task_count_after_station_prune": 55,
+    "route_task_count_before_station_prune": 55,
+    "runtime_sec": 2288.0300833999645,
+    "skus": 61,
+    "slot_count": 8,
+    "solver_runtime_sec": 2287.920649399981,
+    "spec": {
+      "map_size": [
+        4,
+        5
+      ],
+      "order_count": 8,
+      "qty_range": [
+        17,
+        18
+      ],
+      "robot_count": 5,
+      "sku_count": 61,
+      "stack_counts": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "station_count": 5,
+      "target_stack_count": 47,
+      "tote_count": 249
+    },
+    "stacks": 47,
+    "stage": 7,
+    "stations": 5,
+    "status": "OPTIMAL",
+    "totes": 249,
+    "u_arc_count": 0,
+    "u_directional_pruned_arc_count": 0,
+    "u_knn_pruned_arc_count": 0,
+    "u_load_interval_pruned_arc_count": 0,
+    "u_time_window_pruned_arc_count": 0
+  },
+  {
+    "acceptance_ok": true,
+    "acceptance_reason": "accepted",
+    "candidate_key": "{\"bom_colocated_disjoint_stack_groups\": true, \"bom_colocated_inventory\": true, \"bom_colocated_stack_counts\": [2, 2, 2, 2, 3, 3, 3, 3], \"bom_colocated_support_multiplier\": 1.2, \"bom_complexity\": [8, 1], \"data\": [8, 62], \"exact_order_sku_counts\": [6, 6, 6, 6, 6, 6, 6, 6], \"exact_order_sku_quantity_range\": [17, 20], \"inventory_cold_filler_probability\": 0.25, \"map_size\": [4, 5], \"resources\": [5, 5, 253], \"target_stack_count\": 48}",
+    "candidate_stack_count_total": 16,
+    "case": "GUROBI-M7",
+    "config": {
+      "bom_colocated_disjoint_stack_groups": true,
+      "bom_colocated_inventory": true,
+      "bom_colocated_stack_counts": [
+        2,
+        2,
+        2,
+        2,
+        3,
+        3,
+        3,
+        3
+      ],
+      "bom_colocated_support_multiplier": 1.2,
+      "bom_complexity": [
+        8,
+        1
+      ],
+      "data": [
+        8,
+        62
+      ],
+      "exact_order_sku_counts": [
+        6,
+        6,
+        6,
+        6,
+        6,
+        6,
+        6,
+        6
+      ],
+      "exact_order_sku_quantity_range": [
+        17,
+        20
+      ],
+      "inventory_cold_filler_probability": 0.25,
+      "map_size": [
+        4,
+        5
+      ],
+      "resources": [
+        5,
+        5,
+        253
+      ],
+      "target_stack_count": 48
+    },
+    "gurobi_runtime_sec": 2481.7569999694824,
+    "gurobi_solve_time_sec": 2481.7649447000585,
+    "model_best_bound": 706.0762350746264,
+    "model_cmax": 708.0,
+    "model_gap": 0.003626302731368742,
+    "model_objective": 708.646,
+    "model_sol_count": 10,
+    "model_status_code": 2,
+    "orders": 8,
+    "robots": 5,
+    "route_task_count_after_station_prune": 80,
+    "route_task_count_before_station_prune": 80,
+    "runtime_sec": 2482.9722594001796,
+    "skus": 62,
+    "slot_count": 8,
+    "solver_runtime_sec": 2482.822854900034,
+    "spec": {
+      "map_size": [
+        4,
+        5
+      ],
+      "order_count": 8,
+      "qty_range": [
+        17,
+        20
+      ],
+      "robot_count": 5,
+      "sku_count": 62,
+      "stack_counts": [
+        2,
+        2,
+        2,
+        2,
+        3,
+        3,
+        3,
+        3
+      ],
+      "station_count": 5,
+      "target_stack_count": 48,
+      "tote_count": 253
+    },
+    "stacks": 48,
+    "stage": 7,
+    "stations": 5,
+    "status": "OPTIMAL",
+    "totes": 253,
+    "u_arc_count": 0,
+    "u_directional_pruned_arc_count": 0,
+    "u_knn_pruned_arc_count": 0,
+    "u_load_interval_pruned_arc_count": 0,
+    "u_time_window_pruned_arc_count": 0
+  },
+  {
+    "acceptance_ok": false,
+    "acceptance_reason": "runtime_not_increasing",
+    "candidate_key": "{\"bom_colocated_disjoint_stack_groups\": true, \"bom_colocated_inventory\": true, \"bom_colocated_stack_counts\": [2, 2, 2, 2, 3, 3, 3, 3], \"bom_colocated_support_multiplier\": 1.2, \"bom_complexity\": [8, 1], \"data\": [8, 64], \"exact_order_sku_counts\": [6, 6, 6, 6, 6, 6, 6, 6], \"exact_order_sku_quantity_range\": [18, 20], \"inventory_cold_filler_probability\": 0.25, \"map_size\": [4, 5], \"resources\": [5, 5, 261], \"target_stack_count\": 50}",
+    "candidate_stack_count_total": 18,
+    "case": "GUROBI-M8",
+    "config": {
+      "bom_colocated_disjoint_stack_groups": true,
+      "bom_colocated_inventory": true,
+      "bom_colocated_stack_counts": [
+        2,
+        2,
+        2,
+        2,
+        3,
+        3,
+        3,
+        3
+      ],
+      "bom_colocated_support_multiplier": 1.2,
+      "bom_complexity": [
+        8,
+        1
+      ],
+      "data": [
+        8,
+        64
+      ],
+      "exact_order_sku_counts": [
+        6,
+        6,
+        6,
+        6,
+        6,
+        6,
+        6,
+        6
+      ],
+      "exact_order_sku_quantity_range": [
+        18,
+        20
+      ],
+      "inventory_cold_filler_probability": 0.25,
+      "map_size": [
+        4,
+        5
+      ],
+      "resources": [
+        5,
+        5,
+        261
+      ],
+      "target_stack_count": 50
+    },
+    "gurobi_runtime_sec": 2525.808000087738,
+    "gurobi_solve_time_sec": 2525.8857166001108,
+    "model_best_bound": 723.279395127583,
+    "model_cmax": 725.0,
+    "model_gap": 0.003022314951393112,
+    "model_objective": 725.4720000000001,
+    "model_sol_count": 10,
+    "model_status_code": 2,
+    "orders": 8,
+    "robots": 5,
+    "route_task_count_after_station_prune": 90,
+    "route_task_count_before_station_prune": 90,
+    "runtime_sec": 2527.3676312000025,
+    "skus": 64,
+    "slot_count": 8,
+    "solver_runtime_sec": 2527.1875841999426,
+    "spec": {
+      "map_size": [
+        4,
+        5
+      ],
+      "order_count": 8,
+      "qty_range": [
+        18,
+        20
+      ],
+      "robot_count": 5,
+      "sku_count": 64,
+      "stack_counts": [
+        2,
+        2,
+        2,
+        2,
+        3,
+        3,
+        3,
+        3
+      ],
+      "station_count": 5,
+      "target_stack_count": 50,
+      "tote_count": 261
+    },
+    "stacks": 50,
+    "stage": 9,
+    "stations": 5,
+    "status": "OPTIMAL",
+    "totes": 261,
+    "u_arc_count": 0,
+    "u_directional_pruned_arc_count": 0,
+    "u_knn_pruned_arc_count": 0,
+    "u_load_interval_pruned_arc_count": 0,
+    "u_time_window_pruned_arc_count": 0
+  },
+  {
+    "case": "GUROBI-M9",
+    "status": "OPTIMAL",
+    "runtime_sec": 3453.704392499989,
+    "solver_runtime_sec": 3453.4685229999013,
+    "gurobi_runtime_sec": 3452.069999933243,
+    "gurobi_solve_time_sec": 3452.088327600155,
+    "model_cmax": 731.0,
+    "model_objective": 731.5099999999999,
+    "model_best_bound": 727.4099918805941,
+    "model_gap": 0.005604855872654842,
+    "model_status_code": 2,
+    "model_sol_count": 10,
+    "config": {
+      "map_size": [
+        4,
+        5
+      ],
+      "resources": [
+        5,
+        5,
+        265
+      ],
+      "data": [
+        8,
+        65
+      ],
+      "bom_complexity": [
+        8,
+        1
+      ],
+      "target_stack_count": 51,
+      "inventory_cold_filler_probability": 0.25,
+      "exact_order_sku_counts": [
+        6,
+        6,
+        6,
+        6,
+        6,
+        6,
+        6,
+        6
+      ],
+      "exact_order_sku_quantity_range": [
+        18,
+        20
+      ],
+      "bom_colocated_inventory": true,
+      "bom_colocated_stack_counts": [
+        2,
+        2,
+        2,
+        2,
+        3,
+        3,
+        3,
+        3
+      ],
+      "bom_colocated_disjoint_stack_groups": true,
+      "bom_colocated_support_multiplier": 1.2
+    },
+    "spec": {
+      "order_count": 8,
+      "station_count": 5,
+      "robot_count": 5,
+      "sku_count": 65,
+      "tote_count": 265,
+      "target_stack_count": 51,
+      "stack_counts": [
+        2,
+        2,
+        2,
+        2,
+        3,
+        3,
+        3,
+        3
+      ],
+      "qty_range": [
+        18,
+        20
+      ],
+      "map_size": [
+        4,
+        5
+      ]
+    },
+    "orders": 8,
+    "skus": 65,
+    "totes": 265,
+    "stations": 5,
+    "robots": 5,
+    "stacks": 51,
+    "slot_count": 8,
+    "candidate_stack_count_total": 18,
+    "route_task_count_before_station_prune": 90,
+    "route_task_count_after_station_prune": 90,
+    "u_arc_count": 0,
+    "u_load_interval_pruned_arc_count": 0,
+    "u_time_window_pruned_arc_count": 0,
+    "u_directional_pruned_arc_count": 0,
+    "u_knn_pruned_arc_count": 0,
+    "stage": 9,
+    "candidate_key": "{\"bom_colocated_disjoint_stack_groups\": true, \"bom_colocated_inventory\": true, \"bom_colocated_stack_counts\": [2, 2, 2, 2, 3, 3, 3, 3], \"bom_colocated_support_multiplier\": 1.2, \"bom_complexity\": [8, 1], \"data\": [8, 65], \"exact_order_sku_counts\": [6, 6, 6, 6, 6, 6, 6, 6], \"exact_order_sku_quantity_range\": [18, 20], \"inventory_cold_filler_probability\": 0.25, \"map_size\": [4, 5], \"resources\": [5, 5, 265], \"target_stack_count\": 51}",
+    "acceptance_ok": true,
+    "acceptance_reason": "accepted"
+  }
+]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from collections import deque
 import itertools
 import math
@@ -8,7 +9,10 @@ import statistics
 import time
 from typing import Dict, List, Optional, Tuple
 
-from .initializer import build_initial_resource_config
+from Gurobi.global_xyzu import GlobalXYZUConfig, GlobalXYZUSolver
+from problemDto.createInstance import CreateOFSProblem
+
+from .initializer import build_initial_resource_config, build_resource_config_from_problem
 from .operators_x import (
     X_DESTROY_OPERATORS,
     X_FALLBACK_OPERATOR,
@@ -54,18 +58,27 @@ class ResourceTimeALNSEngine:
         )
         self.current_config: ResourceConfig = build_initial_resource_config(opt)
         self.initial_config: ResourceConfig = self.current_config.clone()
-        self.current_eval = self._evaluate_config(self.current_config, layer="XYZ")
+        skip_initial_fixgurobi = bool(
+            self.eval_backend == "fixgurobi_prefix"
+            and bool(getattr(self.cfg, "resource_skip_initial_fixgurobi_eval", False))
+        )
+        self.current_eval = (
+            self.scorer.evaluate(self.current_config)
+            if bool(skip_initial_fixgurobi)
+            else self._evaluate_config(self.current_config, layer="XYZ")
+        )
         if self.fixgurobi_only_eval:
             initial_hard_reject_reason = ""
-            initial_makespan = float(self.current_eval.F_raw)
+            initial_makespan = float("inf") if bool(skip_initial_fixgurobi) else float(self.current_eval.F_raw)
             self.best_validated = ValidatedIncumbent(
                 config=self.current_config.clone(),
                 makespan=float(initial_makespan),
                 iter_id=0,
                 snapshot=None,
             )
-            initial_validated_makespans = [float(initial_makespan)]
-            self._sync_fixgurobi_best_snapshot(float(initial_makespan), 0)
+            initial_validated_makespans = [] if bool(skip_initial_fixgurobi) else [float(initial_makespan)]
+            if not bool(skip_initial_fixgurobi):
+                self._sync_fixgurobi_best_snapshot(float(initial_makespan), 0)
         else:
             initial_validation = self.validator.validate(self.current_config, 0)
             initial_hard_reject_reason = str(initial_validation.get("hard_reject_reason", "") or "")
@@ -119,6 +132,9 @@ class ResourceTimeALNSEngine:
         self.z_exact_fail_streak = 0
         self.z_operator_pick_count = 0
         self.forced_layer_queue: deque[str] = deque()
+        self.global_decomp_repair_used = False
+        if bool(getattr(self.cfg, "resource_global_decomp_repair_enabled", False)) and "XYZ" in self.resource_layers:
+            self.forced_layer_queue.append("XYZ")
         self.last_selected_layer = ""
         self.last_available_layers: List[str] = list(self.resource_layers)
         self.last_selected_layer_source = ""
@@ -183,11 +199,18 @@ class ResourceTimeALNSEngine:
         )
         if self.fixgurobi_evaluator is None:
             return base_eval
+        current_best = float("inf")
+        if hasattr(self, "best_validated"):
+            try:
+                current_best = float(self.best_validated.makespan)
+            except Exception:
+                current_best = float("inf")
         return self.fixgurobi_evaluator.evaluate(
             config,
             layer=str(layer),
             base_eval=base_eval,
             affected_subtask_ids=affected_subtask_ids,
+            current_best_value=current_best,
         )
 
     def _sync_fixgurobi_best_snapshot(self, value: float, iter_id: int) -> None:
@@ -443,7 +466,14 @@ class ResourceTimeALNSEngine:
     def _available_layers(self, iter_id: int) -> List[str]:
         all_layers = list(getattr(self, "resource_layers", ["X", "Y", "Z"]))
         self.last_xyz_skip_reason = ""
-        if "XYZ" in all_layers and bool(getattr(self.cfg, "resource_xyz_stagnation_gate", True)):
+        if (
+            "XYZ" in all_layers
+            and bool(getattr(self.cfg, "resource_xyz_stagnation_gate", True))
+            and not (
+                bool(getattr(self.cfg, "resource_global_decomp_repair_enabled", False))
+                and not bool(getattr(self, "global_decomp_repair_used", False))
+            )
+        ):
             trigger = int(getattr(self.cfg, "resource_xyz_trigger_stagnation_rounds", 8))
             recent_repartition = int(iter_id) - int(getattr(self, "last_x_repartition_iter", -10**9)) <= 1
             stagnant = float(getattr(self, "no_improve_rounds", 0.0)) >= float(trigger) or float(getattr(self, "no_best_z_change_rounds", 0.0)) >= float(trigger)
@@ -981,6 +1011,191 @@ class ResourceTimeALNSEngine:
             "critical_path_subtask_ids": list(int(x) for x in critical_subtasks),
         }
 
+    def _build_global_decomp_repair_candidate(self, iter_id: int) -> Optional[Dict[str, object]]:
+        if self.global_decomp_repair_used:
+            return None
+        self.global_decomp_repair_used = True
+        target_cmax = float(getattr(self.cfg, "resource_target_cmax", float("nan")))
+        total_limit = float(
+            getattr(
+                self.cfg,
+                "resource_global_decomp_repair_time_limit_sec",
+                getattr(self.cfg, "fixgurobi_time_limit_sec", 1200.0),
+            )
+            or getattr(self.cfg, "fixgurobi_time_limit_sec", 1200.0)
+        )
+        stage_limit = float(getattr(self.cfg, "resource_global_decomp_repair_stage_time_limit_sec", 0.0) or 0.0)
+        attempts: List[Dict[str, object]] = []
+        if bool(getattr(self.cfg, "resource_global_decomp_repair_staged", True)) and stage_limit > 0.0:
+            attempts.append(
+                {
+                    "name": "narrow",
+                    "time_limit": min(float(stage_limit), float(total_limit)),
+                    "candidate_stack_topk": int(getattr(self.cfg, "resource_global_decomp_repair_candidate_stack_topk", 3) or 3),
+                    "candidate_station_topk_per_stack": int(
+                        getattr(self.cfg, "resource_global_decomp_repair_candidate_station_topk_per_stack", 2) or 2
+                    ),
+                    "max_candidate_stacks_per_order": int(
+                        getattr(self.cfg, "resource_global_decomp_repair_max_candidate_stacks_per_order", 24) or 24
+                    ),
+                }
+            )
+        attempts.append(
+            {
+                "name": "full",
+                "time_limit": float(total_limit),
+                "candidate_stack_topk": 999,
+                "candidate_station_topk_per_stack": 999,
+                "max_candidate_stacks_per_order": 0,
+            }
+        )
+        t0 = time.perf_counter()
+        attempt_rows: List[Dict[str, object]] = []
+        result = None
+        problem_scale = str(getattr(self.cfg, "scale", "") or getattr(getattr(self.opt, "problem", None), "scale_name", "") or "")
+        problem_seed = int(getattr(self.cfg, "seed", 42) or 42)
+        for attempt in attempts:
+            elapsed = float(time.perf_counter() - t0)
+            remaining = max(1.0, float(total_limit) - float(elapsed))
+            cfg = GlobalXYZUConfig(
+                time_limit_sec=min(float(attempt["time_limit"]), remaining),
+                mip_gap=float(getattr(self.cfg, "fixgurobi_mip_gap", 0.01) or 0.01),
+                candidate_stack_topk=int(attempt["candidate_stack_topk"]),
+                max_candidate_stacks_per_order=int(attempt["max_candidate_stacks_per_order"]),
+                enable_warm_candidate_stack_prune=False,
+                candidate_station_topk_per_stack=int(attempt["candidate_station_topk_per_stack"]),
+                route_pickup_neighbor_limit=int(getattr(self.cfg, "resource_global_decomp_repair_route_pickup_neighbor_limit", 0) or 0),
+                enable_scale_adaptive_candidate_prune=False,
+                gurobi_output=bool(getattr(self.cfg, "fixgurobi_output", False)),
+                enable_warm_start=False,
+                warm_start_use_sp4=False,
+                integrate_u_route=True,
+                route_arc_prune=bool(getattr(self.cfg, "fixgurobi_route_arc_prune", True)),
+                enable_route_time_window_arc_prune=bool(
+                    getattr(self.cfg, "resource_global_decomp_repair_route_time_window_arc_prune", True)
+                ),
+                enable_route_load_interval_arc_prune=bool(getattr(self.cfg, "fixgurobi_route_load_interval_arc_prune", True)),
+                enable_route_directional_arc_prune=False,
+                enable_resource_lex_symmetry=bool(getattr(self.cfg, "fixgurobi_enable_symmetry", True)),
+                enable_slot_lex_symmetry=bool(getattr(self.cfg, "fixgurobi_enable_symmetry", True)),
+                enable_tote_equivalence_symmetry=bool(getattr(self.cfg, "fixgurobi_enable_symmetry", True)),
+                enable_station_global_lex_symmetry=bool(getattr(self.cfg, "fixgurobi_enable_symmetry", True)),
+                enable_robot_finish_lex_symmetry=bool(getattr(self.cfg, "fixgurobi_enable_symmetry", True)),
+                enable_selected_workload_lbs=True,
+                fixgurobi_no_warm_start=True,
+                fixgurobi_allow_warm_start_fallback=False,
+                fixgurobi_warm_bound_only=False,
+            )
+            if bool(getattr(self.cfg, "resource_global_decomp_repair_best_obj_stop", True)) and math.isfinite(target_cmax):
+                slack = float(getattr(self.cfg, "resource_global_decomp_repair_obj_slack", 0.999) or 0.999)
+                cfg.gurobi_best_obj_stop = float(target_cmax + slack)
+            attempt_t0 = time.perf_counter()
+            try:
+                if bool(getattr(self.cfg, "resource_global_decomp_repair_use_fresh_problem", True)) and problem_scale:
+                    repair_problem = CreateOFSProblem.generate_problem_by_scale(problem_scale, seed=problem_seed)
+                else:
+                    repair_problem = copy.deepcopy(self.opt.problem)
+                result = GlobalXYZUSolver().solve(repair_problem, cfg)
+            except Exception as exc:
+                attempt_rows.append({"attempt": str(attempt["name"]), "runtime_sec": float(time.perf_counter() - attempt_t0), "status": "EXCEPTION", "reason": str(exc)})
+                continue
+            diag_i = dict(getattr(result, "diagnostics", {}) or {})
+            cmax_i = float(diag_i.get("model_cmax", getattr(result, "objective", float("inf"))) or float("inf"))
+            attempt_rows.append(
+                {
+                    "attempt": str(attempt["name"]),
+                    "runtime_sec": float(time.perf_counter() - attempt_t0),
+                    "status": str(getattr(result, "status", "")),
+                    "cmax": float(cmax_i),
+                    "gap": float(getattr(result, "gap", float("nan"))),
+                }
+            )
+            if math.isfinite(cmax_i) and (not math.isfinite(target_cmax) or cmax_i <= target_cmax + 1e-9):
+                break
+        repair_runtime = float(time.perf_counter() - t0)
+        if result is None:
+            self.last_xyz_skip_reason = "global_decomp_repair_no_attempt_result"
+            return None
+        diag = dict(getattr(result, "diagnostics", {}) or {})
+        materialized_problem = getattr(result, "materialized_problem", None)
+        if materialized_problem is None or not math.isfinite(float(diag.get("model_cmax", getattr(result, "objective", float("inf"))) or float("inf"))):
+            self.last_xyz_skip_reason = f"global_decomp_repair_no_solution:{getattr(result, 'status', '')}"
+            return None
+        candidate = build_resource_config_from_problem(self.opt, materialized_problem)
+        candidate.metadata["global_decomp_repair"] = True
+        candidate_signature = candidate.validation_signature()
+        touched_ids = set(int(x) for x in candidate.subtasks.keys())
+        candidate_eval = self._evaluate_config(
+            config=candidate,
+            layer="XYZ",
+            score_cache=None,
+            affected_subtask_ids=touched_ids,
+            fallback_penalty=0.0,
+            iterations_since_last_validation=int(iter_id) - int(self.last_validation_iter),
+            distance_to_last_validated=config_distance(candidate, self.last_validated_config),
+        )
+        candidate_eval.metadata.update(
+            {
+                "last_validation_iter": int(self.last_validation_iter),
+                "last_validation_f_raw": float(self.last_validation_f_raw),
+                "recent_validated_makespans": list(self.recent_validated_makespans),
+                "global_decomp_repair_status": str(getattr(result, "status", "")),
+                "global_decomp_repair_runtime_sec": float(repair_runtime),
+                "global_decomp_repair_model_cmax": float(diag.get("model_cmax", getattr(result, "objective", float("nan")))),
+                "global_decomp_repair_gap": float(getattr(result, "gap", float("nan"))),
+                "global_decomp_repair_attempts": list(attempt_rows),
+            }
+        )
+        payload = {
+            "config": candidate,
+            "score_cache": None,
+            "affected_ids": touched_ids,
+            "fallback_used": False,
+            "projection_mode": "global_decomp_repair",
+            "projection_repaired_subtask_count": int(len(touched_ids)),
+        }
+        return {
+            "iter": int(iter_id),
+            "layer": "XYZ",
+            "candidate_stage": "global_decomp_repair",
+            "candidate_rank": 0,
+            "destroy_operator": "xyz_destroy_sequential",
+            "repair_operator": "xyz_repair_sequential",
+            "fallback_used": False,
+            "projection_mode": "global_decomp_repair",
+            "projection_repaired_subtask_count": int(len(touched_ids)),
+            "F_raw": float(candidate_eval.F_raw),
+            "F_cal": float(candidate_eval.F_cal),
+            "eval_backend": str(candidate_eval.metadata.get("eval_backend", "surrogate")),
+            "fixgurobi_status": str(candidate_eval.metadata.get("fixgurobi_status", "")),
+            "fixgurobi_obj": candidate_eval.metadata.get("fixgurobi_obj", ""),
+            "fixgurobi_bound": candidate_eval.metadata.get("fixgurobi_bound", ""),
+            "fixgurobi_gap": candidate_eval.metadata.get("fixgurobi_gap", ""),
+            "fixgurobi_solve_time": candidate_eval.metadata.get("fixgurobi_solve_time", ""),
+            "fixgurobi_fixed_scope": str(candidate_eval.metadata.get("fixgurobi_fixed_scope", "")),
+            "fixgurobi_infeasible_reason": str(candidate_eval.metadata.get("fixgurobi_infeasible_reason", "")),
+            "duplicate_tote_count": int(candidate_eval.duplicate_tote_count),
+            "duplicate_tote_penalty": float(candidate_eval.duplicate_tote_penalty),
+            "candidate_signature": self._candidate_signature_text(candidate_signature),
+            "candidate_signature_tuple": candidate_signature,
+            "candidate_payload": payload,
+            "candidate_eval": candidate_eval,
+            "selected_for_sa": False,
+            "action_signature": self._action_signature_text(("XYZ", "global_decomp_repair", int(iter_id))),
+            "coverage_feasible": bool(candidate_eval.coverage_feasible),
+            "unmet_sku_total": int(candidate_eval.unmet_sku_total),
+            "xyz_x_operator": "global_decomp_repair",
+            "xyz_y_operator": "global_decomp_repair",
+            "xyz_z_operator": "global_decomp_repair",
+            "repartition_mode": True,
+            "critical_path_operator_used": False,
+            "critical_path_subtask_ids": [],
+            "global_decomp_repair": True,
+            "global_decomp_repair_runtime_sec": float(repair_runtime),
+            "global_decomp_repair_status": str(getattr(result, "status", "")),
+            "global_decomp_repair_attempts": str(attempt_rows),
+        }
+
     def _generate_xyz_candidate_pool(self, iter_id: int, budget: int, target_size: int) -> Dict[str, object]:
         target = max(1, int(getattr(self.cfg, "resource_xyz_candidate_pool_size", target_size)))
         max_attempts = max(target, int(getattr(self.cfg, "resource_xyz_candidate_pool_max_attempts", 12)))
@@ -990,6 +1205,14 @@ class ResourceTimeALNSEngine:
         attempted_pairs: List[Tuple[str, str]] = []
         coverage_hard_reject_count = 0
         seen_validation_signatures = set()
+        if bool(getattr(self.cfg, "resource_global_decomp_repair_enabled", False)):
+            row = self._build_global_decomp_repair_candidate(int(iter_id))
+            if row is not None:
+                generated_count += 1
+                if bool(row.get("coverage_feasible", True)) and int(row.get("unmet_sku_total", 0) or 0) <= 0 and int(row["duplicate_tote_count"]) <= 0:
+                    candidate_signature = row["candidate_signature_tuple"]
+                    seen_validation_signatures.add(candidate_signature)
+                    pool.append(row)
         while attempts < max_attempts and len(pool) < target:
             attempts += 1
             attempted_pairs.append(("xyz_destroy_sequential", "xyz_repair_sequential"))

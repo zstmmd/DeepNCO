@@ -17,7 +17,7 @@ from experiments.run_global_xyzu import _write_gurobi_solution_export
 from problemDto.createInstance import CreateOFSProblem
 
 
-SCALES = [f"GUROBI-S{i}" for i in range(1, 10)]
+SCALES = [f"GUROBI-S{i}" for i in range(1, 10)] + [f"GUROBI-M{i}" for i in range(1, 10)]
 SUMMARY_COLUMNS = [
     "算例名称",
     "BOM数目",
@@ -36,6 +36,16 @@ SUMMARY_COLUMNS = [
     "total_deadline_overrun",
     "bom_arrival_window_violating_order_count",
     "model_gap",
+    "scale",
+    "status",
+    "warm_start_enabled",
+    "runtime_sec",
+    "solver_runtime_sec",
+    "gurobi_runtime_sec",
+    "gurobi_solve_time_sec",
+    "model_best_bound",
+    "model_status_code",
+    "model_sol_count",
     "运行时间",
 ]
 
@@ -133,10 +143,10 @@ def main() -> None:
     parser.add_argument("--mip-gap", type=float, default=0.01)
     parser.add_argument("--quiet-gurobi", action="store_true", default=True)
     parser.add_argument("--show-gurobi", action="store_true", help="Enable Gurobi solver log output.")
-    parser.add_argument("--candidate-stack-topk", type=int, default=3)
-    parser.add_argument("--candidate-station-topk-per-stack", type=int, default=2)
+    parser.add_argument("--candidate-stack-topk", type=int, default=999)
+    parser.add_argument("--candidate-station-topk-per-stack", type=int, default=999)
     parser.add_argument("--max-rank", type=int, default=0)
-    parser.add_argument("--max-candidate-stacks-per-order", type=int, default=24)
+    parser.add_argument("--max-candidate-stacks-per-order", type=int, default=0)
     parser.add_argument("--kitting-span-penalty-weight", type=float, default=5.0)
     parser.add_argument("--deadline-penalty-weight", type=float, default=1000.0)
     parser.add_argument("--scales", type=str, default=",".join(SCALES), help="Comma-separated scale list.")
@@ -148,7 +158,13 @@ def main() -> None:
     )
     parser.add_argument("--force-all-candidate-stacks", action="store_true")
     parser.add_argument("--disable-warm-candidate-stack-prune", action="store_true")
+    parser.add_argument("--disable-warm-start", action="store_true")
     parser.add_argument("--disable-route-arc-prune", action="store_true")
+    parser.add_argument("--disable-route-time-window-arc-prune", action="store_true")
+    parser.add_argument("--disable-route-load-interval-arc-prune", action="store_true")
+    parser.add_argument("--enable-route-directional-arc-prune", action="store_true")
+    parser.add_argument("--route-pickup-neighbor-limit", type=int, default=0)
+    parser.add_argument("--enable-scale-adaptive-candidate-prune", action="store_true")
     parser.add_argument("--disable-scale-adaptive-candidate-prune", action="store_true")
     parser.add_argument("--output-dir", type=str, default="")
     args = parser.parse_args()
@@ -177,27 +193,35 @@ def main() -> None:
                 candidate_stack_topk=int(args.candidate_stack_topk),
                 candidate_station_topk_per_stack=int(args.candidate_station_topk_per_stack),
                 max_rank=int(args.max_rank),
-                enable_warm_start=True,
+                enable_warm_start=not bool(args.disable_warm_start),
                 write_lp=False,
                 gurobi_output=bool(args.show_gurobi),
                 max_candidate_stacks_per_order=int(args.max_candidate_stacks_per_order),
                 integrate_u_route=True,
                 route_arc_prune=not bool(args.disable_route_arc_prune),
+                enable_route_time_window_arc_prune=not bool(args.disable_route_time_window_arc_prune),
+                enable_route_load_interval_arc_prune=not bool(args.disable_route_load_interval_arc_prune),
+                enable_route_directional_arc_prune=bool(args.enable_route_directional_arc_prune),
+                route_pickup_neighbor_limit=int(args.route_pickup_neighbor_limit),
                 u_same_slot_same_robot=True,
-                warm_start_use_sp4=True,
+                warm_start_use_sp4=not bool(args.disable_warm_start),
                 enable_sp4_fallback=False,
                 kitting_span_penalty_weight=float(args.kitting_span_penalty_weight),
                 deadline_penalty_weight=float(args.deadline_penalty_weight),
                 forced_candidate_stacks_by_order=scale_forced_candidate_stacks,
                 enable_warm_candidate_stack_prune=not bool(args.disable_warm_candidate_stack_prune),
-                enable_scale_adaptive_candidate_prune=not bool(args.disable_scale_adaptive_candidate_prune),
+                enable_scale_adaptive_candidate_prune=bool(args.enable_scale_adaptive_candidate_prune)
+                and not bool(args.disable_scale_adaptive_candidate_prune),
             )
             result = GlobalXYZUSolver().solve(problem, cfg=cfg)
             diag = dict(result.diagnostics or {})
             upper = _finite_float(diag.get("model_cmax", result.objective), _finite_float(result.objective))
             lower = _finite_float(diag.get("model_best_bound", float("nan")))
             gap = _finite_float(diag.get("model_gap", result.gap), _finite_float(result.gap))
-            runtime = _finite_float(result.runtime_sec, time.perf_counter() - start)
+            solver_runtime = _finite_float(result.runtime_sec, time.perf_counter() - start)
+            runtime = float(time.perf_counter() - start)
+            gurobi_runtime = _finite_float(diag.get("gurobi_runtime_sec", float("nan")))
+            gurobi_solve_time = _finite_float(diag.get("gurobi_solve_time_sec", float("nan")))
             scale_output_dir = os.path.join(output_dir, scale)
             os.makedirs(scale_output_dir, exist_ok=True)
             solution_export_dir = _write_gurobi_solution_export(
@@ -225,6 +249,16 @@ def main() -> None:
                     "total_deadline_overrun": _format_number(diag.get("total_deadline_overrun", 0.0)),
                     "bom_arrival_window_violating_order_count": int(bom_violating_count),
                     "model_gap": _format_number(gap),
+                    "scale": scale,
+                    "status": str(result.status),
+                    "warm_start_enabled": bool(not bool(args.disable_warm_start)),
+                    "runtime_sec": _format_number(runtime),
+                    "solver_runtime_sec": _format_number(solver_runtime),
+                    "gurobi_runtime_sec": _format_number(gurobi_runtime),
+                    "gurobi_solve_time_sec": _format_number(gurobi_solve_time),
+                    "model_best_bound": _format_number(lower),
+                    "model_status_code": int(diag.get("model_status_code", 0) or 0),
+                    "model_sol_count": int(diag.get("model_sol_count", 0) or 0),
                     "运行时间": _format_number(runtime),
                 }
             )
@@ -237,9 +271,19 @@ def main() -> None:
                     "model_sol_count": int(diag.get("model_sol_count", 0) or 0),
                     "u_arc_count": int(diag.get("u_arc_count", 0) or 0),
                     "u_time_window_pruned_arc_count": int(diag.get("u_time_window_pruned_arc_count", 0) or 0),
+                    "u_load_interval_pruned_arc_count": int(diag.get("u_load_interval_pruned_arc_count", 0) or 0),
+                    "u_directional_pruned_arc_count": int(diag.get("u_directional_pruned_arc_count", 0) or 0),
+                    "u_knn_pruned_arc_count": int(diag.get("u_knn_pruned_arc_count", 0) or 0),
                     "u_time_window_latest_tightened_node_count": int(diag.get("u_time_window_latest_tightened_node_count", 0) or 0),
                     "model_objective": _finite_float(diag.get("model_objective", result.objective)),
                     "model_cmax": _finite_float(diag.get("model_cmax", upper)),
+                    "model_best_bound": lower,
+                    "model_gap": gap,
+                    "runtime_sec": runtime,
+                    "solver_runtime_sec": solver_runtime,
+                    "gurobi_runtime_sec": gurobi_runtime,
+                    "gurobi_solve_time_sec": gurobi_solve_time,
+                    "warm_start_enabled": bool(not bool(args.disable_warm_start)),
                     "total_span_overrun": _finite_float(diag.get("total_span_overrun", 0.0), 0.0),
                     "total_deadline_overrun": _finite_float(diag.get("total_deadline_overrun", 0.0), 0.0),
                     "bom_arrival_window_violating_order_count": int(bom_violating_count),
@@ -262,6 +306,10 @@ def main() -> None:
                     "上界": "",
                     "下界": "",
                     "gap": "",
+                    "scale": scale,
+                    "status": "ERROR",
+                    "warm_start_enabled": bool(not bool(args.disable_warm_start)),
+                    "runtime_sec": _format_number(time.perf_counter() - start),
                     "运行时间": _format_number(time.perf_counter() - start),
                 }
             )

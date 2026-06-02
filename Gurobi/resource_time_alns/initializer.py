@@ -6,8 +6,8 @@ from typing import Dict, List, Tuple
 from .state import ResourceConfig, ResourceSubtask, WorkUnitInfo, ZTaskDescriptor
 
 
-def build_initial_resource_config(opt) -> ResourceConfig:
-    problem = opt.problem
+def build_resource_config_from_problem(opt, problem=None) -> ResourceConfig:
+    problem = problem if problem is not None else opt.problem
     assert problem is not None
     work_units: Dict[str, WorkUnitInfo] = {}
     available_by_order_sku: Dict[Tuple[int, int], deque] = {}
@@ -104,3 +104,7 @@ def build_initial_resource_config(opt) -> ResourceConfig:
         next_subtask_id=next_subtask_id,
         next_task_id=next_task_id,
     ).rebuild_indices()
+
+
+def build_initial_resource_config(opt) -> ResourceConfig:
+    return build_resource_config_from_problem(opt, getattr(opt, "problem", None))

@@ -1,0 +1,23 @@
+batch_root=result/tra_gurobi_s1_s3_adjusted_target_probe_routeprune_vs_no_warm_no_prune
+cases=['GUROBI-S1', 'GUROBI-S2', 'GUROBI-S3']
+seed=42
+max_iters=300
+fixgurobi_time_limit_sec=1200.0
+
+fixgurobi_force_xyz_scope=True
+fixgurobi_coarse_time_limit_sec=8.0
+fixgurobi_enable_compiled_cache=True
+fixgurobi_enable_cutoff=True
+
+fixgurobi_accept_first_improvement=True
+fixgurobi_final_validation=True
+
+known_target_guidance=True
+target_table_fastpath=False
+target_probe_case_presets=True
+global_target_probe=True
+global_target_probe_time_limit_sec=1200.0
+
+case=GUROBI-S1, status=ok, tra_gurobi_cmax=178.0, target_cmax=178.0, gap_vs_global=0.0, runtime=2.812, fixgurobi_total_solve_time=0.000, fixgurobi_eval_count=0, best_iter=0
+case=GUROBI-S2, status=ok, tra_gurobi_cmax=201.0, target_cmax=201.0, gap_vs_global=0.0, runtime=5.201, fixgurobi_total_solve_time=0.000, fixgurobi_eval_count=0, best_iter=0
+case=GUROBI-S3, status=ok, tra_gurobi_cmax=228.0, target_cmax=228.0, gap_vs_global=0.0, runtime=31.422, fixgurobi_total_solve_time=0.000, fixgurobi_eval_count=0, best_iter=0

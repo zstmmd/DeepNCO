@@ -150,6 +150,9 @@ class GlobalXYZUConfig:
     fixed_route_task_sequence_by_robot: Optional[Dict[int, List[Dict[str, Any]]]] = None
     fixgurobi_no_warm_start: bool = False
     fixgurobi_allow_warm_start_fallback: bool = True
+    fixgurobi_warm_bound_only: bool = False
+    gurobi_cutoff: Optional[float] = None
+    gurobi_best_obj_stop: Optional[float] = None
 
 
 @dataclass
@@ -164,6 +167,19 @@ class GlobalXYZUResult:
     robot_routes: Dict[int, List[Dict[str, Any]]] = field(default_factory=dict)
     station_schedule: Dict[int, List[int]] = field(default_factory=dict)
     diagnostics: Dict[str, Any] = field(default_factory=dict)
+    materialized_problem: Optional[OFSProblemDTO] = None
+
+
+@dataclass
+class CompiledGlobalXYZUModel:
+    problem_template: OFSProblemDTO
+    cfg: GlobalXYZUConfig
+    warm: Any
+    prepared: Dict[str, Any]
+    model: gp.Model
+    vars_payload: Dict[str, Any]
+    diagnostics: Dict[str, Any]
+    compile_time_sec: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -313,12 +329,304 @@ class GlobalXYZUSolver:
         )
         return effective, diag
 
+    @staticmethod
+    def _set_solve_params(model: gp.Model, cfg: GlobalXYZUConfig) -> None:
+        model.Params.OutputFlag = 1 if bool(getattr(cfg, "gurobi_output", True)) else 0
+        model.Params.TimeLimit = float(cfg.time_limit_sec)
+        model.Params.MIPGap = float(cfg.mip_gap)
+        if getattr(cfg, "gurobi_method", None) is not None:
+            model.Params.Method = int(getattr(cfg, "gurobi_method"))
+        if getattr(cfg, "gurobi_node_method", None) is not None:
+            model.Params.NodeMethod = int(getattr(cfg, "gurobi_node_method"))
+        if getattr(cfg, "gurobi_mip_focus", None) is not None:
+            model.Params.MIPFocus = int(getattr(cfg, "gurobi_mip_focus"))
+        model.Params.Cuts = int(getattr(cfg, "gurobi_cuts", 1))
+        if bool(getattr(cfg, "route_lazy_constraint", True)):
+            model.Params.LazyConstraints = 1
+        model.Params.CutPasses = int(getattr(cfg, "gurobi_cut_passes", 1))
+        if getattr(cfg, "gurobi_heuristics", None) is not None:
+            model.Params.Heuristics = float(getattr(cfg, "gurobi_heuristics"))
+        try:
+            model.Params.Presolve = int(getattr(cfg, "gurobi_presolve", 1))
+        except Exception:
+            pass
+        cutoff = getattr(cfg, "gurobi_cutoff", None)
+        if cutoff is not None:
+            try:
+                cutoff_value = float(cutoff)
+                if math.isfinite(cutoff_value):
+                    model.Params.Cutoff = cutoff_value
+            except Exception:
+                pass
+        best_obj_stop = getattr(cfg, "gurobi_best_obj_stop", None)
+        if best_obj_stop is not None:
+            try:
+                best_obj_stop_value = float(best_obj_stop)
+                if math.isfinite(best_obj_stop_value):
+                    model.Params.BestObjStop = best_obj_stop_value
+            except Exception:
+                pass
+
+    def _remap_vars_payload_for_model(self, payload: Dict[str, Any], model: gp.Model) -> Dict[str, Any]:
+        var_by_name = {str(var.VarName): var for var in model.getVars()}
+
+        def remap(value: Any) -> Any:
+            try:
+                if isinstance(value, gp.Var):
+                    return var_by_name.get(str(value.VarName), value)
+            except Exception:
+                pass
+            if isinstance(value, dict):
+                try:
+                    return value.__class__((key, remap(val)) for key, val in value.items())
+                except Exception:
+                    return {key: remap(val) for key, val in value.items()}
+            if isinstance(value, list):
+                return [remap(item) for item in value]
+            if isinstance(value, tuple):
+                return tuple(remap(item) for item in value)
+            if isinstance(value, set):
+                return {remap(item) for item in value}
+            return value
+
+        return {key: remap(value) for key, value in dict(payload or {}).items()}
+
+    def compile_model(self, problem: OFSProblemDTO, cfg: Optional[GlobalXYZUConfig] = None) -> CompiledGlobalXYZUModel:
+        cfg = cfg or GlobalXYZUConfig()
+        cfg, scale_adaptive_diag = self._apply_scale_adaptive_config(problem, cfg)
+        start_clock = time.perf_counter()
+        fixgurobi_no_warm_start = bool(getattr(cfg, "fixgurobi_no_warm_start", False))
+        fixgurobi_warm_bound_only = bool(getattr(cfg, "fixgurobi_warm_bound_only", False))
+        if bool(fixgurobi_no_warm_start) and bool(getattr(cfg, "enable_warm_start", False)) and not bool(fixgurobi_warm_bound_only):
+            raise RuntimeError("FixGurobi forbids global_xyzu warm start injection; set enable_warm_start=False.")
+        diagnostics: Dict[str, Any] = {
+            "solver": "GlobalXYZUSolver",
+            "stage": "compile",
+            "supported_scale": True,
+            "u_candidate_task_count": 0,
+            "u_node_count": 0,
+            "u_arc_count": 0,
+            "u_active_task_count": 0,
+            "u_integrated_route_used": False,
+            "u_fallback_reason": "",
+            "gurobi_solve_time_sec": 0.0,
+            "gurobi_runtime_sec": 0.0,
+            "route_lazy_constraint": bool(getattr(cfg, "route_lazy_constraint", True)),
+            "route_lazy_level": int(getattr(cfg, "route_lazy_level", 1)),
+            "fixgurobi_warm_start_disabled": bool(fixgurobi_no_warm_start),
+            "fixgurobi_warm_start_applied": False,
+            "fixgurobi_warm_bound_only": bool(fixgurobi_warm_bound_only),
+        }
+        diagnostics.update(scale_adaptive_diag)
+        scale_name = str(getattr(problem, "scale_name", "") or "").upper()
+        if scale_name and not (scale_name.startswith("SMALL") or scale_name.startswith("GUROBI-S") or scale_name in {"TEST", "TINY3"}):
+            diagnostics["supported_scale"] = False
+            diagnostics["warning"] = f"scale={scale_name} is outside the intended SMALL/SMALL2/TINY3/GUROBI-S scope"
+        warm = self._build_warm_start(problem, cfg) if bool(cfg.enable_warm_start) else WarmStartState()
+        self._warm_start = warm
+        self._warm_start_problem_snapshot = copy.deepcopy(problem) if bool(cfg.enable_warm_start) else None
+        prepared = self._prepare(problem, cfg, warm)
+        diagnostics.update(
+            {
+                "work_unit_count": int(len(prepared["work_units"])),
+                "slot_count": int(len(prepared["slots"])),
+                "slot_count_by_order": {
+                    int(order_id): int(len(slot_ids))
+                    for order_id, slot_ids in (prepared["slot_ids_by_order"] or {}).items()
+                },
+                "candidate_stack_count_by_order": {
+                    int(order_id): int(len(stack_ids))
+                    for order_id, stack_ids in (prepared["candidate_stacks_by_order"] or {}).items()
+                },
+                "candidate_stack_count_before_by_order": {
+                    int(order_id): int(count)
+                    for order_id, count in (prepared.get("candidate_stack_count_before_by_order", {}) or {}).items()
+                },
+                "candidate_stack_dominated_pruned_count_by_order": {
+                    int(order_id): int(count)
+                    for order_id, count in (prepared.get("candidate_stack_dominated_pruned_count_by_order", {}) or {}).items()
+                },
+                "candidate_stack_warm_neighbor_count_by_order": {
+                    int(order_id): int(count)
+                    for order_id, count in (prepared.get("candidate_stack_warm_neighbor_count_by_order", {}) or {}).items()
+                },
+                "demand_hit_tote_count_by_order": {
+                    int(order_id): int(len(tote_ids))
+                    for order_id, tote_ids in (prepared.get("demand_hit_totes_by_order", {}) or {}).items()
+                },
+                "support_tote_count_by_order": {
+                    int(order_id): int(len(tote_ids))
+                    for order_id, tote_ids in (prepared.get("support_totes_by_order", {}) or {}).items()
+                },
+                "warm_start_makespan": float(getattr(warm, "makespan", 0.0) or 0.0),
+                "warm_start_sp2_mode": str(getattr(warm, "sp2_mode", "")),
+                "warm_start_sp4_mode": str(getattr(warm, "sp4_mode", "")),
+                "warm_start_sp4_error": str(getattr(warm, "sp4_error", "")),
+                "warm_start_sp4_runtime_sec": float(getattr(warm, "sp4_runtime_sec", 0.0) or 0.0),
+            }
+        )
+        model = gp.Model("Global_XYZU_Integrated")
+        model.Params.OutputFlag = 1 if bool(getattr(cfg, "gurobi_output", True)) else 0
+        vars_payload = self._build_model(model, prepared, cfg)
+        diagnostics.update(vars_payload.get("diagnostics", {}))
+        diagnostics.update(self._collect_model_structure_stats(model))
+        if bool(cfg.write_lp):
+            model.write("global_xyzu_model.lp")
+        diagnostics["compile_time_sec"] = float(time.perf_counter() - start_clock)
+        model.update()
+        return CompiledGlobalXYZUModel(
+            problem_template=copy.deepcopy(problem),
+            cfg=cfg,
+            warm=warm,
+            prepared=prepared,
+            model=model,
+            vars_payload=vars_payload,
+            diagnostics=diagnostics,
+            compile_time_sec=float(diagnostics["compile_time_sec"]),
+        )
+
+    def solve_compiled(
+        self,
+        compiled: CompiledGlobalXYZUModel,
+        *,
+        fixed_cfg: Optional[GlobalXYZUConfig] = None,
+        solve_cfg: Optional[GlobalXYZUConfig] = None,
+    ) -> GlobalXYZUResult:
+        start_clock = time.perf_counter()
+        cfg = solve_cfg or fixed_cfg or compiled.cfg
+        fixed_source = fixed_cfg or cfg
+        diagnostics: Dict[str, Any] = dict(compiled.diagnostics or {})
+        diagnostics["stage"] = "compiled_copy"
+        diagnostics["compiled_model_used"] = True
+        diagnostics["compile_time_sec"] = float(getattr(compiled, "compile_time_sec", 0.0) or 0.0)
+        problem = copy.deepcopy(compiled.problem_template)
+        warm = compiled.warm
+        prepared = compiled.prepared
+        try:
+            copy_clock = time.perf_counter()
+            model = compiled.model.copy()
+            diagnostics["compiled_model_copy_time_sec"] = float(time.perf_counter() - copy_clock)
+            vars_payload = self._remap_vars_payload_for_model(compiled.vars_payload, model)
+            diagnostics.update(self._apply_fixed_decision_constraints(model, vars_payload, prepared, fixed_source))
+            self._set_solve_params(model, cfg)
+            diagnostics["stage"] = "optimize"
+            gurobi_clock = time.perf_counter()
+            try:
+                model.optimize()
+            finally:
+                diagnostics["gurobi_solve_time_sec"] = float(time.perf_counter() - gurobi_clock)
+                try:
+                    diagnostics["gurobi_runtime_sec"] = float(model.Runtime)
+                except Exception:
+                    diagnostics["gurobi_runtime_sec"] = float(diagnostics["gurobi_solve_time_sec"])
+            diagnostics["model_status_code"] = int(model.Status)
+            diagnostics["model_sol_count"] = int(model.SolCount)
+            try:
+                diagnostics["model_best_bound"] = float(model.ObjBound)
+            except Exception:
+                diagnostics["model_best_bound"] = float("nan")
+            try:
+                diagnostics["model_gap"] = float(model.MIPGap)
+            except Exception:
+                diagnostics["model_gap"] = float("nan")
+            try:
+                diagnostics["model_node_count"] = float(model.NodeCount)
+            except Exception:
+                diagnostics["model_node_count"] = float("nan")
+            diagnostics["model_root_relax_bound"] = float(diagnostics.get("model_best_bound", float("nan")))
+            if model.SolCount <= 0:
+                raise RuntimeError(f"Global XYZU compiled model failed to produce a feasible solution. status={model.Status}")
+            diagnostics["model_objective"] = float(model.ObjVal)
+            diagnostics["objective_value"] = float(model.ObjVal)
+            diagnostics["proxy_objective"] = float(model.ObjVal)
+            extraction = self._extract_xyz_solution(vars_payload, prepared)
+            diagnostics.update(extraction["diagnostics"])
+            self._materialize_solution(problem, extraction, prepared)
+            gap = float(model.MIPGap) if model.Status in {GRB.OPTIMAL, GRB.TIME_LIMIT} else float("nan")
+            status = self._status_label(model.Status)
+        except Exception as exc:
+            if not bool(getattr(cfg, "fixgurobi_allow_warm_start_fallback", True)):
+                diagnostics["fallback"] = ""
+                diagnostics["fallback_reason"] = str(exc)
+                diagnostics["u_fallback_reason"] = str(exc)
+                diagnostics["stage"] = "fixgurobi_failed"
+                runtime_sec = float(time.perf_counter() - start_clock)
+                return GlobalXYZUResult(
+                    status="FIXGUROBI_FAILED",
+                    objective=float("inf"),
+                    gap=float("nan"),
+                    runtime_sec=runtime_sec,
+                    subtask_count=0,
+                    task_count=0,
+                    diagnostics=diagnostics,
+                )
+            diagnostics["fallback"] = "warm_start"
+            diagnostics["fallback_reason"] = str(exc)
+            diagnostics["u_fallback_reason"] = str(exc)
+            if not getattr(warm, "subtask_by_order", None):
+                raise
+            self._materialize_warm_start(problem, warm)
+            gap = float("nan")
+            status = "WARM_START_FALLBACK"
+        if str(diagnostics.get("fallback", "")) == "warm_start":
+            route_diag = {
+                "u_route_stage": f"warm_start_{str(diagnostics.get('warm_start_sp4_mode', 'unknown') or 'unknown')}",
+                "u_route_fallback": "warm_start_solution",
+                "u_fallback_reason": str(diagnostics.get("fallback_reason", "")),
+            }
+        elif bool(diagnostics.get("u_integrated_route_used", False)):
+            route_diag = {"u_route_stage": "integrated_mip", "u_route_fallback": "", "u_fallback_reason": ""}
+        else:
+            if not diagnostics.get("u_fallback_reason"):
+                diagnostics["u_fallback_reason"] = "integrated_route_disabled_or_unavailable"
+            route_diag = self._solve_u_routes(problem, cfg)
+            if diagnostics.get("u_fallback_reason"):
+                route_diag["u_fallback_reason"] = diagnostics.get("u_fallback_reason", "")
+        diagnostics.update(route_diag)
+        diagnostics.update(self._compute_relay_tote_diagnostics_from_problem(problem))
+        diagnostics.setdefault("route_finish_lb_by_robot", {})
+        diagnostics.setdefault("service_lb_total", 0.0)
+        diagnostics.setdefault("min_trip_travel_time", 0.0)
+        diagnostics.setdefault("global_robot_service_only_lb", 0.0)
+        diagnostics.setdefault("global_robot_capacity_trip_lb", 0.0)
+        true_global_makespan = float(RankAwareGlobalTimeCalculator(problem).calculate())
+        diagnostics["validated_global_makespan"] = float(true_global_makespan)
+        diagnostics["true_global_makespan"] = float(true_global_makespan)
+        model_cmax = diagnostics.get("model_cmax", None)
+        if bool(diagnostics.get("u_integrated_route_used", False)) and isinstance(model_cmax, (int, float)):
+            mismatch = abs(float(model_cmax) - float(true_global_makespan))
+            diagnostics["time_verify_cmax_diff"] = float(mismatch)
+            if mismatch > 1e-4:
+                diagnostics["time_verify_mismatch"] = True
+                status = "TIME_VERIFY_MISMATCH"
+            else:
+                diagnostics["time_verify_mismatch"] = False
+        runtime_sec = float(time.perf_counter() - start_clock)
+        result_objective = float(diagnostics.get("model_objective", float("nan")))
+        if not math.isfinite(result_objective):
+            result_objective = float(true_global_makespan)
+            diagnostics["model_objective"] = float(result_objective)
+            diagnostics["objective_value"] = float(result_objective)
+        return self._build_result(
+            problem=problem,
+            status=status,
+            objective=float(result_objective),
+            gap=gap,
+            runtime_sec=runtime_sec,
+            diagnostics=diagnostics,
+        )
+
     def solve(self, problem: OFSProblemDTO, cfg: Optional[GlobalXYZUConfig] = None) -> GlobalXYZUResult:
         cfg = cfg or GlobalXYZUConfig()
         cfg, scale_adaptive_diag = self._apply_scale_adaptive_config(problem, cfg)
         start_clock = time.perf_counter()
         fixgurobi_no_warm_start = bool(getattr(cfg, "fixgurobi_no_warm_start", False))
-        if bool(fixgurobi_no_warm_start) and bool(getattr(cfg, "enable_warm_start", False)):
+        fixgurobi_warm_bound_only = bool(getattr(cfg, "fixgurobi_warm_bound_only", False))
+        if (
+            bool(fixgurobi_no_warm_start)
+            and bool(getattr(cfg, "enable_warm_start", False))
+            and not bool(fixgurobi_warm_bound_only)
+        ):
             raise RuntimeError("FixGurobi forbids global_xyzu warm start injection; set enable_warm_start=False.")
 
         # 统一诊断信息：后续用于判断是否真正走了一体化 U MIP，还是进入了 fallback。
@@ -338,6 +646,7 @@ class GlobalXYZUSolver:
             "route_lazy_level": int(getattr(cfg, "route_lazy_level", 1)),
             "fixgurobi_warm_start_disabled": bool(fixgurobi_no_warm_start),
             "fixgurobi_warm_start_applied": False,
+            "fixgurobi_warm_bound_only": bool(fixgurobi_warm_bound_only),
         }
         diagnostics.update(scale_adaptive_diag)
         scale_name = str(getattr(problem, "scale_name", "") or "").upper()
@@ -405,9 +714,14 @@ class GlobalXYZUSolver:
                 model.write("global_xyzu_model.lp")
             if bool(cfg.enable_warm_start):
                 if bool(getattr(cfg, "fixgurobi_no_warm_start", False)):
-                    raise RuntimeError("FixGurobi attempted to apply a global_xyzu warm start.")
-                diagnostics.update(self._apply_warm_start(vars_payload, prepared, warm))
-                diagnostics["fixgurobi_warm_start_applied"] = False
+                    if bool(getattr(cfg, "fixgurobi_warm_bound_only", False)):
+                        diagnostics["warm_start_skipped_reason"] = "fixgurobi_warm_bound_only"
+                        diagnostics["fixgurobi_warm_start_applied"] = False
+                    else:
+                        raise RuntimeError("FixGurobi attempted to apply a global_xyzu warm start.")
+                else:
+                    diagnostics.update(self._apply_warm_start(vars_payload, prepared, warm))
+                    diagnostics["fixgurobi_warm_start_applied"] = False
             # DEBUG_WARM_START = True
             # model.update()
             # if DEBUG_WARM_START and bool(cfg.enable_warm_start):
@@ -446,7 +760,8 @@ class GlobalXYZUSolver:
             # # # ====================================================================
             diagnostics["stage"] = "optimize"
             gurobi_clock = time.perf_counter()
-            if getattr(cfg, "gurobi_method", None) is not None:
+            self._set_solve_params(model, cfg)
+            if False and getattr(cfg, "gurobi_method", None) is not None:
                 model.Params.Method = int(getattr(cfg, "gurobi_method"))
             if getattr(cfg, "gurobi_node_method", None) is not None:
                 model.Params.NodeMethod = int(getattr(cfg, "gurobi_node_method"))
@@ -461,7 +776,6 @@ class GlobalXYZUSolver:
             if getattr(cfg, "gurobi_heuristics", None) is not None:
                 model.Params.Heuristics = float(getattr(cfg, "gurobi_heuristics"))
             try:
-                model.Params.Presolve = int(getattr(cfg, "gurobi_presolve", 1))
                 model.optimize()
             finally:
                 diagnostics["gurobi_solve_time_sec"] = float(time.perf_counter() - gurobi_clock)
@@ -939,6 +1253,8 @@ class GlobalXYZUSolver:
             GRB.TIME_LIMIT: "TIME_LIMIT",
             GRB.INFEASIBLE: "INFEASIBLE",
             GRB.INTERRUPTED: "INTERRUPTED",
+            GRB.CUTOFF: "CUTOFF",
+            GRB.USER_OBJ_LIMIT: "USER_OBJ_LIMIT",
         }
         return str(mapping.get(int(status_code), f"STATUS_{int(status_code)}"))
 
@@ -6305,6 +6621,7 @@ class GlobalXYZUSolver:
             robot_routes={int(k): list(v) for k, v in robot_routes.items()},
             station_schedule={int(k): list(v) for k, v in station_schedule.items()},
             diagnostics=dict(diagnostics or {}),
+            materialized_problem=copy.deepcopy(problem),
         )
 
 

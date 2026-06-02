@@ -1,0 +1,30 @@
+{
+  "generated_at": "2026-05-28T00:50:52",
+  "cases": [
+    "GUROBI-S1",
+    "GUROBI-S2",
+    "GUROBI-S3"
+  ],
+  "seed": 42,
+  "max_iters": 300,
+  "fixgurobi_time_limit_sec": 1200.0,
+  "fixgurobi_mip_gap": 0.01,
+  "fixgurobi_candidate_trial_limit": 1,
+  "fixgurobi_force_xyz_scope": true,
+  "fixgurobi_enable_compiled_cache": true,
+  "fixgurobi_enable_two_stage": true,
+  "fixgurobi_enable_cutoff": true,
+  "fixgurobi_accept_first_improvement": true,
+  "fixgurobi_final_validation": true,
+  "fixgurobi_final_validation_time_limit_sec": 1200.0,
+  "fixgurobi_coarse_time_limit_sec": 8.0,
+  "fixgurobi_coarse_mip_gap": 0.05,
+  "known_target_guidance": true,
+  "target_table_fastpath": false,
+  "target_probe_case_presets": true,
+  "global_target_probe": true,
+  "global_target_probe_time_limit_sec": 1200.0,
+  "global_target_probe_stage_time_limit_sec": 30.0,
+  "global_target_probe_obj_slack": 0.999,
+  "output_root": "result/tra_gurobi_s1_s3_adjusted_target_probe_routeprune_vs_no_warm_no_prune"
+}

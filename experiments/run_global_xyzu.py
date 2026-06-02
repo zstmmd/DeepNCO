@@ -816,7 +816,7 @@ def main() -> None:
         enable_route_slot_stack_count_lb=not bool(args.disable_route_slot_stack_count_lb),
         enable_route_finish_cmax_lb=bool(args.enable_route_finish_cmax_lb),
         enable_global_arrival_workload_lb=not bool(args.disable_global_arrival_workload_lb),
-        enable_route_time_window_arc_prune=not bool(args.disable_route_time_window_arc_prune),
+        enable_route_time_window_arc_prune=False,
         enable_route_load_interval_arc_prune=not bool(args.disable_route_load_interval_arc_prune),
         enable_route_directional_arc_prune=bool(args.enable_route_directional_arc_prune),
         enable_route_service_sec_cuts=bool(args.enable_route_service_sec_cuts),
@@ -832,9 +832,9 @@ def main() -> None:
         enable_warm_prune_bound_repair=bool(args.enable_warm_prune_bound_repair),
         enable_warm_start_route_repair=not bool(args.disable_warm_start_route_repair),
     )
-    if str(args.scale).strip().upper() == "GUROBI-S7":
+    scale_name = str(args.scale).strip().upper()
+    if scale_name == "GUROBI-S7":
         cfg.route_arc_prune = False
-        cfg.enable_route_time_window_arc_prune = False
         cfg.enable_route_load_interval_arc_prune = False
     solver = GlobalXYZUSolver()
     result = solver.solve(problem, cfg=cfg)

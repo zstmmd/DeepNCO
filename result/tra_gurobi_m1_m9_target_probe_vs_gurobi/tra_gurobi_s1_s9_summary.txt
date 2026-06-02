@@ -1,0 +1,29 @@
+batch_root=result/tra_gurobi_m1_m9_target_probe_vs_gurobi
+cases=['GUROBI-M1', 'GUROBI-M2', 'GUROBI-M3', 'GUROBI-M4', 'GUROBI-M5', 'GUROBI-M6', 'GUROBI-M7', 'GUROBI-M8', 'GUROBI-M9']
+seed=42
+max_iters=60
+fixgurobi_time_limit_sec=1200.0
+
+fixgurobi_force_xyz_scope=True
+fixgurobi_coarse_time_limit_sec=8.0
+fixgurobi_enable_compiled_cache=True
+fixgurobi_enable_cutoff=True
+
+fixgurobi_accept_first_improvement=True
+fixgurobi_final_validation=True
+
+known_target_guidance=True
+target_table_fastpath=False
+target_probe_case_presets=False
+global_target_probe=True
+global_target_probe_time_limit_sec=3400.0
+
+case=GUROBI-M1, status=ok, tra_gurobi_cmax=489.0, target_cmax=489.0, gap_vs_global=0.0, runtime=818.841, fixgurobi_total_solve_time=0.000, fixgurobi_eval_count=0, best_iter=0
+case=GUROBI-M2, status=ok, tra_gurobi_cmax=546.0, target_cmax=546.0, gap_vs_global=0.0, runtime=963.196, fixgurobi_total_solve_time=0.000, fixgurobi_eval_count=0, best_iter=0
+case=GUROBI-M3, status=ok, tra_gurobi_cmax=558.0, target_cmax=558.0, gap_vs_global=0.0, runtime=1025.474, fixgurobi_total_solve_time=0.000, fixgurobi_eval_count=0, best_iter=0
+case=GUROBI-M4, status=ok, tra_gurobi_cmax=630.0, target_cmax=630.0, gap_vs_global=0.0, runtime=165.517, fixgurobi_total_solve_time=0.000, fixgurobi_eval_count=0, best_iter=0
+case=GUROBI-M5, status=ok, tra_gurobi_cmax=679.0, target_cmax=679.0, gap_vs_global=0.0, runtime=1187.449, fixgurobi_total_solve_time=0.000, fixgurobi_eval_count=0, best_iter=0
+case=GUROBI-M6, status=ok, tra_gurobi_cmax=687.0, target_cmax=687.0, gap_vs_global=0.0, runtime=1308.848, fixgurobi_total_solve_time=0.000, fixgurobi_eval_count=0, best_iter=0
+case=GUROBI-M7, status=ok, tra_gurobi_cmax=708.0, target_cmax=708.0, gap_vs_global=0.0, runtime=1208.160, fixgurobi_total_solve_time=0.000, fixgurobi_eval_count=0, best_iter=0
+case=GUROBI-M8, status=ok, tra_gurobi_cmax=725.0, target_cmax=725.0, gap_vs_global=0.0, runtime=1634.774, fixgurobi_total_solve_time=0.000, fixgurobi_eval_count=0, best_iter=0
+case=GUROBI-M9, status=ok, tra_gurobi_cmax=731.0, target_cmax=731.0, gap_vs_global=0.0, runtime=1736.379, fixgurobi_total_solve_time=0.000, fixgurobi_eval_count=0, best_iter=0

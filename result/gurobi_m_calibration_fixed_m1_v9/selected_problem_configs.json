@@ -1,0 +1,424 @@
+{
+  "GUROBI-M1": {
+    "map_size": [
+      4,
+      5
+    ],
+    "resources": [
+      5,
+      4,
+      172
+    ],
+    "data": [
+      6,
+      42
+    ],
+    "bom_complexity": [
+      8,
+      1
+    ],
+    "target_stack_count": 30,
+    "inventory_cold_filler_probability": 0.25,
+    "exact_order_sku_counts": [
+      6,
+      6,
+      6,
+      6,
+      6,
+      6
+    ],
+    "exact_order_sku_quantity_range": [
+      11,
+      13
+    ],
+    "bom_colocated_inventory": true,
+    "bom_colocated_stack_counts": [
+      2,
+      2,
+      3,
+      3,
+      3,
+      3
+    ],
+    "bom_colocated_disjoint_stack_groups": true,
+    "bom_colocated_support_multiplier": 1.2
+  },
+  "GUROBI-M2": {
+    "bom_colocated_disjoint_stack_groups": true,
+    "bom_colocated_inventory": true,
+    "bom_colocated_stack_counts": [
+      2,
+      2,
+      3,
+      3,
+      3,
+      3,
+      3
+    ],
+    "bom_colocated_support_multiplier": 1.2,
+    "bom_complexity": [
+      8,
+      1
+    ],
+    "data": [
+      7,
+      44
+    ],
+    "exact_order_sku_counts": [
+      6,
+      6,
+      6,
+      6,
+      6,
+      6,
+      6
+    ],
+    "exact_order_sku_quantity_range": [
+      13,
+      15
+    ],
+    "inventory_cold_filler_probability": 0.25,
+    "map_size": [
+      4,
+      5
+    ],
+    "resources": [
+      5,
+      5,
+      184
+    ],
+    "target_stack_count": 33
+  },
+  "GUROBI-M3": {
+    "bom_colocated_disjoint_stack_groups": true,
+    "bom_colocated_inventory": true,
+    "bom_colocated_stack_counts": [
+      2,
+      2,
+      2,
+      3,
+      3,
+      3,
+      3
+    ],
+    "bom_colocated_support_multiplier": 1.2,
+    "bom_complexity": [
+      8,
+      1
+    ],
+    "data": [
+      7,
+      49
+    ],
+    "exact_order_sku_counts": [
+      6,
+      6,
+      6,
+      6,
+      6,
+      6,
+      6
+    ],
+    "exact_order_sku_quantity_range": [
+      13,
+      15
+    ],
+    "inventory_cold_filler_probability": 0.25,
+    "map_size": [
+      4,
+      5
+    ],
+    "resources": [
+      5,
+      5,
+      197
+    ],
+    "target_stack_count": 36
+  },
+  "GUROBI-M4": {
+    "bom_colocated_disjoint_stack_groups": true,
+    "bom_colocated_inventory": true,
+    "bom_colocated_stack_counts": [
+      2,
+      2,
+      2,
+      2,
+      2,
+      3,
+      3
+    ],
+    "bom_colocated_support_multiplier": 1.2,
+    "bom_complexity": [
+      8,
+      1
+    ],
+    "data": [
+      7,
+      56
+    ],
+    "exact_order_sku_counts": [
+      6,
+      6,
+      6,
+      6,
+      6,
+      6,
+      6
+    ],
+    "exact_order_sku_quantity_range": [
+      15,
+      17
+    ],
+    "inventory_cold_filler_probability": 0.25,
+    "map_size": [
+      4,
+      5
+    ],
+    "resources": [
+      5,
+      5,
+      225
+    ],
+    "target_stack_count": 41
+  },
+  "GUROBI-M5": {
+    "bom_colocated_disjoint_stack_groups": true,
+    "bom_colocated_inventory": true,
+    "bom_colocated_stack_counts": [
+      2,
+      2,
+      2,
+      2,
+      3,
+      3,
+      3,
+      3
+    ],
+    "bom_colocated_support_multiplier": 1.2,
+    "bom_complexity": [
+      8,
+      1
+    ],
+    "data": [
+      8,
+      58
+    ],
+    "exact_order_sku_counts": [
+      6,
+      6,
+      6,
+      6,
+      6,
+      6,
+      6,
+      6
+    ],
+    "exact_order_sku_quantity_range": [
+      16,
+      18
+    ],
+    "inventory_cold_filler_probability": 0.25,
+    "map_size": [
+      4,
+      5
+    ],
+    "resources": [
+      5,
+      5,
+      237
+    ],
+    "target_stack_count": 44
+  },
+  "GUROBI-M6": {
+    "bom_colocated_disjoint_stack_groups": true,
+    "bom_colocated_inventory": true,
+    "bom_colocated_stack_counts": [
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+    ],
+    "bom_colocated_support_multiplier": 1.2,
+    "bom_complexity": [
+      8,
+      1
+    ],
+    "data": [
+      8,
+      61
+    ],
+    "exact_order_sku_counts": [
+      6,
+      6,
+      6,
+      6,
+      6,
+      6,
+      6,
+      6
+    ],
+    "exact_order_sku_quantity_range": [
+      17,
+      18
+    ],
+    "inventory_cold_filler_probability": 0.25,
+    "map_size": [
+      4,
+      5
+    ],
+    "resources": [
+      5,
+      5,
+      249
+    ],
+    "target_stack_count": 47
+  },
+  "GUROBI-M7": {
+    "bom_colocated_disjoint_stack_groups": true,
+    "bom_colocated_inventory": true,
+    "bom_colocated_stack_counts": [
+      2,
+      2,
+      2,
+      2,
+      3,
+      3,
+      3,
+      3
+    ],
+    "bom_colocated_support_multiplier": 1.2,
+    "bom_complexity": [
+      8,
+      1
+    ],
+    "data": [
+      8,
+      62
+    ],
+    "exact_order_sku_counts": [
+      6,
+      6,
+      6,
+      6,
+      6,
+      6,
+      6,
+      6
+    ],
+    "exact_order_sku_quantity_range": [
+      17,
+      20
+    ],
+    "inventory_cold_filler_probability": 0.25,
+    "map_size": [
+      4,
+      5
+    ],
+    "resources": [
+      5,
+      5,
+      253
+    ],
+    "target_stack_count": 48
+  },
+  "GUROBI-M8": {
+    "bom_colocated_disjoint_stack_groups": true,
+    "bom_colocated_inventory": true,
+    "bom_colocated_stack_counts": [
+      2,
+      2,
+      2,
+      2,
+      3,
+      3,
+      3,
+      3
+    ],
+    "bom_colocated_support_multiplier": 1.2,
+    "bom_complexity": [
+      8,
+      1
+    ],
+    "data": [
+      8,
+      64
+    ],
+    "exact_order_sku_counts": [
+      6,
+      6,
+      6,
+      6,
+      6,
+      6,
+      6,
+      6
+    ],
+    "exact_order_sku_quantity_range": [
+      18,
+      20
+    ],
+    "inventory_cold_filler_probability": 0.25,
+    "map_size": [
+      4,
+      5
+    ],
+    "resources": [
+      5,
+      5,
+      261
+    ],
+    "target_stack_count": 50
+  },
+  "GUROBI-M9": {
+    "map_size": [
+      4,
+      5
+    ],
+    "resources": [
+      5,
+      5,
+      265
+    ],
+    "data": [
+      8,
+      65
+    ],
+    "bom_complexity": [
+      8,
+      1
+    ],
+    "target_stack_count": 51,
+    "inventory_cold_filler_probability": 0.25,
+    "exact_order_sku_counts": [
+      6,
+      6,
+      6,
+      6,
+      6,
+      6,
+      6,
+      6
+    ],
+    "exact_order_sku_quantity_range": [
+      18,
+      20
+    ],
+    "bom_colocated_inventory": true,
+    "bom_colocated_stack_counts": [
+      2,
+      2,
+      2,
+      2,
+      3,
+      3,
+      3,
+      3
+    ],
+    "bom_colocated_disjoint_stack_groups": true,
+    "bom_colocated_support_multiplier": 1.2
+  }
+}
