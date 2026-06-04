@@ -555,6 +555,10 @@ def _repair_partition_beam(
         ]
         max_groups = max(1, min(int(len(removed_units)), int(size_limit)))
         min_groups = 1
+    group_cap = int(getattr(opt.cfg, "x_repartition_max_groups", 0) or 0)
+    if int(group_cap) > 0:
+        max_groups = max(1, min(int(max_groups), int(group_cap)))
+        min_groups = max(1, min(int(min_groups), int(max_groups)))
     beam: List[List[List[str]]] = [[]]
     for unit_block in unit_blocks:
         next_states: List[Tuple[Tuple[float, ...], List[List[str]]]] = []

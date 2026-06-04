@@ -33,16 +33,42 @@ class FixGurobiEvaluator:
         return max(1, int(getattr(self.cfg, "fixgurobi_compiled_cache_size", 8) or 8))
 
     def _scope_for_layer(self, layer: str) -> str:
+        if bool(getattr(self.cfg, "resource_revolving_mode", False)) and bool(getattr(self.cfg, "resource_revolving_enable_u_layer", False)):
+            layer_name = str(layer or "").upper()
+            if layer_name == "X":
+                return "Y"
+            if layer_name == "XZ":
+                return "Y"
+            if layer_name == "Y":
+                return "XZ"
+            if layer_name == "YZ":
+                yz_scope = str(getattr(self.cfg, "resource_revolving_yz_fix_scope", "") or "").upper()
+                if yz_scope in {"X", "LOCALYZ", "XYZ", "XY", "XZ", "YZ"}:
+                    return yz_scope
+                if yz_scope in {"", "AUTO"}:
+                    return self._auto_yz_scope()
+                return "LOCALYZ"
+            if layer_name == "XY":
+                return "Z"
+            if layer_name == "Z":
+                return "XY"
+            if layer_name == "U":
+                return "XYZ"
+            if layer_name in {"XYZ", "XYZU"}:
+                return "LOCALXYZ" if layer_name == "XYZ" else "XYZU"
         if bool(getattr(self.cfg, "fixgurobi_force_xyz_scope", False)):
             return "XYZ"
         layer_name = str(layer or "").upper()
-        if layer_name in {"X", "Y", "Z", "XYZ"}:
+        if layer_name == "U":
+            return "XYZU"
+        if layer_name in {"X", "Y", "Z", "XYZ", "XYZU"}:
             return layer_name
         return "XYZ"
 
     @staticmethod
-    def _scope_signature(config: ResourceConfig, scope: str) -> Tuple[Any, ...]:
+    def _scope_signature(config: ResourceConfig, scope: str, release_subtask_ids: Optional[Iterable[int]] = None) -> Tuple[Any, ...]:
         scope_name = str(scope or "").upper()
+        release_ids = frozenset(int(x) for x in (release_subtask_ids or []) if int(x) >= 0)
         rows_by_order: Dict[int, List[ResourceSubtask]] = defaultdict(list)
         for row in config.subtasks.values():
             rows_by_order[int(row.order_id)].append(row)
@@ -83,52 +109,81 @@ class FixGurobiEvaluator:
         rows = []
         for order_id, order_rows in sorted(rows_by_order.items()):
             order_rows = sorted(order_rows, key=lambda row: (int(row.station_rank), int(row.subtask_id)))
-            if scope_name == "X":
-                rows.append((int(order_id), tuple(sorted(x_sig(row) for row in order_rows))))
-            elif scope_name == "Y":
-                rows.append((int(order_id), y_sig(order_rows)))
-            elif scope_name == "Z":
-                rows.append((int(order_id), tuple(sorted(z_sig(row) for row in order_rows))))
-            else:
-                rows.append(
-                    (
-                        int(order_id),
-                        tuple(sorted(x_sig(row) for row in order_rows)),
-                        y_sig(order_rows),
-                        tuple(sorted(z_sig(row) for row in order_rows)),
-                    )
+            parts: List[Any] = [int(order_id)]
+            fixed_rows = [row for row in order_rows if int(row.subtask_id) not in release_ids]
+            x_rows = fixed_rows if scope_name in {"LOCALXYZ"} else order_rows
+            y_rows = fixed_rows if scope_name in {"LOCALXYZ", "LOCALYZ"} else order_rows
+            z_rows = fixed_rows if scope_name in {"LOCALXYZ", "LOCALYZ"} else order_rows
+            if "X" in scope_name:
+                parts.append(("X", tuple(sorted(x_sig(row) for row in x_rows))))
+            if "Y" in scope_name:
+                parts.append(("Y", y_sig(y_rows)))
+            if "Z" in scope_name:
+                parts.append(("Z", tuple(sorted(z_sig(row) for row in z_rows))))
+            if len(parts) == 1:
+                parts.extend(
+                    [
+                        ("X", tuple(sorted(x_sig(row) for row in order_rows))),
+                        ("Y", y_sig(order_rows)),
+                        ("Z", tuple(sorted(z_sig(row) for row in order_rows))),
+                    ]
                 )
-        return tuple(rows)
+            rows.append(tuple(parts))
+        route_sig = ()
+        if scope_name in {"U", "XYZU"}:
+            route_rows = dict((getattr(config, "metadata", {}) or {}).get("fixed_route_task_sequence_by_robot", {}) or {})
+            route_sig = tuple(
+                (
+                    int(robot_id),
+                    tuple(
+                        (
+                            int(row.get("order_id", -1)),
+                            int(row.get("local_slot_index", -1)),
+                            int(row.get("stack_id", -1)),
+                            int(row.get("station_id", -1)),
+                        )
+                        for row in (rows or [])
+                    ),
+                )
+                for robot_id, rows in sorted(route_rows.items(), key=lambda item: int(item[0]))
+            )
+        if scope_name in {"LOCALXYZ", "LOCALYZ"}:
+            rows.append(("RELEASE", tuple(sorted(int(x) for x in release_ids))))
+        return tuple(rows) + (("U", route_sig),) if route_sig else tuple(rows)
 
     @staticmethod
     def _fixes_x(scope: str) -> bool:
-        return str(scope or "").upper() in {"X", "XYZ"}
+        return "X" in str(scope or "").upper()
 
     @staticmethod
     def _fixes_y(scope: str) -> bool:
-        return str(scope or "").upper() in {"Y", "XYZ"}
+        return "Y" in str(scope or "").upper()
 
     @staticmethod
     def _fixes_z(scope: str) -> bool:
-        return str(scope or "").upper() in {"Z", "XYZ"}
+        return "Z" in str(scope or "").upper()
+
+    @staticmethod
+    def _fixes_u(scope: str) -> bool:
+        return "U" in str(scope or "").upper()
 
     def _include_forced_stacks(self, scope: str) -> bool:
         scope_name = str(scope or "").upper()
+        if scope_name in {"LOCALXYZ", "LOCALYZ"}:
+            return False
         if bool(getattr(self.cfg, "fixgurobi_force_candidate_stacks", False)):
             return self._fixes_z(scope_name)
-        return scope_name == "XYZ"
+        return self._fixes_z(scope_name)
 
     def _include_fixed_used_stacks(self, scope: str) -> bool:
         return self._fixes_z(scope) and bool(getattr(self.cfg, "fixgurobi_fix_used_stack_ids", False))
 
     def _scope_label(self, scope: str) -> str:
         scope_name = str(scope or "").upper()
-        if scope_name == "X":
-            return "X"
-        if scope_name == "Y":
-            return "Y"
-        if scope_name == "Z":
-            return "Z"
+        if scope_name in {"X", "Y", "Z", "XY", "XZ", "YZ", "XYZ", "LOCALXYZ", "LOCALYZ"}:
+            return scope_name
+        if scope_name in {"U", "XYZU"}:
+            return "XYZU"
         return "XYZ"
 
     def _result_from_base(self, base_eval: Optional[UpperEvalResult], *, value: float, metadata: Dict[str, Any]) -> UpperEvalResult:
@@ -178,8 +233,9 @@ class FixGurobiEvaluator:
             rows.sort(key=lambda row: (int(row.station_rank if row.station_rank >= 0 else 10**9), int(row.subtask_id)))
         return rows_by_order
 
-    def _fixed_payload(self, config: ResourceConfig, scope: str) -> Dict[str, Any]:
+    def _fixed_payload(self, config: ResourceConfig, scope: str, release_subtask_ids: Optional[Iterable[int]] = None) -> Dict[str, Any]:
         config = config.clone().rebuild_indices()
+        release_ids = frozenset(int(x) for x in (release_subtask_ids or []) if int(x) >= 0)
         rows_by_order = self._subtasks_by_order(config)
         fixed_slot_count_by_order: Dict[int, int] = {}
         fixed_work_units_by_order_slot: Dict[int, List[List[str]]] = {}
@@ -195,6 +251,10 @@ class FixGurobiEvaluator:
             z_rows: List[List[Dict[str, Any]]] = []
             used_stack_ids: Set[int] = set()
             for row in rows:
+                scope_name = str(scope or "").upper()
+                released_x = int(row.subtask_id) in release_ids and scope_name in {"LOCALXYZ"}
+                released_y = int(row.subtask_id) in release_ids and scope_name in {"LOCALXYZ", "LOCALYZ"}
+                released_z = int(row.subtask_id) in release_ids and scope_name in {"LOCALXYZ", "LOCALYZ"}
                 unit_keys: List[str] = []
                 seen_units: Set[str] = set()
                 for work_unit_id in row.work_unit_ids or ():
@@ -203,8 +263,8 @@ class FixGurobiEvaluator:
                         continue
                     seen_units.add(key)
                     unit_keys.append(key)
-                unit_rows.append(sorted(unit_keys))
-                y_rows.append((int(row.station_id), int(row.station_rank)))
+                unit_rows.append(None if bool(released_x) else sorted(unit_keys))
+                y_rows.append(None if bool(released_y) else (int(row.station_id), int(row.station_rank)))
                 descriptors: List[Dict[str, Any]] = []
                 for task in row.z_tasks or []:
                     stack_id = int(task.stack_id)
@@ -222,7 +282,7 @@ class FixGurobiEvaluator:
                             else [int(task.sort_layer_range[0]), int(task.sort_layer_range[1])],
                         }
                     )
-                z_rows.append(descriptors)
+                z_rows.append(None if bool(released_z) else descriptors)
             if self._fixes_x(scope):
                 fixed_work_units_by_order_slot[int(order_id)] = unit_rows
             if self._include_forced_stacks(scope):
@@ -244,6 +304,11 @@ class FixGurobiEvaluator:
             "fixed_z_descriptors_by_order_slot": fixed_z_descriptors_by_order_slot or None,
             "forced_candidate_stacks_by_order": forced_candidate_stacks_by_order or None,
             "fixed_used_stack_ids_by_order": fixed_used_stack_ids_by_order,
+            "fixed_route_task_sequence_by_robot": (
+                dict((getattr(config, "metadata", {}) or {}).get("fixed_route_task_sequence_by_robot", {}) or {})
+                if self._fixes_u(scope)
+                else None
+            ),
             "invalid_reasons": invalid_reasons,
         }
 
@@ -278,6 +343,7 @@ class FixGurobiEvaluator:
             forced_candidate_stacks_by_order=fixed_payload.get("forced_candidate_stacks_by_order"),
             fixed_route_arcs_by_robot=None,
             fixed_route_task_sequence_by_robot=fixed_payload.get("fixed_route_task_sequence_by_robot"),
+            fixed_route_arc_fix_nonselected=not bool(getattr(self.cfg, "resource_revolving_mode", False)),
             fixgurobi_no_warm_start=True,
             fixgurobi_allow_warm_start_fallback=False,
             fixgurobi_warm_bound_only=bool(getattr(self.cfg, "fixgurobi_use_warm_bound", True)),
@@ -384,6 +450,9 @@ class FixGurobiEvaluator:
 
     def _solve_fixgurobi(self, fixed_payload: Dict[str, Any], global_cfg: GlobalXYZUConfig, scope: str):
         best = float(getattr(self, "current_best_value", float("inf")) or float("inf"))
+        local_release_scope = str(scope or "").upper() in {"LOCALXYZ", "LOCALYZ"}
+        if bool(getattr(self.cfg, "resource_revolving_allow_nonimproving_exact", False)) and not bool(local_release_scope):
+            best = float("inf")
         use_two_stage = bool(getattr(self.cfg, "fixgurobi_enable_two_stage", True)) and math.isfinite(best)
         use_cutoff = bool(getattr(self.cfg, "fixgurobi_enable_cutoff", True)) and math.isfinite(best)
         cutoff = float(best - 1e-6) if use_cutoff else None
@@ -463,6 +532,42 @@ class FixGurobiEvaluator:
         value = float(getattr(result, "objective", float("inf")))
         return value if math.isfinite(value) else float("inf")
 
+    @staticmethod
+    def _fixed_payload_diag(config: ResourceConfig, fixed_payload: Dict[str, Any], release_ids: Iterable[int]) -> Dict[str, int]:
+        fixed_units_diag = dict(fixed_payload.get("fixed_work_units_by_order_slot") or {})
+        fixed_y_diag = dict(fixed_payload.get("fixed_station_rank_by_order_slot") or {})
+        fixed_z_diag = dict(fixed_payload.get("fixed_z_descriptors_by_order_slot") or {})
+        return {
+            "fixgurobi_config_subtask_count": int(len(getattr(config, "subtasks", {}) or {})),
+            "fixgurobi_release_subtask_count": int(len(tuple(release_ids or ()))),
+            "fixgurobi_payload_fixed_x_order_count": int(len(fixed_units_diag)),
+            "fixgurobi_payload_fixed_y_order_count": int(len(fixed_y_diag)),
+            "fixgurobi_payload_fixed_z_order_count": int(len(fixed_z_diag)),
+            "fixgurobi_payload_fixed_x_row_count": int(sum(len(rows or []) for rows in fixed_units_diag.values())),
+            "fixgurobi_payload_fixed_y_row_count": int(sum(len(rows or []) for rows in fixed_y_diag.values())),
+            "fixgurobi_payload_fixed_z_row_count": int(sum(len(rows or []) for rows in fixed_z_diag.values())),
+        }
+
+    @staticmethod
+    def _local_fallback_scope(scope: str) -> str:
+        scope_name = str(scope or "").upper()
+        if scope_name == "LOCALYZ":
+            return "X"
+        if scope_name == "LOCALXYZ":
+            return "XYZ"
+        return ""
+
+    def _auto_yz_scope(self) -> str:
+        problem = getattr(self.opt, "problem", None)
+        order_num = int(getattr(problem, "order_num", 0) or 0)
+        skus_num = int(getattr(problem, "skus_num", 0) or 0)
+        sku_per_order = float(skus_num) / float(order_num) if order_num > 0 else float("inf")
+        if order_num <= 6:
+            return "X"
+        if order_num <= 7 and sku_per_order <= 6.5:
+            return "X"
+        return "LOCALYZ"
+
     def evaluate(
         self,
         config: ResourceConfig,
@@ -482,7 +587,12 @@ class FixGurobiEvaluator:
                 pass
         scope = self._scope_for_layer(layer)
         normalized_config = config.clone().rebuild_indices()
-        cache_key = (str(scope), self._scope_signature(normalized_config, scope))
+        release_ids = tuple(sorted(int(x) for x in (affected_subtask_ids or []) if int(x) >= 0))
+        cache_key = (
+            str(scope),
+            self._scope_signature(normalized_config, scope, release_ids),
+            release_ids if str(scope).upper() in {"LOCALXYZ", "LOCALYZ"} else (),
+        )
         cached = None if bool(bypass_cache) else self.cache.get(cache_key)
         if cached is not None:
             cache_t0 = time.perf_counter()
@@ -501,11 +611,13 @@ class FixGurobiEvaluator:
         if bool(getattr(self.cfg, "fixgurobi_cheap_gate", True)) and not bool(bypass_cache):
             cheap_reasons: List[str] = []
             if base_eval is not None:
-                if not bool(getattr(base_eval, "coverage_feasible", True)):
-                    cheap_reasons.append("coverage_infeasible")
-                if int(getattr(base_eval, "unmet_sku_total", 0) or 0) > 0:
-                    cheap_reasons.append("unmet_sku")
-                if int(getattr(base_eval, "duplicate_tote_count", 0) or 0) > 0:
+                local_release_scope = str(scope or "").upper() in {"LOCALXYZ", "LOCALYZ"}
+                if self._fixes_x(scope) and self._fixes_z(scope) and not bool(local_release_scope):
+                    if not bool(getattr(base_eval, "coverage_feasible", True)):
+                        cheap_reasons.append("coverage_infeasible")
+                    if int(getattr(base_eval, "unmet_sku_total", 0) or 0) > 0:
+                        cheap_reasons.append("unmet_sku")
+                if self._fixes_z(scope) and not bool(local_release_scope) and int(getattr(base_eval, "duplicate_tote_count", 0) or 0) > 0:
                     cheap_reasons.append("duplicate_tote")
             if cheap_reasons:
                 metadata = {
@@ -523,7 +635,8 @@ class FixGurobiEvaluator:
                     "fixgurobi_cheap_gate_reasons": ",".join(cheap_reasons),
                 }
                 return self._result_from_base(base_eval, value=float("inf"), metadata=metadata)
-        fixed_payload = self._fixed_payload(normalized_config, scope)
+        fixed_payload = self._fixed_payload(normalized_config, scope, release_ids)
+        fixed_payload_diag = self._fixed_payload_diag(normalized_config, fixed_payload, release_ids)
         global_cfg = self._build_global_cfg(fixed_payload)
         problem = copy.deepcopy(self.opt.problem)
         t0 = time.perf_counter()
@@ -532,6 +645,7 @@ class FixGurobiEvaluator:
             value = self._objective_from_result(result)
             status = str(getattr(result, "status", "UNKNOWN") or "UNKNOWN")
             diagnostics = dict(getattr(result, "diagnostics", {}) or {})
+            materialized_problem = getattr(result, "materialized_problem", None)
             gap = float(getattr(result, "gap", float("nan")))
             bound = float(diagnostics.get("model_best_bound", float("nan")))
             infeasible_reason = "" if math.isfinite(value) else str(diagnostics.get("fallback_reason", status))
@@ -541,6 +655,7 @@ class FixGurobiEvaluator:
             gap = float("nan")
             bound = float("nan")
             diagnostics = {"exception": str(exc)}
+            materialized_problem = None
             infeasible_reason = str(exc)
         runtime = float(time.perf_counter() - t0)
         metadata = {
@@ -558,6 +673,9 @@ class FixGurobiEvaluator:
             "fixgurobi_cache_miss_count": int(self.cache_miss_count),
             "fixgurobi_diagnostics": diagnostics,
         }
+        if materialized_problem is not None and math.isfinite(float(value)):
+            metadata["fixgurobi_materialized_problem"] = copy.deepcopy(materialized_problem)
+        metadata.update(fixed_payload_diag)
         for key in (
             "fixgurobi_compile_cache_hit",
             "fixgurobi_compile_time",
@@ -575,6 +693,13 @@ class FixGurobiEvaluator:
             "fixgurobi_first_improvement_accepted",
             "fixgurobi_compiled_fallback_used",
             "fixgurobi_compiled_fallback_reason",
+            "fixgurobi_fixed_constraint_count",
+            "fixgurobi_invalid_fix_count",
+            "fixgurobi_fixed_route_arc_count_from_cfg",
+            "fixgurobi_fixed_route_arc_robot_count",
+            "fixgurobi_fixed_route_sequence_robot_count",
+            "fixgurobi_fixed_route_sequence_missing_count",
+            "fixgurobi_fixed_route_sequence_missing_rows",
             "compiled_model_used",
             "compiled_model_copy_time_sec",
             "gurobi_solve_time_sec",
@@ -582,6 +707,130 @@ class FixGurobiEvaluator:
         ):
             if key in diagnostics:
                 metadata[key] = diagnostics.get(key)
+        for key in (
+            "revolving_enabled",
+            "released_layer",
+            "fixed_layers",
+            "inner_relaxed_obj",
+            "u_fast_cmax",
+            "u_route_lb",
+            "u_repair_time",
+            "u_changed_robot_count",
+            "revolving_lb",
+            "lb_gate_skipped",
+            "changed_subtask_ids",
+            "changed_robot_ids",
+        ):
+            if key in (getattr(normalized_config, "metadata", {}) or {}):
+                metadata[key] = (getattr(normalized_config, "metadata", {}) or {}).get(key)
+        fallback_scope = self._local_fallback_scope(scope)
+        best_for_fallback = float(getattr(self, "current_best_value", float("inf")) or float("inf"))
+        use_local_fallback = (
+            bool(fallback_scope)
+            and bool(getattr(self.cfg, "resource_local_fixgurobi_enable_fallback_scope", True))
+            and (not math.isfinite(float(value)) or (math.isfinite(best_for_fallback) and float(value) + 1e-9 >= best_for_fallback))
+        )
+        if use_local_fallback:
+            local_metadata = dict(metadata)
+            fallback_release_ids: Tuple[int, ...] = ()
+            fallback_payload = self._fixed_payload(normalized_config, fallback_scope, fallback_release_ids)
+            fallback_cfg = self._build_global_cfg(fallback_payload)
+            fallback_t0 = time.perf_counter()
+            try:
+                fallback_result = self._solve_fixgurobi(fallback_payload, fallback_cfg, fallback_scope)
+                fallback_value = self._objective_from_result(fallback_result)
+                fallback_status = str(getattr(fallback_result, "status", "UNKNOWN") or "UNKNOWN")
+                fallback_diagnostics = dict(getattr(fallback_result, "diagnostics", {}) or {})
+                fallback_materialized_problem = getattr(fallback_result, "materialized_problem", None)
+                fallback_gap = float(getattr(fallback_result, "gap", float("nan")))
+                fallback_bound = float(fallback_diagnostics.get("model_best_bound", float("nan")))
+                fallback_infeasible_reason = "" if math.isfinite(fallback_value) else str(
+                    fallback_diagnostics.get("fallback_reason", fallback_status)
+                )
+            except Exception as exc:
+                fallback_value = float("inf")
+                fallback_status = "EXCEPTION"
+                fallback_gap = float("nan")
+                fallback_bound = float("nan")
+                fallback_diagnostics = {"exception": str(exc)}
+                fallback_materialized_problem = None
+                fallback_infeasible_reason = str(exc)
+            fallback_runtime = float(time.perf_counter() - fallback_t0)
+            fallback_metadata = {
+                "eval_backend": "fixgurobi_prefix",
+                "fixgurobi_status": fallback_status,
+                "fixgurobi_obj": float(fallback_value),
+                "fixgurobi_bound": float(fallback_bound),
+                "fixgurobi_gap": float(fallback_gap),
+                "fixgurobi_solve_time": float(runtime + fallback_runtime),
+                "fixgurobi_wall_time": float(runtime + fallback_runtime),
+                "fixgurobi_fixed_scope": str(fallback_scope),
+                "fixgurobi_infeasible_reason": str(fallback_infeasible_reason),
+                "fixgurobi_cache_hit": False,
+                "fixgurobi_cache_hit_count": int(self.cache_hit_count),
+                "fixgurobi_cache_miss_count": int(self.cache_miss_count),
+                "fixgurobi_diagnostics": fallback_diagnostics,
+                "fixgurobi_local_fallback_used": True,
+                "fixgurobi_local_attempt_scope": str(scope),
+                "fixgurobi_local_attempt_obj": float(value),
+                "fixgurobi_local_attempt_status": str(status),
+                "fixgurobi_local_attempt_solve_time": float(runtime),
+                "fixgurobi_local_fallback_scope": str(fallback_scope),
+                "fixgurobi_local_fallback_solve_time": float(fallback_runtime),
+            }
+            if fallback_materialized_problem is not None and math.isfinite(float(fallback_value)):
+                fallback_metadata["fixgurobi_materialized_problem"] = copy.deepcopy(fallback_materialized_problem)
+            fallback_metadata.update(self._fixed_payload_diag(normalized_config, fallback_payload, fallback_release_ids))
+            for key in (
+                "fixgurobi_compile_cache_hit",
+                "fixgurobi_compile_time",
+                "fixgurobi_compile_cache_hit_count",
+                "fixgurobi_compile_cache_miss_count",
+                "fixgurobi_stage",
+                "fixgurobi_cutoff",
+                "fixgurobi_refined",
+                "fixgurobi_coarse_obj",
+                "fixgurobi_coarse_status",
+                "fixgurobi_coarse_proven_no_improve",
+                "fixgurobi_coarse_time",
+                "fixgurobi_refine_time",
+                "fixgurobi_full_time",
+                "fixgurobi_first_improvement_accepted",
+                "fixgurobi_compiled_fallback_used",
+                "fixgurobi_compiled_fallback_reason",
+                "fixgurobi_fixed_constraint_count",
+                "fixgurobi_invalid_fix_count",
+                "fixgurobi_fixed_route_arc_count_from_cfg",
+                "fixgurobi_fixed_route_arc_robot_count",
+                "fixgurobi_fixed_route_sequence_robot_count",
+                "fixgurobi_fixed_route_sequence_missing_count",
+                "fixgurobi_fixed_route_sequence_missing_rows",
+                "compiled_model_used",
+                "compiled_model_copy_time_sec",
+                "gurobi_solve_time_sec",
+                "gurobi_runtime_sec",
+            ):
+                if key in fallback_diagnostics:
+                    fallback_metadata[key] = fallback_diagnostics.get(key)
+            for key in (
+                "revolving_enabled",
+                "released_layer",
+                "fixed_layers",
+                "inner_relaxed_obj",
+                "u_fast_cmax",
+                "u_route_lb",
+                "u_repair_time",
+                "u_changed_robot_count",
+                "revolving_lb",
+                "lb_gate_skipped",
+                "changed_subtask_ids",
+                "changed_robot_ids",
+            ):
+                if key in (getattr(normalized_config, "metadata", {}) or {}):
+                    fallback_metadata[key] = (getattr(normalized_config, "metadata", {}) or {}).get(key)
+            fallback_metadata["fixgurobi_local_attempt_metadata"] = local_metadata
+            value = float(fallback_value)
+            metadata = fallback_metadata
         out = self._result_from_base(base_eval, value=float(value), metadata=metadata)
         out.affected_subtask_ids = frozenset(int(x) for x in (affected_subtask_ids or getattr(out, "affected_subtask_ids", frozenset()) or []))
         if not bool(bypass_cache):

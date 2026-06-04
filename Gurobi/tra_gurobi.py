@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
 import json
 import math
@@ -319,7 +320,7 @@ def _build_cfg(args: argparse.Namespace, case_name: str, log_dir: str) -> TRARun
         max_iters=int(args.max_iters),
         no_improve_limit=int(args.no_improve_limit),
         log_dir=str(log_dir),
-        export_best_solution=False,
+        export_best_solution=True,
         write_iteration_logs=True,
         search_scheme="resource_time_alns",
     )
@@ -336,6 +337,8 @@ def _build_cfg(args: argparse.Namespace, case_name: str, log_dir: str) -> TRARun
     cfg.fixgurobi_enable_cutoff = bool(args.fixgurobi_enable_cutoff)
     cfg.fixgurobi_accept_first_improvement = bool(args.fixgurobi_accept_first_improvement)
     cfg.fixgurobi_enable_best_obj_stop = bool(args.fixgurobi_enable_best_obj_stop)
+    if bool(getattr(args, "tra_revolving_mode", False)):
+        cfg.fixgurobi_enable_best_obj_stop = False
     cfg.fixgurobi_cheap_gate = bool(args.fixgurobi_cheap_gate)
     cfg.fixgurobi_final_validation = bool(args.fixgurobi_final_validation)
     cfg.fixgurobi_final_validation_time_limit_sec = float(args.fixgurobi_final_validation_time_limit_sec)
@@ -364,6 +367,8 @@ def _build_cfg(args: argparse.Namespace, case_name: str, log_dir: str) -> TRARun
     cfg.resource_xyz_exact_candidate_trial_limit = max(1, int(args.fixgurobi_candidate_trial_limit))
     cfg.resource_candidate_pool_max_attempts = max(1, int(args.candidate_pool_max_attempts))
     cfg.resource_global_decomp_repair_enabled = bool(args.resource_global_decomp_repair)
+    if bool(getattr(args, "tra_revolving_mode", False)):
+        cfg.resource_global_decomp_repair_enabled = False
     cfg.resource_global_decomp_repair_time_limit_sec = float(args.resource_global_decomp_repair_time_limit_sec)
     cfg.resource_global_decomp_repair_stage_time_limit_sec = float(args.resource_global_decomp_repair_stage_time_limit_sec)
     cfg.resource_global_decomp_repair_best_obj_stop = bool(args.resource_global_decomp_repair_best_obj_stop)
@@ -378,6 +383,47 @@ def _build_cfg(args: argparse.Namespace, case_name: str, log_dir: str) -> TRARun
     cfg.resource_stop_if_validated_best_no_change_rounds = int(args.stop_if_no_change_rounds)
     cfg.resource_stop_if_best_z_no_change_rounds = int(args.stop_if_no_change_rounds)
     cfg.resource_operator_profile = str(args.operator_profile)
+    if str(args.operator_profile).strip().lower() == "route_polish_exact":
+        cfg.resource_enable_experimental_x_repartition = True
+        cfg.resource_enable_critical_path_xyz = True
+        cfg.resource_enable_experimental_y_rank_permutation = True
+        cfg.resource_enable_experimental_z_joint_polish = True
+        cfg.resource_critical_xyz_exact_validation_subtask_cap = 32
+        cfg.resource_xyz_exact_validation_subtask_cap = 32
+        cfg.resource_local_xyz_exact_validation_subtask_cap = 4
+        cfg.resource_yz_exact_validation_subtask_cap = 32
+        cfg.resource_local_window_neighbor_radius = 1
+        cfg.resource_local_xyz_window_neighbor_radius = 0
+        cfg.resource_local_yz_window_neighbor_radius = 1
+        cfg.resource_local_window_late_subtask_count = 2
+        cfg.resource_local_window_coverage_seed_limit = 16
+        cfg.resource_local_yz_window_coverage_seed_limit = 16
+        cfg.resource_local_xyz_retry_caps = "0"
+        cfg.resource_local_yz_retry_caps = "48,64"
+        cfg.resource_local_window_retry_neighbor_radius = 2
+        cfg.resource_local_xyz_window_retry_neighbor_radius = 1
+        cfg.x_repartition_max_groups = 8
+        cfg.resource_xyz_use_local_x_window = True
+        cfg.resource_xyz_local_x_degree = 1
+    cfg.resource_revolving_mode = bool(getattr(args, "tra_revolving_mode", False))
+    cfg.resource_revolving_enable_u_layer = bool(getattr(args, "revolving_enable_u_layer", False) or getattr(args, "tra_revolving_mode", False))
+    cfg.u_repair_time_limit_sec = float(getattr(args, "u_repair_time_limit_sec", 5.0))
+    cfg.u_repair_max_local_moves = int(getattr(args, "u_repair_max_local_moves", 200))
+    cfg.u_repair_neighborhood_robots = int(getattr(args, "u_repair_neighborhood_robots", 3))
+    cfg.revolving_inner_time_limit_sec = float(getattr(args, "revolving_inner_time_limit_sec", 5.0))
+    cfg.revolving_outer_time_limit_sec = float(getattr(args, "revolving_outer_time_limit_sec", 120.0))
+    cfg.revolving_lb_eps = float(getattr(args, "revolving_lb_eps", 1e-6))
+    cfg.revolving_max_iters = int(getattr(args, "revolving_max_iters", 50))
+    cfg.revolving_mark_limit = int(getattr(args, "revolving_mark_limit", 4))
+    cfg.revolving_layer_order = str(getattr(args, "revolving_layer_order", "") or "")
+    cfg.resource_revolving_yz_fix_scope = str(getattr(args, "revolving_yz_fix_scope", "") or "")
+    cfg.resource_revolving_allow_nonimproving_exact = bool(getattr(args, "revolving_allow_nonimproving_exact", False))
+    revolving_sa_temp = float(getattr(args, "revolving_sa_init_temp", -1.0))
+    if revolving_sa_temp > 0.0:
+        cfg.resource_sa_init_temp = float(revolving_sa_temp)
+    if bool(getattr(args, "tra_revolving_mode", False)):
+        cfg.resource_stop_if_validated_best_no_change_rounds = int(cfg.revolving_mark_limit)
+        cfg.resource_stop_if_best_z_no_change_rounds = int(cfg.revolving_mark_limit)
     cfg.resource_enable_best_y_assignment_polish = False
     cfg.resource_enable_best_z_sortify_polish = False
     cfg.resource_enable_best_sortify_polish = False
@@ -485,6 +531,48 @@ def _final_validate_best(opt, args: argparse.Namespace) -> Dict[str, Any]:
         cfg.fixgurobi_enable_two_stage = False
         cfg.fixgurobi_enable_cutoff = False
         cfg.fixgurobi_accept_first_improvement = False
+        if bool(getattr(args, "tra_revolving_mode", False)):
+            best_value = float(getattr(best, "makespan", float("inf")) or float("inf"))
+            global_cfg = evaluator._build_global_cfg({})
+            global_cfg.time_limit_sec = float(args.fixgurobi_final_validation_time_limit_sec)
+            global_cfg.mip_gap = float(args.fixgurobi_mip_gap)
+            global_cfg.gurobi_cutoff = float(best_value - 1e-6) if math.isfinite(best_value) else None
+            global_cfg.gurobi_best_obj_stop = None
+            final_mip_focus = int(getattr(args, "fixgurobi_final_validation_mip_focus", -1))
+            final_heuristics = float(getattr(args, "fixgurobi_final_validation_heuristics", -1.0))
+            if final_mip_focus >= 0:
+                global_cfg.gurobi_mip_focus = int(final_mip_focus)
+            if final_heuristics >= 0.0:
+                global_cfg.gurobi_heuristics = float(final_heuristics)
+            final_use_warm_start = bool(getattr(args, "fixgurobi_final_validation_use_warm_start", False))
+            global_cfg.enable_warm_start = bool(final_use_warm_start)
+            global_cfg.warm_start_use_sp4 = bool(final_use_warm_start)
+            global_cfg.fixgurobi_no_warm_start = not bool(final_use_warm_start)
+            global_cfg.fixgurobi_warm_bound_only = False
+            global_cfg.fixgurobi_allow_warm_start_fallback = False
+            result_raw = GlobalXYZUSolver().solve(copy.deepcopy(opt.problem), global_cfg)
+            diag = dict(getattr(result_raw, "diagnostics", {}) or {})
+            value = _safe_float(diag.get("model_cmax", getattr(result_raw, "objective", float("nan"))))
+            return {
+                "enabled": True,
+                "status": str(getattr(result_raw, "status", "")),
+                "cmax": float(value),
+                "gap": _safe_float(getattr(result_raw, "gap", float("nan"))),
+                "bound": _safe_float(diag.get("model_best_bound", float("nan"))),
+                "runtime_sec": float(time.perf_counter() - t0),
+                "metadata": {
+                    "fixgurobi_status": str(getattr(result_raw, "status", "")),
+                    "fixgurobi_gap": _safe_float(getattr(result_raw, "gap", float("nan"))),
+                    "fixgurobi_bound": _safe_float(diag.get("model_best_bound", float("nan"))),
+                    "fixgurobi_obj": float(value),
+                    "fixgurobi_final_polish_cutoff": float(global_cfg.gurobi_cutoff) if global_cfg.gurobi_cutoff is not None else float("nan"),
+                    "fixgurobi_final_polish_mode": "global_incumbent_cutoff",
+                    "fixgurobi_final_validation_warm_start": bool(final_use_warm_start),
+                    "fixgurobi_final_validation_mip_focus": int(final_mip_focus),
+                    "fixgurobi_final_validation_heuristics": float(final_heuristics),
+                    "diagnostics": diag,
+                },
+            }
         result = evaluator.evaluate(
             best_config,
             layer="XYZ",
@@ -542,8 +630,6 @@ def run_case(args: argparse.Namespace, case_name: str, batch_root: str, gurobi_b
                 if bool(args.fixgurobi_final_validation)
                 else {"enabled": False, "status": "DISABLED"}
             )
-            if bool(final_validation.get("enabled", False)) and math.isfinite(_safe_float(final_validation.get("cmax", float("nan")))):
-                best_value = _safe_float(final_validation.get("cmax", best_value))
             iter_rows = list(getattr(opt, "iter_log", []) or [])
             run_stats = dict(opt._runtime_stats_payload() or {})
             best_row_payload = {
@@ -560,6 +646,14 @@ def run_case(args: argparse.Namespace, case_name: str, batch_root: str, gurobi_b
     best_iter = _safe_int(best_row_payload.get("iter_id", -1), -1)
     if not math.isfinite(best_value):
         best_value = _safe_float(best_row_payload.get("z", float("nan")))
+    final_value = (
+        _safe_float(final_validation.get("cmax", float("nan")))
+        if "final_validation" in locals() and bool(final_validation.get("enabled", False))
+        else float("nan")
+    )
+    final_counts_for_acceptance = bool(getattr(args, "fixgurobi_final_validation_counts_for_acceptance", False))
+    if final_counts_for_acceptance and math.isfinite(final_value):
+        best_value = float(final_value)
     if status == "ok" and not math.isfinite(best_value):
         status = "no_feasible"
     best_iter_row = _best_fix_row(iter_rows, best_value)
@@ -618,7 +712,12 @@ def run_case(args: argparse.Namespace, case_name: str, batch_root: str, gurobi_b
         "fixgurobi_enable_cutoff": bool(args.fixgurobi_enable_cutoff),
         "fixgurobi_accept_first_improvement": bool(args.fixgurobi_accept_first_improvement),
         "fixgurobi_final_validation": bool(args.fixgurobi_final_validation),
+        "fixgurobi_final_validation_counts_for_acceptance": bool(args.fixgurobi_final_validation_counts_for_acceptance),
+        "fixgurobi_final_validation_cmax": float(final_value),
         "fixgurobi_final_validation_time_limit_sec": float(args.fixgurobi_final_validation_time_limit_sec),
+        "fixgurobi_final_validation_use_warm_start": bool(args.fixgurobi_final_validation_use_warm_start),
+        "fixgurobi_final_validation_mip_focus": int(args.fixgurobi_final_validation_mip_focus),
+        "fixgurobi_final_validation_heuristics": float(args.fixgurobi_final_validation_heuristics),
         "fixgurobi_final_validation_status": str(final_validation.get("status", "")) if "final_validation" in locals() else "",
         "fixgurobi_final_validation_runtime_sec": _safe_float(final_validation.get("runtime_sec", float("nan"))) if "final_validation" in locals() else float("nan"),
         "fixgurobi_final_validation_gap": _safe_float(final_validation.get("gap", float("nan"))) if "final_validation" in locals() else float("nan"),
@@ -633,6 +732,21 @@ def run_case(args: argparse.Namespace, case_name: str, batch_root: str, gurobi_b
         "global_target_probe_cmax": _safe_float(probe.get("cmax", float("nan"))),
         "global_target_probe_runtime_sec": _safe_float(probe.get("runtime_sec", float("nan"))),
         "global_target_probe_gurobi_runtime_sec": _safe_float(probe.get("gurobi_runtime_sec", float("nan"))),
+        "tra_revolving_mode": bool(args.tra_revolving_mode),
+        "revolving_enable_u_layer": bool(args.revolving_enable_u_layer),
+        "u_repair_time_limit_sec": float(args.u_repair_time_limit_sec),
+        "u_repair_max_local_moves": int(args.u_repair_max_local_moves),
+        "u_repair_neighborhood_robots": int(args.u_repair_neighborhood_robots),
+        "revolving_inner_time_limit_sec": float(args.revolving_inner_time_limit_sec),
+        "revolving_outer_time_limit_sec": float(args.revolving_outer_time_limit_sec),
+        "revolving_lb_eps": float(args.revolving_lb_eps),
+        "revolving_max_iters": int(args.revolving_max_iters),
+        "revolving_mark_limit": int(args.revolving_mark_limit),
+        "revolving_layer_order": str(args.revolving_layer_order),
+        "revolving_yz_fix_scope": str(args.revolving_yz_fix_scope),
+        "revolving_allow_nonimproving_exact": bool(args.revolving_allow_nonimproving_exact),
+        "revolving_sa_init_temp": float(args.revolving_sa_init_temp),
+        "target_guidance_disabled": bool(args.tra_revolving_mode and not args.known_target_guidance and not args.global_target_probe),
     }
     _write_json(os.path.join(case_root, "tra_gurobi_case_summary.json"), row)
     return row
@@ -658,7 +772,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fixgurobi-best-obj-stop-slack", type=float, default=0.999)
     parser.add_argument("--fixgurobi-cheap-gate", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--fixgurobi-final-validation", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--fixgurobi-final-validation-counts-for-acceptance", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--fixgurobi-final-validation-time-limit-sec", type=float, default=1200.0)
+    parser.add_argument("--fixgurobi-final-validation-use-warm-start", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--fixgurobi-final-validation-mip-focus", type=int, default=-1)
+    parser.add_argument("--fixgurobi-final-validation-heuristics", type=float, default=-1.0)
     parser.add_argument("--fixgurobi-coarse-time-limit-sec", type=float, default=8.0)
     parser.add_argument("--fixgurobi-coarse-mip-gap", type=float, default=0.05)
     parser.add_argument("--fixgurobi-fix-used-stack-ids", action="store_true", default=False)
@@ -685,12 +803,38 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--resource-global-decomp-repair-route-time-window-arc-prune", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--resource-global-decomp-repair-use-fresh-problem", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--resource-skip-initial-fixgurobi-eval", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--tra-revolving-mode", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--revolving-enable-u-layer", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--u-repair-time-limit-sec", type=float, default=5.0)
+    parser.add_argument("--u-repair-max-local-moves", type=int, default=200)
+    parser.add_argument("--u-repair-neighborhood-robots", type=int, default=3)
+    parser.add_argument("--revolving-inner-time-limit-sec", type=float, default=5.0)
+    parser.add_argument("--revolving-outer-time-limit-sec", type=float, default=120.0)
+    parser.add_argument("--revolving-lb-eps", type=float, default=1e-6)
+    parser.add_argument("--revolving-max-iters", type=int, default=50)
+    parser.add_argument("--revolving-mark-limit", type=int, default=4)
+    parser.add_argument("--revolving-layer-order", type=str, default="")
+    parser.add_argument("--revolving-yz-fix-scope", type=str, default="", help="Override FixGurobi scope for the revolving YZ layer, e.g. LOCALYZ or X.")
+    parser.add_argument("--revolving-allow-nonimproving-exact", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--revolving-sa-init-temp", type=float, default=-1.0)
     parser.add_argument("--candidate-pool-max-attempts", type=int, default=24)
     parser.add_argument("--stop-if-no-change-rounds", type=int, default=40)
     parser.add_argument("--operator-profile", type=str, default="baseline_safe")
     parser.add_argument("--output-root", type=str, default="")
     parser.add_argument("--gurobi-baseline-details-json", type=str, default="")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if bool(getattr(args, "tra_revolving_mode", False)):
+        args.known_target_guidance = False
+        args.target_table_fastpath = False
+        args.target_probe_case_presets = False
+        args.global_target_probe = False
+        args.resource_global_decomp_repair = False
+        args.resource_global_decomp_repair_best_obj_stop = False
+        args.fixgurobi_enable_best_obj_stop = False
+        args.resource_skip_initial_fixgurobi_eval = False
+        args.revolving_enable_u_layer = True
+        args.candidate_pool_max_attempts = max(48, int(args.candidate_pool_max_attempts))
+    return args
 
 
 def main() -> None:
@@ -738,6 +882,18 @@ def main() -> None:
             "global_target_probe_time_limit_sec": float(args.global_target_probe_time_limit_sec),
             "global_target_probe_stage_time_limit_sec": float(args.global_target_probe_stage_time_limit_sec),
             "global_target_probe_obj_slack": float(args.global_target_probe_obj_slack),
+            "tra_revolving_mode": bool(args.tra_revolving_mode),
+            "revolving_enable_u_layer": bool(args.revolving_enable_u_layer),
+            "u_repair_time_limit_sec": float(args.u_repair_time_limit_sec),
+            "u_repair_max_local_moves": int(args.u_repair_max_local_moves),
+            "u_repair_neighborhood_robots": int(args.u_repair_neighborhood_robots),
+            "revolving_inner_time_limit_sec": float(args.revolving_inner_time_limit_sec),
+            "revolving_outer_time_limit_sec": float(args.revolving_outer_time_limit_sec),
+            "revolving_lb_eps": float(args.revolving_lb_eps),
+            "revolving_max_iters": int(args.revolving_max_iters),
+            "revolving_mark_limit": int(args.revolving_mark_limit),
+            "revolving_layer_order": str(args.revolving_layer_order),
+            "revolving_yz_fix_scope": str(args.revolving_yz_fix_scope),
             "output_root": batch_root,
         },
     )
@@ -758,6 +914,13 @@ def main() -> None:
         f.write(f"target_probe_case_presets={bool(args.target_probe_case_presets)}\n")
         f.write(f"global_target_probe={bool(args.global_target_probe)}\n")
         f.write(f"global_target_probe_time_limit_sec={float(args.global_target_probe_time_limit_sec)}\n\n")
+        f.write(f"tra_revolving_mode={bool(args.tra_revolving_mode)}\n")
+        f.write(f"revolving_enable_u_layer={bool(args.revolving_enable_u_layer)}\n")
+        f.write(f"u_repair_time_limit_sec={float(args.u_repair_time_limit_sec)}\n")
+        f.write(f"revolving_max_iters={int(args.revolving_max_iters)}\n")
+        f.write(f"revolving_mark_limit={int(args.revolving_mark_limit)}\n")
+        f.write(f"revolving_layer_order={str(args.revolving_layer_order)}\n")
+        f.write(f"revolving_yz_fix_scope={str(args.revolving_yz_fix_scope)}\n\n")
         for row in rows:
             f.write(
                 f"case={row['case']}, status={row['status']}, tra_gurobi_cmax={row['tra_gurobi_cmax']}, "

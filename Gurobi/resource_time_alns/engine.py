@@ -41,6 +41,7 @@ from .state import OperatorArm, ResourceConfig, UpperEvalResult, ValidatedIncumb
 from .surrogate import ResourceSurrogateScorer, config_distance
 from .validator import ResourceValidator
 from .fixgurobi_evaluator import FixGurobiEvaluator
+from .revolving_solver import RevolvingSolver
 
 
 class ResourceTimeALNSEngine:
@@ -50,6 +51,7 @@ class ResourceTimeALNSEngine:
         self.rng = random.Random(int(getattr(self.cfg, "seed", 42)) + 7919)
         self.validator = ResourceValidator(opt)
         self.scorer = ResourceSurrogateScorer(opt)
+        self.revolving_solver = RevolvingSolver(opt)
         self.eval_backend = str(getattr(self.cfg, "resource_eval_backend", "surrogate") or "surrogate").strip().lower()
         self.fixgurobi_evaluator = FixGurobiEvaluator(opt, surrogate_scorer=self.scorer) if self.eval_backend == "fixgurobi_prefix" else None
         self.fixgurobi_only_eval = bool(
@@ -119,6 +121,11 @@ class ResourceTimeALNSEngine:
         self.recent_validated_makespans: List[float] = list(initial_validated_makespans)
         self.temperature = float(getattr(self.cfg, "resource_sa_init_temp", max(1.0, 0.05 * float(self.current_eval.F_raw))))
         self.resource_layers = ["X", "Y", "Z"]
+        if bool(getattr(self.cfg, "resource_revolving_mode", False)):
+            self.resource_layers.append("XZ")
+            self.resource_layers.append("YZ")
+        if bool(getattr(self.cfg, "resource_revolving_enable_u_layer", False)):
+            self.resource_layers.append("U")
         if bool(getattr(self.cfg, "resource_enable_xyz_operator", False)):
             self.resource_layers.append("XYZ")
         self.layer_ema_improve = {layer: 1.0 for layer in self.resource_layers}
@@ -188,9 +195,31 @@ class ResourceTimeALNSEngine:
         fallback_penalty: float = 0.0,
         iterations_since_last_validation: int = 0,
         distance_to_last_validated: float = 0.0,
+        bypass_cache: bool = False,
     ) -> UpperEvalResult:
+        eval_config = config
+        layer_name = str(layer).upper()
+        if (
+            bool(getattr(self.cfg, "resource_revolving_mode", False))
+            and bool(getattr(self.cfg, "resource_revolving_enable_u_layer", False))
+            and layer_name in {"X", "Y", "Z", "XZ", "YZ", "XY"}
+            and not (getattr(config, "metadata", {}) or {}).get("fixed_route_task_sequence_by_robot")
+        ):
+            current_best = float("inf")
+            if hasattr(self, "best_validated"):
+                try:
+                    current_best = float(self.best_validated.makespan)
+                except Exception:
+                    current_best = float("inf")
+            revolving = self.revolving_solver.attach_u_plan(
+                config,
+                released_layer=layer_name,
+                affected_subtask_ids=affected_subtask_ids or [],
+                incumbent_value=float(current_best),
+            )
+            eval_config = revolving.config
         base_eval = self.scorer.evaluate(
-            config=config,
+            config=eval_config,
             score_cache=score_cache,
             affected_subtask_ids=affected_subtask_ids,
             fallback_penalty=float(fallback_penalty),
@@ -205,13 +234,16 @@ class ResourceTimeALNSEngine:
                 current_best = float(self.best_validated.makespan)
             except Exception:
                 current_best = float("inf")
-        return self.fixgurobi_evaluator.evaluate(
-            config,
+        result = self.fixgurobi_evaluator.evaluate(
+            eval_config,
             layer=str(layer),
             base_eval=base_eval,
             affected_subtask_ids=affected_subtask_ids,
             current_best_value=current_best,
+            bypass_cache=bool(bypass_cache),
         )
+        result.metadata.update(dict(getattr(eval_config, "metadata", {}) or {}))
+        return result
 
     def _sync_fixgurobi_best_snapshot(self, value: float, iter_id: int) -> None:
         """Keep TRA summary fields aligned when FixGurobi is the only evaluator."""
@@ -295,6 +327,144 @@ class ResourceTimeALNSEngine:
         }
         return str(reason), meta
 
+    def _snapshot_local_window_context(self) -> Tuple[Dict[int, Dict[str, object]], Dict[int, List[int]], Dict[int, List[int]]]:
+        snapshot = getattr(self.opt, "best", None) or getattr(self.opt, "work", None)
+        rows = list(getattr(snapshot, "subtask_state", []) or []) if snapshot is not None else []
+        metrics: Dict[int, Dict[str, object]] = {}
+        station_rows: Dict[int, List[Tuple[int, float, int]]] = {}
+        robot_rows: Dict[int, List[Tuple[float, float, int]]] = {}
+        for subtask in rows:
+            subtask_id = int(getattr(subtask, "id", getattr(subtask, "subtask_id", -1)))
+            if subtask_id < 0:
+                continue
+            task_rows = list(getattr(subtask, "execution_tasks", []) or [])
+            station_id = int(getattr(subtask, "assigned_station_id", -1))
+            rank = int(getattr(subtask, "station_sequence_rank", -1))
+            start_time = min((float(getattr(task, "start_process_time", 0.0) or 0.0) for task in task_rows), default=0.0)
+            completion_time = max((float(getattr(task, "end_process_time", 0.0) or 0.0) for task in task_rows), default=0.0)
+            arrival_stack = min((float(getattr(task, "arrival_time_at_stack", 0.0) or 0.0) for task in task_rows), default=0.0)
+            arrival_station = min((float(getattr(task, "arrival_time_at_station", 0.0) or 0.0) for task in task_rows), default=0.0)
+            robot_ids = sorted({int(getattr(task, "robot_id", -1)) for task in task_rows if int(getattr(task, "robot_id", -1)) >= 0})
+            metrics[int(subtask_id)] = {
+                "station_id": int(station_id),
+                "station_rank": int(rank),
+                "robot_ids": list(robot_ids),
+                "start_time": float(start_time),
+                "completion_time": float(completion_time),
+                "arrival_stack": float(arrival_stack),
+                "arrival_station": float(arrival_station),
+            }
+            if station_id >= 0:
+                station_rows.setdefault(int(station_id), []).append((rank if rank >= 0 else 10**9, float(start_time), int(subtask_id)))
+            for robot_id in robot_ids:
+                robot_rows.setdefault(int(robot_id), []).append((float(arrival_stack), float(arrival_station), int(subtask_id)))
+        station_chains = {
+            int(station_id): [int(item[2]) for item in sorted(chain, key=lambda item: (int(item[0]), float(item[1]), int(item[2])))]
+            for station_id, chain in station_rows.items()
+        }
+        robot_chains = {
+            int(robot_id): [int(item[2]) for item in sorted(chain, key=lambda item: (float(item[0]), float(item[1]), int(item[2])))]
+            for robot_id, chain in robot_rows.items()
+        }
+        return metrics, station_chains, robot_chains
+
+    def _coverage_issue_subtask_ids(self, config: ResourceConfig, *, limit: int = 0) -> List[int]:
+        tote_map = dict(getattr(getattr(self.opt, "problem", None), "id_to_tote", {}) or {})
+        coverage = config.coverage_summary(tote_map)
+        if bool(coverage.get("coverage_ok", False)):
+            return []
+        metrics, _station_chains, _robot_chains = self._snapshot_local_window_context()
+        rows = []
+        for row in list(coverage.get("subtasks", []) or []):
+            subtask_id = int(row.get("subtask_id", -1))
+            unmet = int(row.get("unmet_sku_units", 0) or 0)
+            if subtask_id < 0 or unmet <= 0:
+                continue
+            rows.append(
+                (
+                    -int(unmet),
+                    -float(metrics.get(int(subtask_id), {}).get("completion_time", 0.0)),
+                    int(subtask_id),
+                )
+            )
+        ranked = [int(item[2]) for item in sorted(rows)]
+        if int(limit) > 0:
+            return ranked[: int(limit)]
+        return ranked
+
+    def _local_retry_caps(self, attr_name: str, *, base_cap: int) -> List[int]:
+        raw = getattr(self.cfg, attr_name, "")
+        if raw is None or str(raw).strip() == "":
+            raw = "48,64"
+        caps: List[int] = []
+        if isinstance(raw, (list, tuple, set)):
+            parts = list(raw)
+        else:
+            parts = str(raw).replace(";", ",").split(",")
+        for part in parts:
+            try:
+                value = int(float(str(part).strip()))
+            except Exception:
+                continue
+            if value > int(base_cap):
+                caps.append(int(value))
+        return sorted(set(caps))
+
+    def _expand_local_release_window(self, seed_ids, *, cap: int, radius: int = 1, config: Optional[ResourceConfig] = None) -> Set[int]:
+        base_config = config if config is not None else self.current_config
+        available_ids = set(int(x) for x in base_config.subtasks.keys())
+        seed_list = [int(x) for x in (seed_ids or [])]
+        seed_rank: Dict[int, int] = {}
+        for idx, subtask_id in enumerate(seed_list):
+            seed_rank.setdefault(int(subtask_id), int(idx))
+        selected: List[int] = []
+        seen: Set[int] = set()
+
+        def add(subtask_id: int) -> None:
+            subtask_id = int(subtask_id)
+            if subtask_id in available_ids and subtask_id not in seen:
+                seen.add(subtask_id)
+                selected.append(subtask_id)
+
+        for subtask_id in seed_list:
+            add(int(subtask_id))
+        metrics, station_chains, robot_chains = self._snapshot_local_window_context()
+        for subtask_id in list(selected):
+            meta = dict(metrics.get(int(subtask_id), {}) or {})
+            station_id = int(meta.get("station_id", -1))
+            chain = list(station_chains.get(int(station_id), []) or [])
+            if int(subtask_id) in chain:
+                idx = chain.index(int(subtask_id))
+                for offset in range(-int(radius), int(radius) + 1):
+                    if offset and 0 <= idx + offset < len(chain):
+                        add(chain[idx + offset])
+            for robot_id in list(meta.get("robot_ids", []) or []):
+                robot_chain = list(robot_chains.get(int(robot_id), []) or [])
+                if int(subtask_id) in robot_chain:
+                    idx = robot_chain.index(int(subtask_id))
+                    for offset in range(-int(radius), int(radius) + 1):
+                        if offset and 0 <= idx + offset < len(robot_chain):
+                            add(robot_chain[idx + offset])
+        late_rows = sorted(
+            ((-float(meta.get("completion_time", 0.0)), int(subtask_id)) for subtask_id, meta in metrics.items()),
+            key=lambda item: (float(item[0]), int(item[1])),
+        )
+        late_take = max(0, int(getattr(self.cfg, "resource_local_window_late_subtask_count", 2)))
+        for _score, subtask_id in late_rows[:late_take]:
+            add(int(subtask_id))
+        if len(selected) <= int(cap):
+            return set(int(x) for x in selected)
+        ranked = sorted(
+            selected,
+            key=lambda subtask_id: (
+                0 if int(subtask_id) in seed_rank else 1,
+                int(seed_rank.get(int(subtask_id), 10**9)),
+                -float(metrics.get(int(subtask_id), {}).get("completion_time", 0.0)),
+                int(subtask_id),
+            ),
+        )
+        return set(int(x) for x in ranked[: max(1, int(cap))])
+
     def _candidate_validation_trigger(self, iter_id: int, candidate_eval, candidate_signature, precomputed_validation) -> str:
         if precomputed_validation is not None:
             return str(precomputed_validation.get("_trigger_reason", "joint_colocated_sort_postprocess"))
@@ -325,6 +495,26 @@ class ResourceTimeALNSEngine:
             arms["XYZ"] = {
                 "destroy": {"xyz_destroy_sequential": OperatorArm(name="xyz_destroy_sequential")},
                 "repair": {"xyz_repair_sequential": OperatorArm(name="xyz_repair_sequential")},
+            }
+        if "XZ" in getattr(self, "resource_layers", []):
+            arms["XZ"] = {
+                "destroy": {"xz_destroy_joint": OperatorArm(name="xz_destroy_joint")},
+                "repair": {"xz_repair_joint": OperatorArm(name="xz_repair_joint")},
+            }
+        if "YZ" in getattr(self, "resource_layers", []):
+            arms["YZ"] = {
+                "destroy": {"yz_destroy_joint": OperatorArm(name="yz_destroy_joint")},
+                "repair": {"yz_repair_joint": OperatorArm(name="yz_repair_joint")},
+            }
+        if "XY" in getattr(self, "resource_layers", []):
+            arms["XY"] = {
+                "destroy": {"xy_destroy_joint": OperatorArm(name="xy_destroy_joint")},
+                "repair": {"xy_repair_joint": OperatorArm(name="xy_repair_joint")},
+            }
+        if "U" in getattr(self, "resource_layers", []):
+            arms["U"] = {
+                "destroy": {"u_destroy_heavy_robot_route": OperatorArm(name="u_destroy_heavy_robot_route")},
+                "repair": {"u_fast_repair_dispatch": OperatorArm(name="u_fast_repair_dispatch")},
             }
         if not bool(getattr(self.cfg, "resource_enable_experimental_z_shared_stack", False)):
             arms["Z"]["destroy"].pop("z_destroy_shared_stack_window", None)
@@ -466,9 +656,18 @@ class ResourceTimeALNSEngine:
     def _available_layers(self, iter_id: int) -> List[str]:
         all_layers = list(getattr(self, "resource_layers", ["X", "Y", "Z"]))
         self.last_xyz_skip_reason = ""
+        configured_order_text = str(getattr(self.cfg, "revolving_layer_order", "") or "").strip()
+        configured_revolving_order = {
+            part.strip().upper()
+            for part in configured_order_text.split(",")
+            if part.strip()
+        }
+        if configured_order_text.upper() == "AUTO":
+            configured_revolving_order = set(self._auto_revolving_layer_order())
         if (
             "XYZ" in all_layers
             and bool(getattr(self.cfg, "resource_xyz_stagnation_gate", True))
+            and "XYZ" not in configured_revolving_order
             and not (
                 bool(getattr(self.cfg, "resource_global_decomp_repair_enabled", False))
                 and not bool(getattr(self, "global_decomp_repair_used", False))
@@ -492,6 +691,15 @@ class ResourceTimeALNSEngine:
         selected = available if available else all_layers
         self.last_available_layers = list(selected)
         return selected
+
+    def _auto_revolving_layer_order(self) -> List[str]:
+        problem = getattr(self.opt, "problem", None)
+        order_num = int(getattr(problem, "order_num", 0) or 0)
+        if order_num <= 6:
+            return ["YZ", "Y", "XZ"]
+        if order_num <= 7:
+            return ["Y", "YZ", "U"]
+        return ["Y", "U", "Y", "YZ"]
 
     def _round_robin_next(self, available_layers: Optional[List[str]] = None) -> str:
         order = list(getattr(self, "resource_layers", ["X", "Y", "Z"]))
@@ -519,6 +727,22 @@ class ResourceTimeALNSEngine:
         if forced_queue is None:
             forced_queue = deque()
             self.forced_layer_queue = forced_queue
+        if bool(getattr(self.cfg, "resource_revolving_mode", False)):
+            configured_order = str(getattr(self.cfg, "revolving_layer_order", "") or "").strip()
+            if configured_order.upper() == "AUTO":
+                order = self._auto_revolving_layer_order()
+            elif configured_order:
+                order = [part.strip().upper() for part in configured_order.split(",") if part.strip()]
+            else:
+                order = ["X", "Y", "Z"]
+                if bool(getattr(self.cfg, "resource_revolving_enable_u_layer", False)):
+                    order.append("U")
+            order = [layer for layer in order if layer in available_layers]
+            if order:
+                layer = str(order[(int(iter_id) - 1) % len(order)])
+                self.last_selected_layer = layer
+                self.last_selected_layer_source = "revolving_cycle"
+                return layer, True
         while forced_queue:
             layer = str(forced_queue.popleft()).upper()
             if layer in available_layers:
@@ -529,17 +753,32 @@ class ResourceTimeALNSEngine:
         wy = float(getattr(self.cfg, "resource_component_weight_y", 1.0))
         wz = float(getattr(self.cfg, "resource_component_weight_z", 1.0))
         wxyz = float(getattr(self.cfg, "resource_component_weight_xyz", 1.0))
+        wu = float(getattr(self.cfg, "resource_component_weight_u", 1.0))
         bx = float(getattr(self.cfg, "resource_layer_base_weight_x", 0.10))
         by = float(getattr(self.cfg, "resource_layer_base_weight_y", 0.45))
         bz = float(getattr(self.cfg, "resource_layer_base_weight_z", 0.45))
         bxyz = float(getattr(self.cfg, "resource_layer_base_weight_xyz", 0.15))
+        bu = float(getattr(self.cfg, "resource_layer_base_weight_u", 0.35))
         pressure = {
             "X": float(self.current_eval.Sx),
             "Y": float(self.current_eval.Sy),
             "Z": float(self.current_eval.Sz),
+            "XZ": float((float(self.current_eval.Sx) + float(self.current_eval.Sz)) / 2.0),
+            "YZ": float((float(self.current_eval.Sy) + float(self.current_eval.Sz)) / 2.0),
+            "XY": float((float(self.current_eval.Sx) + float(self.current_eval.Sy)) / 2.0),
             "XYZ": float((float(self.current_eval.Sx) + float(self.current_eval.Sy) + float(self.current_eval.Sz)) / 3.0),
+            "U": float(max(1.0, float(getattr(self.best_validated, "makespan", 1.0) or 1.0)) / max(1.0, float(getattr(self.current_eval, "F_raw", 1.0) or 1.0))),
         }
-        base_weight = {"X": float(bx * wx), "Y": float(by * wy), "Z": float(bz * wz), "XYZ": float(bxyz * wxyz)}
+        base_weight = {
+            "X": float(bx * wx),
+            "Y": float(by * wy),
+            "Z": float(bz * wz),
+            "XZ": float(0.5 * (bx * wx + bz * wz)),
+            "YZ": float(0.5 * (by * wy + bz * wz)),
+            "XY": float(0.5 * (bx * wx + by * wy)),
+            "XYZ": float(bxyz * wxyz),
+            "U": float(bu * wu),
+        }
         boost = float(getattr(self.cfg, "resource_stagnation_boost", 0.15))
         eps = max(1e-9, float(getattr(self.cfg, "resource_layer_score_epsilon", 0.05)))
         if any(float(self.layer_stagnation[layer]) >= float(getattr(self.cfg, "resource_force_rotate_threshold", 20)) for layer in available_layers):
@@ -602,6 +841,27 @@ class ResourceTimeALNSEngine:
                     sum(len(row.work_unit_ids or ()) for row in self.current_config.subtasks.values()),
                     len(self.current_config.subtasks),
                     sum(len(row.z_tasks or []) for row in self.current_config.subtasks.values()),
+                )
+            )
+        if str(layer).upper() == "XZ":
+            return int(
+                max(
+                    sum(len(row.work_unit_ids or ()) for row in self.current_config.subtasks.values()),
+                    sum(len(row.z_tasks or []) for row in self.current_config.subtasks.values()),
+                )
+            )
+        if str(layer).upper() == "YZ":
+            return int(
+                max(
+                    len(self.current_config.subtasks),
+                    sum(len(row.z_tasks or []) for row in self.current_config.subtasks.values()),
+                )
+            )
+        if str(layer).upper() == "XY":
+            return int(
+                max(
+                    sum(len(row.work_unit_ids or ()) for row in self.current_config.subtasks.values()),
+                    len(self.current_config.subtasks),
                 )
             )
         return int(sum(len(row.z_tasks or []) for row in self.current_config.subtasks.values()))
@@ -761,6 +1021,9 @@ class ResourceTimeALNSEngine:
             "fallback_used": bool(fallback_used),
             "projection_mode": str(projection_meta.get("projection_mode", "")),
             "projection_repaired_subtask_count": int(projection_meta.get("projection_repaired_subtask_count", 0)),
+            "projection_z_repair_fail_count": int(projection_meta.get("projection_z_repair_fail_count", 0) or 0),
+            "projection_z_repair_fail_reasons": dict(projection_meta.get("projection_z_repair_fail_reasons", {}) or {}),
+            "projection_z_repair_failed_subtask_ids": list(projection_meta.get("projection_z_repair_failed_subtask_ids", []) or []),
         }
 
     def _build_x_exact_candidate(self, iter_id: int, destroy_name: str, repair_name: str, budget: int) -> Optional[Dict[str, object]]:
@@ -798,6 +1061,9 @@ class ResourceTimeALNSEngine:
             "fallback_used": bool(payload.get("fallback_used", False)),
             "projection_mode": str(payload.get("projection_mode", "")),
             "projection_repaired_subtask_count": int(payload.get("projection_repaired_subtask_count", 0)),
+            "projection_z_repair_fail_count": int(payload.get("projection_z_repair_fail_count", 0) or 0),
+            "projection_z_repair_fail_reasons": str(payload.get("projection_z_repair_fail_reasons", {}) or {}),
+            "projection_z_repair_failed_subtask_ids": str(payload.get("projection_z_repair_failed_subtask_ids", []) or []),
             "F_raw": float(candidate_eval.F_raw),
             "F_cal": float(candidate_eval.F_cal),
             "eval_backend": str(candidate_eval.metadata.get("eval_backend", "surrogate")),
@@ -807,6 +1073,11 @@ class ResourceTimeALNSEngine:
             "fixgurobi_gap": candidate_eval.metadata.get("fixgurobi_gap", ""),
             "fixgurobi_solve_time": candidate_eval.metadata.get("fixgurobi_solve_time", ""),
             "fixgurobi_fixed_scope": str(candidate_eval.metadata.get("fixgurobi_fixed_scope", "")),
+            "fixgurobi_fixed_constraint_count": candidate_eval.metadata.get("fixgurobi_fixed_constraint_count", ""),
+            "fixgurobi_invalid_fix_count": candidate_eval.metadata.get("fixgurobi_invalid_fix_count", ""),
+            "fixgurobi_fixed_route_arc_count_from_cfg": candidate_eval.metadata.get("fixgurobi_fixed_route_arc_count_from_cfg", ""),
+            "fixgurobi_fixed_route_sequence_robot_count": candidate_eval.metadata.get("fixgurobi_fixed_route_sequence_robot_count", ""),
+            "fixgurobi_fixed_route_sequence_missing_count": candidate_eval.metadata.get("fixgurobi_fixed_route_sequence_missing_count", ""),
             "fixgurobi_infeasible_reason": str(candidate_eval.metadata.get("fixgurobi_infeasible_reason", "")),
             "duplicate_tote_count": int(candidate_eval.duplicate_tote_count),
             "duplicate_tote_penalty": float(candidate_eval.duplicate_tote_penalty),
@@ -826,10 +1097,12 @@ class ResourceTimeALNSEngine:
         attempts = 0
         generated_count = 0
         pool: List[Dict[str, object]] = []
+        candidate_rows: List[Dict[str, object]] = []
         attempted_pairs: List[Tuple[str, str]] = []
         penalized_pairs: List[Tuple[str, str, float]] = []
         seen_validation_signatures = set()
         coverage_hard_reject_count = 0
+        duplicate_hard_reject_count = 0
         while attempts < max_attempts and len(pool) < target:
             attempts += 1
             destroy_name, repair_name = self._sample_operator_pair("X")
@@ -838,39 +1111,66 @@ class ResourceTimeALNSEngine:
             if row is None:
                 continue
             generated_count += 1
-            if not bool(row.get("coverage_feasible", True)) or int(row.get("unmet_sku_total", 0) or 0) > 0:
+            row_fixes_z = str(row.get("fixgurobi_fixed_scope", "")).upper() in {"Z", "XYZ", "XYZU"}
+            if bool(row_fixes_z) and (not bool(row.get("coverage_feasible", True)) or int(row.get("unmet_sku_total", 0) or 0) > 0):
                 penalized_pairs.append((str(destroy_name), str(repair_name), -6.0))
                 coverage_hard_reject_count += 1
+                row["candidate_stage"] = "exact_reject"
+                row["exact_fail_reason"] = "coverage_hard_reject"
+                row["selected_for_sa"] = False
+                candidate_rows.append(row)
                 continue
-            if int(row["duplicate_tote_count"]) > 0:
+            if bool(row_fixes_z) and int(row["duplicate_tote_count"]) > 0:
+                duplicate_hard_reject_count += 1
+                row["candidate_stage"] = "exact_reject"
+                row["exact_fail_reason"] = "duplicate_tote_hard_reject"
+                row["selected_for_sa"] = False
+                candidate_rows.append(row)
                 continue
             candidate_signature = row["candidate_signature_tuple"]
             if candidate_signature in seen_validation_signatures:
+                row["candidate_stage"] = "exact_reject"
+                row["exact_fail_reason"] = "duplicate_signature"
+                row["selected_for_sa"] = False
+                candidate_rows.append(row)
                 continue
             seen_validation_signatures.add(candidate_signature)
+            candidate_rows.append(row)
             pool.append(row)
         selected = self._select_best_candidate(pool)
         if selected is not None:
             selected["selected_for_sa"] = True
+            selected_signature = selected.get("candidate_signature_tuple", None)
+            for row in candidate_rows:
+                if row.get("candidate_signature_tuple") == selected_signature and str(row.get("candidate_stage", "")) == "exact":
+                    row["selected_for_sa"] = True
+                    break
         return {
             "target_size": int(target),
             "attempt_count": int(attempts),
             "generated_count": int(generated_count),
             "unique_count": int(len(pool)),
             "exact_count": int(len(pool)),
-            "rows": pool,
+            "rows": candidate_rows,
             "selected": selected,
             "hard_reject_reason": "coverage_hard_reject" if int(coverage_hard_reject_count) > 0 and not pool else "",
             "attempted_pairs": attempted_pairs,
             "penalized_pairs": penalized_pairs,
             "coverage_hard_reject_count": int(coverage_hard_reject_count),
+            "exact_fail_count": 0,
+            "exact_fail_reasons": {},
+            "duplicate_hard_reject_count": int(duplicate_hard_reject_count),
         }
 
     def _build_xyz_exact_candidate(self, iter_id: int, budget: int) -> Optional[Dict[str, object]]:
         critical_path_mode = bool(getattr(self.cfg, "resource_enable_critical_path_xyz", False))
         if critical_path_mode:
-            x_destroy = "x_destroy_critical_order_cluster" if "x_destroy_critical_order_cluster" in self.operator_arms["X"]["destroy"] else self._sample_operator_pair("X")[0]
-            x_repair = "x_repair_sku_cluster_beam" if "x_repair_sku_cluster_beam" in self.operator_arms["X"]["repair"] else self._sample_operator_pair("X")[1]
+            if bool(getattr(self.cfg, "resource_xyz_use_local_x_window", False)):
+                x_destroy = "x_destroy_random_units" if "x_destroy_random_units" in self.operator_arms["X"]["destroy"] else self._sample_operator_pair("X")[0]
+                x_repair = "x_repair_affinity_pack" if "x_repair_affinity_pack" in self.operator_arms["X"]["repair"] else self._sample_operator_pair("X")[1]
+            else:
+                x_destroy = "x_destroy_critical_order_cluster" if "x_destroy_critical_order_cluster" in self.operator_arms["X"]["destroy"] else self._sample_operator_pair("X")[0]
+                x_repair = "x_repair_sku_cluster_beam" if "x_repair_sku_cluster_beam" in self.operator_arms["X"]["repair"] else self._sample_operator_pair("X")[1]
             y_destroy = "y_destroy_critical_path_block" if "y_destroy_critical_path_block" in self.operator_arms["Y"]["destroy"] else "y_destroy_max_tardiness_blocker"
             y_repair = "y_repair_ejection_chain_balance" if "y_repair_ejection_chain_balance" in self.operator_arms["Y"]["repair"] else "y_repair_arrival_aware_rank"
             z_destroy = "z_destroy_critical_path_window" if "z_destroy_critical_path_window" in self.operator_arms["Z"]["destroy"] else "z_destroy_shared_stack_window"
@@ -893,13 +1193,18 @@ class ResourceTimeALNSEngine:
             self.last_xyz_skip_reason = "duplicate_action_signature"
             return None
 
+        x_degree = max(1, int(budget))
+        local_xyz_mode = bool(getattr(self.cfg, "resource_xyz_use_local_x_window", False))
+        local_xyz_degree = max(1, int(getattr(self.cfg, "resource_xyz_local_yz_degree", 3)))
+        if bool(getattr(self.cfg, "resource_xyz_use_local_x_window", False)):
+            x_degree = max(1, int(getattr(self.cfg, "resource_xyz_local_x_degree", 1)))
         x_payload = self._apply_x_candidate_to_config(
             base_config=self.current_config,
             base_eval=self.current_eval,
             iter_id=int(iter_id),
             destroy_name=str(x_destroy),
             repair_name=str(x_repair),
-            degree=max(1, int(budget)),
+            degree=int(x_degree),
         )
         if x_payload is None:
             self.last_xyz_skip_reason = f"x_payload_fail:{x_destroy}+{x_repair}"
@@ -910,7 +1215,8 @@ class ResourceTimeALNSEngine:
         projection_count = int(x_payload.get("projection_repaired_subtask_count", 0))
         projection_mode = str(x_payload.get("projection_mode", ""))
 
-        y_plan = plan_y_candidate(self.opt, candidate, str(y_destroy), str(y_repair), self.rng, max(1, int(budget)))
+        yz_degree = int(local_xyz_degree) if bool(local_xyz_mode) else max(1, int(budget))
+        y_plan = plan_y_candidate(self.opt, candidate, str(y_destroy), str(y_repair), self.rng, max(1, int(yz_degree)))
         if not bool(y_plan.get("success", False)):
             self.last_xyz_skip_reason = f"y_plan_fail:{y_destroy}+{y_repair}"
             return None
@@ -923,13 +1229,33 @@ class ResourceTimeALNSEngine:
         touched_ids.update(int(x) for x in (y_payload.get("affected_ids", set()) or set()))
         fallback_used = bool(fallback_used or y_payload.get("fallback_used", False))
 
-        z_plan = plan_z_candidate(self.opt, candidate, str(z_destroy), str(z_repair), self.rng, max(1, int(budget)))
-        if not bool(z_plan.get("success", False)):
-            self.last_xyz_skip_reason = f"z_plan_fail:{z_destroy}+{z_repair}"
-            return None
-        z_payload = apply_exact_z_plan(self.opt, candidate, z_plan, self.rng)
-        if not bool(z_payload.get("success", False)):
-            self.last_xyz_skip_reason = f"z_apply_fail:{z_destroy}+{z_repair}:{z_payload.get('reason', '')}"
+        z_repair_attempts = [
+            str(z_repair),
+            "z_repair_multistack_cover_compact",
+            "z_repair_gurobi_like_sort",
+            "z_repair_spread_region_balance",
+            "z_repair_greedy_fallback",
+        ]
+        z_repair_attempts = list(dict.fromkeys(z_repair_attempts))
+        z_plan = None
+        z_payload = None
+        z_failure_reason = ""
+        z_repair_used = str(z_repair)
+        for z_repair_try in z_repair_attempts:
+            z_plan_i = plan_z_candidate(self.opt, candidate, str(z_destroy), str(z_repair_try), self.rng, max(1, int(yz_degree)))
+            if not bool(z_plan_i.get("success", False)):
+                z_failure_reason = f"plan_fail:{z_destroy}+{z_repair_try}"
+                continue
+            z_payload_i = apply_exact_z_plan(self.opt, candidate, z_plan_i, self.rng)
+            if not bool(z_payload_i.get("success", False)):
+                z_failure_reason = f"apply_fail:{z_destroy}+{z_repair_try}:{z_payload_i.get('reason', '')}"
+                continue
+            z_plan = z_plan_i
+            z_payload = z_payload_i
+            z_repair_used = str(z_repair_try)
+            break
+        if z_plan is None or z_payload is None:
+            self.last_xyz_skip_reason = f"z_repair_fail:{z_failure_reason}"
             return None
         candidate = z_payload["config"]
         touched_ids.update(int(x) for x in (z_payload.get("affected_ids", set()) or set()))
@@ -944,6 +1270,33 @@ class ResourceTimeALNSEngine:
                 )
             ),
         )
+        if bool(local_xyz_mode):
+            affected_cap = max(1, int(getattr(self.cfg, "resource_local_xyz_exact_validation_subtask_cap", min(4, int(affected_cap)))))
+        coverage_seed_limit = max(0, int(getattr(self.cfg, "resource_local_window_coverage_seed_limit", max(4, int(affected_cap) // 2))))
+        coverage_issue_ids = self._coverage_issue_subtask_ids(candidate, limit=int(coverage_seed_limit))
+        expand_seeds = [int(x) for x in coverage_issue_ids]
+        seen_expand = set(int(x) for x in expand_seeds)
+        for subtask_id in list(int(x) for x in critical_subtasks):
+            if int(subtask_id) not in seen_expand:
+                expand_seeds.append(int(subtask_id))
+                seen_expand.add(int(subtask_id))
+        for subtask_id in sorted(int(x) for x in touched_ids):
+            if int(subtask_id) not in seen_expand:
+                expand_seeds.append(int(subtask_id))
+                seen_expand.add(int(subtask_id))
+        if expand_seeds:
+            touched_ids = self._expand_local_release_window(
+                expand_seeds,
+                cap=int(affected_cap),
+                radius=int(
+                    getattr(
+                        self.cfg,
+                        "resource_local_xyz_window_neighbor_radius",
+                        0 if bool(local_xyz_mode) else getattr(self.cfg, "resource_local_window_neighbor_radius", 1),
+                    )
+                ),
+                config=candidate,
+            )
         if len(touched_ids) > int(affected_cap):
             self.last_xyz_skip_reason = f"affected_cap:{len(touched_ids)}>{affected_cap}"
             return None
@@ -971,6 +1324,47 @@ class ResourceTimeALNSEngine:
                 "last_validation_iter": int(self.last_validation_iter),
                 "last_validation_f_raw": float(self.last_validation_f_raw),
                 "recent_validated_makespans": list(self.recent_validated_makespans),
+            }
+        )
+        local_release_retry_count = 0
+        local_release_initial_count = int(len(touched_ids))
+        if not math.isfinite(float(candidate_eval.F_raw)):
+            for retry_cap in self._local_retry_caps("resource_local_xyz_retry_caps", base_cap=int(affected_cap)):
+                retry_ids = self._expand_local_release_window(
+                    expand_seeds,
+                    cap=int(retry_cap),
+                    radius=int(
+                        getattr(
+                            self.cfg,
+                            "resource_local_xyz_window_retry_neighbor_radius",
+                            getattr(self.cfg, "resource_local_window_retry_neighbor_radius", 2),
+                        )
+                    ),
+                    config=candidate,
+                )
+                if retry_ids == touched_ids:
+                    continue
+                retry_eval = self._evaluate_config(
+                    config=candidate,
+                    layer="XYZ",
+                    score_cache=None,
+                    affected_subtask_ids=retry_ids,
+                    fallback_penalty=0.20 if bool(fallback_used) else 0.0,
+                    iterations_since_last_validation=int(iter_id) - int(self.last_validation_iter),
+                    distance_to_last_validated=config_distance(candidate, self.last_validated_config),
+                    bypass_cache=True,
+                )
+                local_release_retry_count += 1
+                if math.isfinite(float(retry_eval.F_raw)) or str(retry_eval.metadata.get("fixgurobi_status", "")) != str(candidate_eval.metadata.get("fixgurobi_status", "")):
+                    touched_ids = set(int(x) for x in retry_ids)
+                    candidate_eval = retry_eval
+                if math.isfinite(float(candidate_eval.F_raw)):
+                    break
+        payload["affected_ids"] = touched_ids
+        candidate_eval.metadata.update(
+            {
+                "local_release_initial_count": int(local_release_initial_count),
+                "local_release_retry_count": int(local_release_retry_count),
             }
         )
         return {
@@ -1005,10 +1399,14 @@ class ResourceTimeALNSEngine:
             "unmet_sku_total": int(candidate_eval.unmet_sku_total),
             "xyz_x_operator": f"{x_destroy}+{x_repair}",
             "xyz_y_operator": f"{y_destroy}+{y_repair}",
-            "xyz_z_operator": f"{z_destroy}+{z_repair}",
+            "xyz_z_operator": f"{z_destroy}+{z_repair_used}",
             "repartition_mode": bool(str(x_destroy) == "x_destroy_order_repartition"),
             "critical_path_operator_used": bool(critical_path_mode),
             "critical_path_subtask_ids": list(int(x) for x in critical_subtasks),
+            "coverage_issue_subtask_ids": list(int(x) for x in coverage_issue_ids),
+            "local_release_subtask_count": int(len(touched_ids)),
+            "local_release_initial_count": int(local_release_initial_count),
+            "local_release_retry_count": int(local_release_retry_count),
         }
 
     def _build_global_decomp_repair_candidate(self, iter_id: int) -> Optional[Dict[str, object]]:
@@ -1196,34 +1594,150 @@ class ResourceTimeALNSEngine:
             "global_decomp_repair_attempts": str(attempt_rows),
         }
 
-    def _generate_xyz_candidate_pool(self, iter_id: int, budget: int, target_size: int) -> Dict[str, object]:
-        target = max(1, int(getattr(self.cfg, "resource_xyz_candidate_pool_size", target_size)))
-        max_attempts = max(target, int(getattr(self.cfg, "resource_xyz_candidate_pool_max_attempts", 12)))
+    def _build_xz_exact_candidate(self, iter_id: int, budget: int) -> Optional[Dict[str, object]]:
+        x_destroy, x_repair = self._sample_operator_pair("X")
+        z_destroy, z_repair = self._sample_operator_pair("Z")
+        action_signature = (
+            "XZ",
+            str(x_destroy),
+            str(x_repair),
+            str(z_destroy),
+            str(z_repair),
+            self.current_config.validation_signature(),
+        )
+        if self._action_signature_known("XZ", action_signature):
+            self.last_xyz_skip_reason = "xz_duplicate_action_signature"
+            return None
+        self._remember_action_signature("XZ", action_signature)
+
+        x_payload = self._apply_x_candidate_to_config(
+            base_config=self.current_config,
+            base_eval=self.current_eval,
+            iter_id=int(iter_id),
+            destroy_name=str(x_destroy),
+            repair_name=str(x_repair),
+            degree=max(1, int(budget)),
+        )
+        if x_payload is None:
+            self.last_xyz_skip_reason = f"xz_x_payload_fail:{x_destroy}+{x_repair}"
+            return None
+        candidate = x_payload["config"]
+        touched_ids = set(int(x) for x in (x_payload.get("affected_ids", set()) or set()))
+        fallback_used = bool(x_payload.get("fallback_used", False))
+        projection_count = int(x_payload.get("projection_repaired_subtask_count", 0))
+        projection_mode = str(x_payload.get("projection_mode", ""))
+
+        z_budget = max(1, int(budget), len(touched_ids))
+        z_plan = plan_z_candidate(self.opt, candidate, str(z_destroy), str(z_repair), self.rng, int(z_budget))
+        if not bool(z_plan.get("success", False)):
+            self.last_xyz_skip_reason = f"xz_z_plan_fail:{z_destroy}+{z_repair}"
+            return None
+        z_payload = apply_exact_z_plan(self.opt, candidate, z_plan, self.rng)
+        if not bool(z_payload.get("success", False)):
+            self.last_xyz_skip_reason = f"xz_z_apply_fail:{z_destroy}+{z_repair}:{z_payload.get('reason', '')}"
+            return None
+        candidate = z_payload["config"]
+        touched_ids.update(int(x) for x in (z_payload.get("affected_ids", set()) or set()))
+        fallback_used = bool(fallback_used or z_payload.get("fallback_used", False))
+
+        affected_cap = max(1, int(getattr(self.cfg, "resource_xz_exact_validation_subtask_cap", 16)))
+        if len(touched_ids) > int(affected_cap):
+            self.last_xyz_skip_reason = f"xz_affected_cap:{len(touched_ids)}>{affected_cap}"
+            return None
+
+        payload = {
+            "config": candidate,
+            "score_cache": None,
+            "affected_ids": touched_ids,
+            "fallback_used": bool(fallback_used),
+            "projection_mode": projection_mode,
+            "projection_repaired_subtask_count": int(projection_count),
+        }
+        candidate_signature = candidate.validation_signature()
+        candidate_eval = self._evaluate_config(
+            config=candidate,
+            layer="XZ",
+            score_cache=None,
+            affected_subtask_ids=touched_ids,
+            fallback_penalty=0.20 if bool(fallback_used) else 0.0,
+            iterations_since_last_validation=int(iter_id) - int(self.last_validation_iter),
+            distance_to_last_validated=config_distance(candidate, self.last_validated_config),
+        )
+        candidate_eval.metadata.update(
+            {
+                "last_validation_iter": int(self.last_validation_iter),
+                "last_validation_f_raw": float(self.last_validation_f_raw),
+                "recent_validated_makespans": list(self.recent_validated_makespans),
+            }
+        )
+        return {
+            "iter": int(iter_id),
+            "layer": "XZ",
+            "candidate_stage": "exact",
+            "candidate_rank": 0,
+            "destroy_operator": "xz_destroy_joint",
+            "repair_operator": "xz_repair_joint",
+            "fallback_used": bool(fallback_used),
+            "projection_mode": str(projection_mode),
+            "projection_repaired_subtask_count": int(projection_count),
+            "F_raw": float(candidate_eval.F_raw),
+            "F_cal": float(candidate_eval.F_cal),
+            "eval_backend": str(candidate_eval.metadata.get("eval_backend", "surrogate")),
+            "fixgurobi_status": str(candidate_eval.metadata.get("fixgurobi_status", "")),
+            "fixgurobi_obj": candidate_eval.metadata.get("fixgurobi_obj", ""),
+            "fixgurobi_bound": candidate_eval.metadata.get("fixgurobi_bound", ""),
+            "fixgurobi_gap": candidate_eval.metadata.get("fixgurobi_gap", ""),
+            "fixgurobi_solve_time": candidate_eval.metadata.get("fixgurobi_solve_time", ""),
+            "fixgurobi_fixed_scope": str(candidate_eval.metadata.get("fixgurobi_fixed_scope", "")),
+            "fixgurobi_infeasible_reason": str(candidate_eval.metadata.get("fixgurobi_infeasible_reason", "")),
+            "duplicate_tote_count": int(candidate_eval.duplicate_tote_count),
+            "duplicate_tote_penalty": float(candidate_eval.duplicate_tote_penalty),
+            "candidate_signature": self._candidate_signature_text(candidate_signature),
+            "candidate_signature_tuple": candidate_signature,
+            "candidate_payload": payload,
+            "candidate_eval": candidate_eval,
+            "selected_for_sa": False,
+            "action_signature": self._action_signature_text(action_signature),
+            "coverage_feasible": bool(candidate_eval.coverage_feasible),
+            "unmet_sku_total": int(candidate_eval.unmet_sku_total),
+            "xz_x_operator": f"{x_destroy}+{x_repair}",
+            "xz_z_operator": f"{z_destroy}+{z_repair}",
+            "revolving_enabled": bool(candidate_eval.metadata.get("revolving_enabled", False)),
+            "released_layer": str(candidate_eval.metadata.get("released_layer", "")),
+            "fixed_layers": str(candidate_eval.metadata.get("fixed_layers", "")),
+            "inner_relaxed_obj": candidate_eval.metadata.get("inner_relaxed_obj", ""),
+            "u_fast_cmax": candidate_eval.metadata.get("u_fast_cmax", ""),
+            "u_route_lb": candidate_eval.metadata.get("u_route_lb", ""),
+            "u_repair_time": candidate_eval.metadata.get("u_repair_time", ""),
+            "u_changed_robot_count": candidate_eval.metadata.get("u_changed_robot_count", ""),
+            "revolving_lb": candidate_eval.metadata.get("revolving_lb", ""),
+            "lb_gate_skipped": candidate_eval.metadata.get("lb_gate_skipped", ""),
+        }
+
+    def _generate_xz_candidate_pool(self, iter_id: int, budget: int, target_size: int) -> Dict[str, object]:
+        target = max(1, int(getattr(self.cfg, "resource_xz_candidate_pool_size", target_size)))
+        max_attempts = max(target, int(getattr(self.cfg, "resource_xz_candidate_pool_max_attempts", getattr(self.cfg, "resource_candidate_pool_max_attempts", 12))))
         attempts = 0
         generated_count = 0
         pool: List[Dict[str, object]] = []
         attempted_pairs: List[Tuple[str, str]] = []
         coverage_hard_reject_count = 0
+        duplicate_hard_reject_count = 0
         seen_validation_signatures = set()
-        if bool(getattr(self.cfg, "resource_global_decomp_repair_enabled", False)):
-            row = self._build_global_decomp_repair_candidate(int(iter_id))
-            if row is not None:
-                generated_count += 1
-                if bool(row.get("coverage_feasible", True)) and int(row.get("unmet_sku_total", 0) or 0) <= 0 and int(row["duplicate_tote_count"]) <= 0:
-                    candidate_signature = row["candidate_signature_tuple"]
-                    seen_validation_signatures.add(candidate_signature)
-                    pool.append(row)
         while attempts < max_attempts and len(pool) < target:
             attempts += 1
-            attempted_pairs.append(("xyz_destroy_sequential", "xyz_repair_sequential"))
-            row = self._build_xyz_exact_candidate(int(iter_id), int(budget))
+            attempted_pairs.append(("xz_destroy_joint", "xz_repair_joint"))
+            row = self._build_xz_exact_candidate(int(iter_id), int(budget))
             if row is None:
                 continue
             generated_count += 1
-            if not bool(row.get("coverage_feasible", True)) or int(row.get("unmet_sku_total", 0) or 0) > 0:
+            fixed_scope = str(row.get("fixgurobi_fixed_scope", "") or "").upper()
+            row_fixes_z = "Z" in fixed_scope and fixed_scope not in {"LOCALXYZ", "LOCALYZ"}
+            if bool(row_fixes_z) and (not bool(row.get("coverage_feasible", True)) or int(row.get("unmet_sku_total", 0) or 0) > 0):
                 coverage_hard_reject_count += 1
                 continue
-            if int(row["duplicate_tote_count"]) > 0:
+            if bool(row_fixes_z) and int(row["duplicate_tote_count"]) > 0:
+                duplicate_hard_reject_count += 1
                 continue
             candidate_signature = row["candidate_signature_tuple"]
             if candidate_signature in seen_validation_signatures:
@@ -1245,6 +1759,590 @@ class ResourceTimeALNSEngine:
             "attempted_pairs": attempted_pairs,
             "penalized_pairs": [],
             "coverage_hard_reject_count": int(coverage_hard_reject_count),
+            "exact_fail_count": 0,
+            "exact_fail_reasons": {},
+            "duplicate_hard_reject_count": int(duplicate_hard_reject_count),
+        }
+
+    def _build_yz_exact_candidate(self, iter_id: int, budget: int) -> Optional[Dict[str, object]]:
+        y_destroy, y_repair = self._sample_operator_pair("Y")
+        z_destroy, z_repair = self._sample_operator_pair("Z")
+        action_signature = (
+            "YZ",
+            str(y_destroy),
+            str(y_repair),
+            str(z_destroy),
+            str(z_repair),
+            self.current_config.validation_signature(),
+        )
+        if self._action_signature_known("YZ", action_signature):
+            self.last_xyz_skip_reason = "yz_duplicate_action_signature"
+            return None
+        self._remember_action_signature("YZ", action_signature)
+
+        y_plan = plan_y_candidate(self.opt, self.current_config, str(y_destroy), str(y_repair), self.rng, max(1, int(budget)))
+        if not bool(y_plan.get("success", False)):
+            self.last_xyz_skip_reason = f"yz_y_plan_fail:{y_destroy}+{y_repair}"
+            return None
+        y_payload = apply_exact_y_plan(self.opt, self.current_config, y_plan, self.rng)
+        if not bool(y_payload.get("success", False)):
+            self.last_xyz_skip_reason = f"yz_y_apply_fail:{y_destroy}+{y_repair}"
+            return None
+        candidate = y_payload["config"]
+        touched_ids = set(int(x) for x in (y_payload.get("affected_ids", set()) or set()))
+        fallback_used = bool(y_payload.get("fallback_used", False))
+
+        z_budget = max(1, int(budget), len(touched_ids))
+        z_plan = plan_z_candidate(self.opt, candidate, str(z_destroy), str(z_repair), self.rng, int(z_budget))
+        if not bool(z_plan.get("success", False)):
+            self.last_xyz_skip_reason = f"yz_z_plan_fail:{z_destroy}+{z_repair}"
+            return None
+        z_payload = apply_exact_z_plan(self.opt, candidate, z_plan, self.rng)
+        if not bool(z_payload.get("success", False)):
+            self.last_xyz_skip_reason = f"yz_z_apply_fail:{z_destroy}+{z_repair}:{z_payload.get('reason', '')}"
+            return None
+        candidate = z_payload["config"]
+        touched_ids.update(int(x) for x in (z_payload.get("affected_ids", set()) or set()))
+        fallback_used = bool(fallback_used or z_payload.get("fallback_used", False))
+
+        affected_cap = max(1, int(getattr(self.cfg, "resource_yz_exact_validation_subtask_cap", 18)))
+        coverage_seed_limit = max(
+            0,
+            int(
+                getattr(
+                    self.cfg,
+                    "resource_local_yz_window_coverage_seed_limit",
+                    getattr(self.cfg, "resource_local_window_coverage_seed_limit", max(4, int(affected_cap) // 2)),
+                )
+            ),
+        )
+        coverage_issue_ids = self._coverage_issue_subtask_ids(candidate, limit=int(coverage_seed_limit))
+        expand_seeds = [int(x) for x in coverage_issue_ids]
+        if touched_ids:
+            seen_expand = set(int(x) for x in expand_seeds)
+            for subtask_id in sorted(int(x) for x in touched_ids):
+                if int(subtask_id) not in seen_expand:
+                    expand_seeds.append(int(subtask_id))
+                    seen_expand.add(int(subtask_id))
+            touched_ids = self._expand_local_release_window(
+                expand_seeds,
+                cap=int(affected_cap),
+                radius=int(getattr(self.cfg, "resource_local_yz_window_neighbor_radius", getattr(self.cfg, "resource_local_window_neighbor_radius", 1))),
+                config=candidate,
+            )
+        if len(touched_ids) > int(affected_cap):
+            self.last_xyz_skip_reason = f"yz_affected_cap:{len(touched_ids)}>{affected_cap}"
+            return None
+
+        payload = {
+            "config": candidate,
+            "score_cache": None,
+            "affected_ids": touched_ids,
+            "fallback_used": bool(fallback_used),
+            "projection_mode": "",
+            "projection_repaired_subtask_count": 0,
+            "coverage_issue_ids": list(int(x) for x in coverage_issue_ids),
+        }
+        candidate_signature = candidate.validation_signature()
+        candidate_eval = self._evaluate_config(
+            config=candidate,
+            layer="YZ",
+            score_cache=None,
+            affected_subtask_ids=touched_ids,
+            fallback_penalty=0.20 if bool(fallback_used) else 0.0,
+            iterations_since_last_validation=int(iter_id) - int(self.last_validation_iter),
+            distance_to_last_validated=config_distance(candidate, self.last_validated_config),
+        )
+        local_release_retry_count = 0
+        local_release_initial_count = int(len(touched_ids))
+        if not math.isfinite(float(candidate_eval.F_raw)):
+            for retry_cap in self._local_retry_caps("resource_local_yz_retry_caps", base_cap=int(affected_cap)):
+                retry_ids = self._expand_local_release_window(
+                    expand_seeds,
+                    cap=int(retry_cap),
+                    radius=int(getattr(self.cfg, "resource_local_yz_window_retry_neighbor_radius", getattr(self.cfg, "resource_local_window_retry_neighbor_radius", 2))),
+                    config=candidate,
+                )
+                if retry_ids == touched_ids:
+                    continue
+                retry_eval = self._evaluate_config(
+                    config=candidate,
+                    layer="YZ",
+                    score_cache=None,
+                    affected_subtask_ids=retry_ids,
+                    fallback_penalty=0.20 if bool(fallback_used) else 0.0,
+                    iterations_since_last_validation=int(iter_id) - int(self.last_validation_iter),
+                    distance_to_last_validated=config_distance(candidate, self.last_validated_config),
+                    bypass_cache=True,
+                )
+                local_release_retry_count += 1
+                if math.isfinite(float(retry_eval.F_raw)) or str(retry_eval.metadata.get("fixgurobi_status", "")) != str(candidate_eval.metadata.get("fixgurobi_status", "")):
+                    touched_ids = set(int(x) for x in retry_ids)
+                    candidate_eval = retry_eval
+                if math.isfinite(float(candidate_eval.F_raw)):
+                    break
+        payload["affected_ids"] = touched_ids
+        candidate_eval.metadata.update(
+            {
+                "last_validation_iter": int(self.last_validation_iter),
+                "last_validation_f_raw": float(self.last_validation_f_raw),
+                "recent_validated_makespans": list(self.recent_validated_makespans),
+                "local_release_initial_count": int(local_release_initial_count),
+                "local_release_retry_count": int(local_release_retry_count),
+            }
+        )
+        return {
+            "iter": int(iter_id),
+            "layer": "YZ",
+            "candidate_stage": "exact",
+            "candidate_rank": 0,
+            "destroy_operator": "yz_destroy_joint",
+            "repair_operator": "yz_repair_joint",
+            "fallback_used": bool(fallback_used),
+            "projection_mode": "",
+            "projection_repaired_subtask_count": 0,
+            "F_raw": float(candidate_eval.F_raw),
+            "F_cal": float(candidate_eval.F_cal),
+            "eval_backend": str(candidate_eval.metadata.get("eval_backend", "surrogate")),
+            "fixgurobi_status": str(candidate_eval.metadata.get("fixgurobi_status", "")),
+            "fixgurobi_obj": candidate_eval.metadata.get("fixgurobi_obj", ""),
+            "fixgurobi_bound": candidate_eval.metadata.get("fixgurobi_bound", ""),
+            "fixgurobi_gap": candidate_eval.metadata.get("fixgurobi_gap", ""),
+            "fixgurobi_solve_time": candidate_eval.metadata.get("fixgurobi_solve_time", ""),
+            "fixgurobi_fixed_scope": str(candidate_eval.metadata.get("fixgurobi_fixed_scope", "")),
+            "fixgurobi_infeasible_reason": str(candidate_eval.metadata.get("fixgurobi_infeasible_reason", "")),
+            "duplicate_tote_count": int(candidate_eval.duplicate_tote_count),
+            "duplicate_tote_penalty": float(candidate_eval.duplicate_tote_penalty),
+            "candidate_signature": self._candidate_signature_text(candidate_signature),
+            "candidate_signature_tuple": candidate_signature,
+            "candidate_payload": payload,
+            "candidate_eval": candidate_eval,
+            "selected_for_sa": False,
+            "action_signature": self._action_signature_text(action_signature),
+            "coverage_feasible": bool(candidate_eval.coverage_feasible),
+            "unmet_sku_total": int(candidate_eval.unmet_sku_total),
+            "yz_y_operator": f"{y_destroy}+{y_repair}",
+            "yz_z_operator": f"{z_destroy}+{z_repair}",
+            "revolving_enabled": bool(candidate_eval.metadata.get("revolving_enabled", False)),
+            "released_layer": str(candidate_eval.metadata.get("released_layer", "")),
+            "fixed_layers": str(candidate_eval.metadata.get("fixed_layers", "")),
+            "inner_relaxed_obj": candidate_eval.metadata.get("inner_relaxed_obj", ""),
+            "u_fast_cmax": candidate_eval.metadata.get("u_fast_cmax", ""),
+            "u_route_lb": candidate_eval.metadata.get("u_route_lb", ""),
+            "u_repair_time": candidate_eval.metadata.get("u_repair_time", ""),
+            "u_changed_robot_count": candidate_eval.metadata.get("u_changed_robot_count", ""),
+            "revolving_lb": candidate_eval.metadata.get("revolving_lb", ""),
+            "lb_gate_skipped": candidate_eval.metadata.get("lb_gate_skipped", ""),
+            "coverage_issue_subtask_ids": list(int(x) for x in coverage_issue_ids),
+            "local_release_subtask_count": int(len(touched_ids)),
+            "local_release_initial_count": int(local_release_initial_count),
+            "local_release_retry_count": int(local_release_retry_count),
+        }
+
+    def _generate_yz_joint_candidate_pool(self, iter_id: int, budget: int, target_size: int) -> Dict[str, object]:
+        target = max(1, int(getattr(self.cfg, "resource_yz_candidate_pool_size", target_size)))
+        max_attempts = max(target, int(getattr(self.cfg, "resource_yz_candidate_pool_max_attempts", getattr(self.cfg, "resource_candidate_pool_max_attempts", 12))))
+        attempts = 0
+        generated_count = 0
+        pool: List[Dict[str, object]] = []
+        attempted_pairs: List[Tuple[str, str]] = []
+        coverage_hard_reject_count = 0
+        duplicate_hard_reject_count = 0
+        seen_validation_signatures = set()
+        while attempts < max_attempts and len(pool) < target:
+            attempts += 1
+            attempted_pairs.append(("yz_destroy_joint", "yz_repair_joint"))
+            row = self._build_yz_exact_candidate(int(iter_id), int(budget))
+            if row is None:
+                continue
+            generated_count += 1
+            fixed_scope = str(row.get("fixgurobi_fixed_scope", "") or "").upper()
+            row_fixes_z = "Z" in fixed_scope and fixed_scope not in {"LOCALXYZ", "LOCALYZ"}
+            if bool(row_fixes_z) and (not bool(row.get("coverage_feasible", True)) or int(row.get("unmet_sku_total", 0) or 0) > 0):
+                coverage_hard_reject_count += 1
+                continue
+            if bool(row_fixes_z) and int(row["duplicate_tote_count"]) > 0:
+                duplicate_hard_reject_count += 1
+                continue
+            candidate_signature = row["candidate_signature_tuple"]
+            if candidate_signature in seen_validation_signatures:
+                continue
+            seen_validation_signatures.add(candidate_signature)
+            pool.append(row)
+        selected = self._select_best_candidate(pool)
+        if selected is not None:
+            selected["selected_for_sa"] = True
+        return {
+            "target_size": int(target),
+            "attempt_count": int(attempts),
+            "generated_count": int(generated_count),
+            "unique_count": int(len(pool)),
+            "exact_count": int(len(pool)),
+            "rows": pool,
+            "selected": selected,
+            "hard_reject_reason": "coverage_hard_reject" if int(coverage_hard_reject_count) > 0 and not pool else "",
+            "attempted_pairs": attempted_pairs,
+            "penalized_pairs": [],
+            "coverage_hard_reject_count": int(coverage_hard_reject_count),
+            "exact_fail_count": 0,
+            "exact_fail_reasons": {},
+            "duplicate_hard_reject_count": int(duplicate_hard_reject_count),
+        }
+
+    def _build_xy_exact_candidate(self, iter_id: int, budget: int) -> Optional[Dict[str, object]]:
+        x_destroy, x_repair = self._sample_operator_pair("X")
+        y_destroy, y_repair = self._sample_operator_pair("Y")
+        action_signature = (
+            "XY",
+            str(x_destroy),
+            str(x_repair),
+            str(y_destroy),
+            str(y_repair),
+            self.current_config.validation_signature(),
+        )
+        if self._action_signature_known("XY", action_signature):
+            self.last_xyz_skip_reason = "xy_duplicate_action_signature"
+            return None
+        self._remember_action_signature("XY", action_signature)
+
+        x_payload = self._apply_x_candidate_to_config(
+            base_config=self.current_config,
+            base_eval=self.current_eval,
+            iter_id=int(iter_id),
+            destroy_name=str(x_destroy),
+            repair_name=str(x_repair),
+            degree=max(1, int(budget)),
+        )
+        if x_payload is None:
+            self.last_xyz_skip_reason = f"xy_x_payload_fail:{x_destroy}+{x_repair}"
+            return None
+        candidate = x_payload["config"]
+        touched_ids = set(int(x) for x in (x_payload.get("affected_ids", set()) or set()))
+        fallback_used = bool(x_payload.get("fallback_used", False))
+        projection_count = int(x_payload.get("projection_repaired_subtask_count", 0))
+        projection_mode = str(x_payload.get("projection_mode", ""))
+
+        y_budget = max(1, int(budget), len(touched_ids))
+        y_plan = plan_y_candidate(self.opt, candidate, str(y_destroy), str(y_repair), self.rng, int(y_budget))
+        if not bool(y_plan.get("success", False)):
+            self.last_xyz_skip_reason = f"xy_y_plan_fail:{y_destroy}+{y_repair}"
+            return None
+        y_payload = apply_exact_y_plan(self.opt, candidate, y_plan, self.rng)
+        if not bool(y_payload.get("success", False)):
+            self.last_xyz_skip_reason = f"xy_y_apply_fail:{y_destroy}+{y_repair}"
+            return None
+        candidate = y_payload["config"]
+        touched_ids.update(int(x) for x in (y_payload.get("affected_ids", set()) or set()))
+        fallback_used = bool(fallback_used or y_payload.get("fallback_used", False))
+
+        affected_cap = max(1, int(getattr(self.cfg, "resource_xy_exact_validation_subtask_cap", 18)))
+        if len(touched_ids) > int(affected_cap):
+            self.last_xyz_skip_reason = f"xy_affected_cap:{len(touched_ids)}>{affected_cap}"
+            return None
+
+        payload = {
+            "config": candidate,
+            "score_cache": None,
+            "affected_ids": touched_ids,
+            "fallback_used": bool(fallback_used),
+            "projection_mode": projection_mode,
+            "projection_repaired_subtask_count": int(projection_count),
+        }
+        candidate_signature = candidate.validation_signature()
+        candidate_eval = self._evaluate_config(
+            config=candidate,
+            layer="XY",
+            score_cache=None,
+            affected_subtask_ids=touched_ids,
+            fallback_penalty=0.20 if bool(fallback_used) else 0.0,
+            iterations_since_last_validation=int(iter_id) - int(self.last_validation_iter),
+            distance_to_last_validated=config_distance(candidate, self.last_validated_config),
+        )
+        candidate_eval.metadata.update(
+            {
+                "last_validation_iter": int(self.last_validation_iter),
+                "last_validation_f_raw": float(self.last_validation_f_raw),
+                "recent_validated_makespans": list(self.recent_validated_makespans),
+            }
+        )
+        return {
+            "iter": int(iter_id),
+            "layer": "XY",
+            "candidate_stage": "exact",
+            "candidate_rank": 0,
+            "destroy_operator": "xy_destroy_joint",
+            "repair_operator": "xy_repair_joint",
+            "fallback_used": bool(fallback_used),
+            "projection_mode": str(projection_mode),
+            "projection_repaired_subtask_count": int(projection_count),
+            "F_raw": float(candidate_eval.F_raw),
+            "F_cal": float(candidate_eval.F_cal),
+            "eval_backend": str(candidate_eval.metadata.get("eval_backend", "surrogate")),
+            "fixgurobi_status": str(candidate_eval.metadata.get("fixgurobi_status", "")),
+            "fixgurobi_obj": candidate_eval.metadata.get("fixgurobi_obj", ""),
+            "fixgurobi_bound": candidate_eval.metadata.get("fixgurobi_bound", ""),
+            "fixgurobi_gap": candidate_eval.metadata.get("fixgurobi_gap", ""),
+            "fixgurobi_solve_time": candidate_eval.metadata.get("fixgurobi_solve_time", ""),
+            "fixgurobi_fixed_scope": str(candidate_eval.metadata.get("fixgurobi_fixed_scope", "")),
+            "fixgurobi_infeasible_reason": str(candidate_eval.metadata.get("fixgurobi_infeasible_reason", "")),
+            "duplicate_tote_count": int(candidate_eval.duplicate_tote_count),
+            "duplicate_tote_penalty": float(candidate_eval.duplicate_tote_penalty),
+            "candidate_signature": self._candidate_signature_text(candidate_signature),
+            "candidate_signature_tuple": candidate_signature,
+            "candidate_payload": payload,
+            "candidate_eval": candidate_eval,
+            "selected_for_sa": False,
+            "action_signature": self._action_signature_text(action_signature),
+            "coverage_feasible": bool(candidate_eval.coverage_feasible),
+            "unmet_sku_total": int(candidate_eval.unmet_sku_total),
+            "xy_x_operator": f"{x_destroy}+{x_repair}",
+            "xy_y_operator": f"{y_destroy}+{y_repair}",
+            "revolving_enabled": bool(candidate_eval.metadata.get("revolving_enabled", False)),
+            "released_layer": str(candidate_eval.metadata.get("released_layer", "")),
+            "fixed_layers": str(candidate_eval.metadata.get("fixed_layers", "")),
+            "inner_relaxed_obj": candidate_eval.metadata.get("inner_relaxed_obj", ""),
+            "u_fast_cmax": candidate_eval.metadata.get("u_fast_cmax", ""),
+            "u_route_lb": candidate_eval.metadata.get("u_route_lb", ""),
+            "u_repair_time": candidate_eval.metadata.get("u_repair_time", ""),
+            "u_changed_robot_count": candidate_eval.metadata.get("u_changed_robot_count", ""),
+            "revolving_lb": candidate_eval.metadata.get("revolving_lb", ""),
+            "lb_gate_skipped": candidate_eval.metadata.get("lb_gate_skipped", ""),
+        }
+
+    def _generate_xy_joint_candidate_pool(self, iter_id: int, budget: int, target_size: int) -> Dict[str, object]:
+        target = max(1, int(getattr(self.cfg, "resource_xy_candidate_pool_size", target_size)))
+        max_attempts = max(target, int(getattr(self.cfg, "resource_xy_candidate_pool_max_attempts", getattr(self.cfg, "resource_candidate_pool_max_attempts", 12))))
+        attempts = 0
+        generated_count = 0
+        pool: List[Dict[str, object]] = []
+        attempted_pairs: List[Tuple[str, str]] = []
+        coverage_hard_reject_count = 0
+        duplicate_hard_reject_count = 0
+        seen_validation_signatures = set()
+        while attempts < max_attempts and len(pool) < target:
+            attempts += 1
+            attempted_pairs.append(("xy_destroy_joint", "xy_repair_joint"))
+            row = self._build_xy_exact_candidate(int(iter_id), int(budget))
+            if row is None:
+                continue
+            generated_count += 1
+            fixed_scope = str(row.get("fixgurobi_fixed_scope", "") or "").upper()
+            row_fixes_z = "Z" in fixed_scope and fixed_scope not in {"LOCALXYZ", "LOCALYZ"}
+            if bool(row_fixes_z) and (not bool(row.get("coverage_feasible", True)) or int(row.get("unmet_sku_total", 0) or 0) > 0):
+                coverage_hard_reject_count += 1
+                continue
+            if bool(row_fixes_z) and int(row["duplicate_tote_count"]) > 0:
+                duplicate_hard_reject_count += 1
+                continue
+            candidate_signature = row["candidate_signature_tuple"]
+            if candidate_signature in seen_validation_signatures:
+                continue
+            seen_validation_signatures.add(candidate_signature)
+            pool.append(row)
+        selected = self._select_best_candidate(pool)
+        if selected is not None:
+            selected["selected_for_sa"] = True
+        return {
+            "target_size": int(target),
+            "attempt_count": int(attempts),
+            "generated_count": int(generated_count),
+            "unique_count": int(len(pool)),
+            "exact_count": int(len(pool)),
+            "rows": pool,
+            "selected": selected,
+            "hard_reject_reason": "coverage_hard_reject" if int(coverage_hard_reject_count) > 0 and not pool else "",
+            "attempted_pairs": attempted_pairs,
+            "penalized_pairs": [],
+            "coverage_hard_reject_count": int(coverage_hard_reject_count),
+            "exact_fail_count": 0,
+            "exact_fail_reasons": {},
+            "duplicate_hard_reject_count": int(duplicate_hard_reject_count),
+        }
+
+    def _generate_xyz_candidate_pool(self, iter_id: int, budget: int, target_size: int) -> Dict[str, object]:
+        target = max(1, int(getattr(self.cfg, "resource_xyz_candidate_pool_size", target_size)))
+        max_attempts = max(target, int(getattr(self.cfg, "resource_xyz_candidate_pool_max_attempts", 12)))
+        attempts = 0
+        generated_count = 0
+        pool: List[Dict[str, object]] = []
+        candidate_rows: List[Dict[str, object]] = []
+        attempted_pairs: List[Tuple[str, str]] = []
+        coverage_hard_reject_count = 0
+        duplicate_hard_reject_count = 0
+        seen_validation_signatures = set()
+        if bool(getattr(self.cfg, "resource_global_decomp_repair_enabled", False)):
+            row = self._build_global_decomp_repair_candidate(int(iter_id))
+            if row is not None:
+                generated_count += 1
+                if bool(row.get("coverage_feasible", True)) and int(row.get("unmet_sku_total", 0) or 0) <= 0 and int(row["duplicate_tote_count"]) <= 0:
+                    candidate_signature = row["candidate_signature_tuple"]
+                    seen_validation_signatures.add(candidate_signature)
+                    pool.append(row)
+        while attempts < max_attempts and len(pool) < target:
+            attempts += 1
+            attempted_pairs.append(("xyz_destroy_sequential", "xyz_repair_sequential"))
+            row = self._build_xyz_exact_candidate(int(iter_id), int(budget))
+            if row is None:
+                continue
+            generated_count += 1
+            fixed_scope = str(row.get("fixgurobi_fixed_scope", "") or "").upper()
+            row_fixes_z = "Z" in fixed_scope and fixed_scope not in {"LOCALXYZ", "LOCALYZ"}
+            if bool(row_fixes_z) and (not bool(row.get("coverage_feasible", True)) or int(row.get("unmet_sku_total", 0) or 0) > 0):
+                coverage_hard_reject_count += 1
+                row["candidate_stage"] = "exact_reject"
+                row["exact_fail_reason"] = "coverage_hard_reject"
+                candidate_rows.append(row)
+                continue
+            if bool(row_fixes_z) and int(row["duplicate_tote_count"]) > 0:
+                duplicate_hard_reject_count += 1
+                row["candidate_stage"] = "exact_reject"
+                row["exact_fail_reason"] = "duplicate_tote_hard_reject"
+                candidate_rows.append(row)
+                continue
+            candidate_signature = row["candidate_signature_tuple"]
+            if candidate_signature in seen_validation_signatures:
+                row["candidate_stage"] = "exact_reject"
+                row["exact_fail_reason"] = "duplicate_signature"
+                candidate_rows.append(row)
+                continue
+            seen_validation_signatures.add(candidate_signature)
+            candidate_rows.append(row)
+            pool.append(row)
+        selected = self._select_best_candidate(pool)
+        if selected is not None:
+            selected["selected_for_sa"] = True
+            selected_signature = selected.get("candidate_signature_tuple", None)
+            for row in candidate_rows:
+                if row.get("candidate_signature_tuple") == selected_signature and str(row.get("candidate_stage", "")) == "exact":
+                    row["selected_for_sa"] = True
+                    break
+        return {
+            "target_size": int(target),
+            "attempt_count": int(attempts),
+            "generated_count": int(generated_count),
+            "unique_count": int(len(pool)),
+            "exact_count": int(len(pool)),
+            "rows": candidate_rows,
+            "selected": selected,
+            "hard_reject_reason": "coverage_hard_reject" if int(coverage_hard_reject_count) > 0 and not pool else "",
+            "attempted_pairs": attempted_pairs,
+            "penalized_pairs": [],
+            "coverage_hard_reject_count": int(coverage_hard_reject_count),
+            "exact_fail_count": 0,
+            "exact_fail_reasons": {},
+            "duplicate_hard_reject_count": int(duplicate_hard_reject_count),
+        }
+
+    def _build_u_exact_candidate(self, iter_id: int) -> Optional[Dict[str, object]]:
+        current_best = float(getattr(self.best_validated, "makespan", float("inf")) or float("inf"))
+        revolving = self.revolving_solver.attach_u_plan(
+            self.current_config,
+            released_layer="U",
+            affected_subtask_ids=[],
+            incumbent_value=float(current_best),
+        )
+        if bool(revolving.lb_gate_skipped):
+            return None
+        candidate_config = revolving.config
+        candidate_eval = self._evaluate_config(
+            config=candidate_config,
+            layer="U",
+            score_cache=None,
+            affected_subtask_ids=[],
+            fallback_penalty=0.0,
+            iterations_since_last_validation=int(iter_id) - int(self.last_validation_iter),
+            distance_to_last_validated=config_distance(candidate_config, self.last_validated_config),
+            bypass_cache=True,
+        )
+        candidate_eval.metadata.update(revolving.metadata())
+        payload = {"config": candidate_config, "affected_ids": set(), "score_cache": None}
+        route_sig = tuple(sorted(int(x) for x in (candidate_config.metadata.get("changed_robot_ids", []) or [])))
+        row = {
+            "iter": int(iter_id),
+            "layer": "U",
+            "candidate_rank": 1,
+            "candidate_stage": "exact",
+            "destroy_operator": "u_destroy_heavy_robot_route",
+            "repair_operator": "u_fast_repair_dispatch",
+            "fallback_used": False,
+            "projection_mode": "",
+            "projection_repaired_subtask_count": 0,
+            "candidate_eval": candidate_eval,
+            "candidate_payload": payload,
+            "F_raw": float(candidate_eval.F_raw),
+            "F_cal": float(candidate_eval.F_cal),
+            "eval_backend": str(candidate_eval.metadata.get("eval_backend", "surrogate")),
+            "fixgurobi_status": str(candidate_eval.metadata.get("fixgurobi_status", "")),
+            "fixgurobi_obj": candidate_eval.metadata.get("fixgurobi_obj", ""),
+            "fixgurobi_bound": candidate_eval.metadata.get("fixgurobi_bound", ""),
+            "fixgurobi_gap": candidate_eval.metadata.get("fixgurobi_gap", ""),
+            "fixgurobi_solve_time": candidate_eval.metadata.get("fixgurobi_solve_time", ""),
+            "fixgurobi_fixed_scope": str(candidate_eval.metadata.get("fixgurobi_fixed_scope", "")),
+            "fixgurobi_infeasible_reason": str(candidate_eval.metadata.get("fixgurobi_infeasible_reason", "")),
+            "fixgurobi_cache_hit": bool(candidate_eval.metadata.get("fixgurobi_cache_hit", False)),
+            "fixgurobi_compile_cache_hit": bool(candidate_eval.metadata.get("fixgurobi_compile_cache_hit", False)),
+            "fixgurobi_compile_time": candidate_eval.metadata.get("fixgurobi_compile_time", ""),
+            "fixgurobi_stage": str(candidate_eval.metadata.get("fixgurobi_stage", "")),
+            "fixgurobi_cutoff": candidate_eval.metadata.get("fixgurobi_cutoff", ""),
+            "fixgurobi_refined": bool(candidate_eval.metadata.get("fixgurobi_refined", False)),
+            "fixgurobi_coarse_time": candidate_eval.metadata.get("fixgurobi_coarse_time", ""),
+            "fixgurobi_refine_time": candidate_eval.metadata.get("fixgurobi_refine_time", ""),
+            "fixgurobi_full_time": candidate_eval.metadata.get("fixgurobi_full_time", ""),
+            "fixgurobi_first_improvement_accepted": bool(candidate_eval.metadata.get("fixgurobi_first_improvement_accepted", False)),
+            "fixgurobi_cheap_gate_reject": bool(candidate_eval.metadata.get("fixgurobi_cheap_gate_reject", False)),
+            "duplicate_tote_count": int(candidate_eval.duplicate_tote_count),
+            "duplicate_tote_penalty": float(candidate_eval.duplicate_tote_penalty),
+            "coverage_feasible": bool(candidate_eval.coverage_feasible),
+            "unmet_sku_total": int(candidate_eval.unmet_sku_total),
+            "candidate_signature_tuple": candidate_config.validation_signature(),
+            "candidate_signature": self._candidate_signature_text(("U", candidate_config.validation_signature(), route_sig)),
+            "action_signature": self._action_signature_text(("U", "u_fast_repair_dispatch", int(iter_id), route_sig)),
+            "selected_for_sa": True,
+            "revolving_enabled": True,
+            "released_layer": "U",
+            "fixed_layers": str(candidate_config.metadata.get("fixed_layers", "X,Y,Z")),
+            "inner_relaxed_obj": float(candidate_config.metadata.get("inner_relaxed_obj", float("nan"))),
+            "u_fast_cmax": float(candidate_config.metadata.get("u_fast_cmax", float("nan"))),
+            "u_route_lb": float(candidate_config.metadata.get("u_route_lb", float("nan"))),
+            "u_repair_time": float(candidate_config.metadata.get("u_repair_time", 0.0) or 0.0),
+            "u_changed_robot_count": int(candidate_config.metadata.get("u_changed_robot_count", 0) or 0),
+            "revolving_lb": float(candidate_config.metadata.get("revolving_lb", float("nan"))),
+            "lb_gate_skipped": False,
+        }
+        return row
+
+    def _generate_u_candidate_pool(self, iter_id: int, budget: int, target_size: int) -> Dict[str, object]:
+        del budget, target_size
+        row = self._build_u_exact_candidate(int(iter_id))
+        if row is None:
+            return {
+                "target_size": 1,
+                "attempt_count": 1,
+                "generated_count": 0,
+                "unique_count": 0,
+                "exact_count": 0,
+                "rows": [],
+                "selected": None,
+                "hard_reject_reason": "u_revolving_lb_gate_skip",
+                "attempted_pairs": [("u_destroy_heavy_robot_route", "u_fast_repair_dispatch")],
+                "penalized_pairs": [],
+                "coverage_hard_reject_count": 0,
+                "exact_fail_count": 0,
+                "exact_fail_reasons": {},
+                "duplicate_hard_reject_count": 0,
+            }
+        return {
+            "target_size": 1,
+            "attempt_count": 1,
+            "generated_count": 1,
+            "unique_count": 1,
+            "exact_count": 1,
+            "rows": [row],
+            "selected": row,
+            "hard_reject_reason": "",
+            "attempted_pairs": [("u_destroy_heavy_robot_route", "u_fast_repair_dispatch")],
+            "penalized_pairs": [],
+            "coverage_hard_reject_count": 0,
             "exact_fail_count": 0,
             "exact_fail_reasons": {},
             "duplicate_hard_reject_count": 0,
@@ -1405,6 +2503,11 @@ class ResourceTimeALNSEngine:
                 "fixgurobi_gap": candidate_eval.metadata.get("fixgurobi_gap", ""),
                 "fixgurobi_solve_time": candidate_eval.metadata.get("fixgurobi_solve_time", ""),
                 "fixgurobi_fixed_scope": str(candidate_eval.metadata.get("fixgurobi_fixed_scope", "")),
+                "fixgurobi_fixed_constraint_count": candidate_eval.metadata.get("fixgurobi_fixed_constraint_count", ""),
+                "fixgurobi_invalid_fix_count": candidate_eval.metadata.get("fixgurobi_invalid_fix_count", ""),
+                "fixgurobi_fixed_route_arc_count_from_cfg": candidate_eval.metadata.get("fixgurobi_fixed_route_arc_count_from_cfg", ""),
+                "fixgurobi_fixed_route_sequence_robot_count": candidate_eval.metadata.get("fixgurobi_fixed_route_sequence_robot_count", ""),
+                "fixgurobi_fixed_route_sequence_missing_count": candidate_eval.metadata.get("fixgurobi_fixed_route_sequence_missing_count", ""),
                 "fixgurobi_infeasible_reason": str(candidate_eval.metadata.get("fixgurobi_infeasible_reason", "")),
                 "duplicate_tote_count": int(candidate_eval.duplicate_tote_count),
                 "duplicate_tote_penalty": float(candidate_eval.duplicate_tote_penalty),
@@ -1420,14 +2523,25 @@ class ResourceTimeALNSEngine:
                 "z_choke_over_soft": float(rough_row.get("z_choke_over_soft", 0.0) or 0.0),
                 "z_station_load_soft": float(rough_row.get("z_station_load_soft", 0.0) or 0.0),
                 "z_robot_region_load_soft": float(rough_row.get("z_robot_region_load_soft", 0.0) or 0.0),
+                "revolving_enabled": bool(candidate_eval.metadata.get("revolving_enabled", False)),
+                "released_layer": str(candidate_eval.metadata.get("released_layer", "")),
+                "fixed_layers": str(candidate_eval.metadata.get("fixed_layers", "")),
+                "inner_relaxed_obj": candidate_eval.metadata.get("inner_relaxed_obj", ""),
+                "u_fast_cmax": candidate_eval.metadata.get("u_fast_cmax", ""),
+                "u_route_lb": candidate_eval.metadata.get("u_route_lb", ""),
+                "u_repair_time": candidate_eval.metadata.get("u_repair_time", ""),
+                "u_changed_robot_count": candidate_eval.metadata.get("u_changed_robot_count", ""),
+                "revolving_lb": candidate_eval.metadata.get("revolving_lb", ""),
+                "lb_gate_skipped": candidate_eval.metadata.get("lb_gate_skipped", ""),
             }
             candidate_rows.append(exact_row)
-            if not bool(candidate_eval.coverage_feasible) or int(candidate_eval.unmet_sku_total) > 0:
+            row_fixes_z = str(candidate_eval.metadata.get("fixgurobi_fixed_scope", "")).upper() in {"Z", "XYZ", "XYZU"}
+            if bool(row_fixes_z) and (not bool(candidate_eval.coverage_feasible) or int(candidate_eval.unmet_sku_total) > 0):
                 hard_reject_reason = "coverage_hard_reject"
                 coverage_hard_reject_count += 1
                 penalized_pairs.append((str(rough_row.get("destroy_operator", "")), str(rough_row.get("repair_operator", "")), -6.0))
                 continue
-            if int(candidate_eval.duplicate_tote_count) > 0:
+            if bool(row_fixes_z) and int(candidate_eval.duplicate_tote_count) > 0:
                 hard_reject_reason = "duplicate_tote_hard_reject"
                 duplicate_hard_reject_count += 1
                 continue
@@ -2090,8 +3204,16 @@ class ResourceTimeALNSEngine:
             candidate_pool_target_size = int(getattr(self.cfg, "resource_candidate_pool_size", 3))
             if str(layer) == "X":
                 candidate_pool_info = self._generate_x_candidate_pool(iter_id, effective_destroy_budget, candidate_pool_target_size)
+            elif str(layer).upper() == "XZ":
+                candidate_pool_info = self._generate_xz_candidate_pool(iter_id, effective_destroy_budget, candidate_pool_target_size)
+            elif str(layer).upper() == "YZ":
+                candidate_pool_info = self._generate_yz_joint_candidate_pool(iter_id, effective_destroy_budget, candidate_pool_target_size)
+            elif str(layer).upper() == "XY":
+                candidate_pool_info = self._generate_xy_joint_candidate_pool(iter_id, effective_destroy_budget, candidate_pool_target_size)
             elif str(layer).upper() == "XYZ":
                 candidate_pool_info = self._generate_xyz_candidate_pool(iter_id, effective_destroy_budget, candidate_pool_target_size)
+            elif str(layer).upper() == "U":
+                candidate_pool_info = self._generate_u_candidate_pool(iter_id, effective_destroy_budget, candidate_pool_target_size)
             else:
                 candidate_pool_info = self._generate_yz_candidate_pool(layer, iter_id, effective_destroy_budget, candidate_pool_target_size)
             candidate_rows = list(candidate_pool_info.get("rows", []) or [])
@@ -2194,13 +3316,37 @@ class ResourceTimeALNSEngine:
                         self.opt._clear_z_detour_cache()
                         prev_best = float(self.best_validated.makespan)
                         if float(validated_makespan) + 1e-9 < float(prev_best):
+                            materialized_snapshot = candidate_eval.metadata.get("fixgurobi_materialized_problem", None)
+                            materialized_config = None
+                            if materialized_snapshot is not None:
+                                materialized_snapshot = copy.deepcopy(materialized_snapshot)
+                                try:
+                                    materialized_snapshot.z = float(validated_makespan)
+                                    materialized_snapshot.iter_id = int(iter_id)
+                                except Exception:
+                                    pass
+                                materialized_config = build_resource_config_from_problem(self.opt, materialized_snapshot)
+                                self.current_config = materialized_config.clone()
+                                self.last_validated_config = materialized_config.clone()
+                                self.last_validated_signature = materialized_config.validation_signature()
                             self.best_validated = ValidatedIncumbent(
-                                config=self.current_config.clone(),
+                                config=(materialized_config.clone() if materialized_config is not None else self.current_config.clone()),
                                 makespan=float(validated_makespan),
                                 iter_id=int(iter_id),
-                                snapshot=None,
+                                snapshot=materialized_snapshot,
                             )
-                            self._sync_fixgurobi_best_snapshot(float(validated_makespan), int(iter_id))
+                            if materialized_snapshot is not None:
+                                self.opt.problem = copy.deepcopy(materialized_snapshot)
+                                self.opt._rebuild_solvers()
+                                if getattr(self.opt, "best", None) is not None:
+                                    self.opt.best.problem_state = copy.deepcopy(materialized_snapshot)
+                                    self.opt.best.subtask_state = None
+                                if getattr(self.opt, "work", None) is not None:
+                                    self.opt.work.problem_state = copy.deepcopy(materialized_snapshot)
+                                    self.opt.work.subtask_state = None
+                                self.opt.work_z = float(validated_makespan)
+                            else:
+                                self._sync_fixgurobi_best_snapshot(float(validated_makespan), int(iter_id))
                             improved_best = True
                             reward = 8.0
                         else:
@@ -2452,6 +3598,21 @@ class ResourceTimeALNSEngine:
                     "x_layer_dynamic_multiplier": float(self.layer_dynamic_multiplier.get("X", 1.0)),
                     "x_failure_cooldown_remaining": int(x_failure_cooldown_remaining),
                     "validated_best_no_change_rounds": int(self.validated_best_no_change_rounds),
+                    "revolving_enabled": bool(getattr(self.cfg, "resource_revolving_mode", False)),
+                    "released_layer": str(candidate_eval.metadata.get("released_layer", str(layer).upper())),
+                    "fixed_layers": str(candidate_eval.metadata.get("fixed_layers", "")),
+                    "inner_relaxed_obj": float(candidate_eval.metadata.get("inner_relaxed_obj", float("nan"))),
+                    "u_fast_cmax": float(candidate_eval.metadata.get("u_fast_cmax", float("nan"))),
+                    "u_route_lb": float(candidate_eval.metadata.get("u_route_lb", float("nan"))),
+                    "u_repair_time": float(candidate_eval.metadata.get("u_repair_time", 0.0) or 0.0),
+                    "u_changed_robot_count": int(candidate_eval.metadata.get("u_changed_robot_count", 0) or 0),
+                    "revolving_lb": float(candidate_eval.metadata.get("revolving_lb", float("nan"))),
+                    "lb_gate_skipped": bool(candidate_eval.metadata.get("lb_gate_skipped", False)),
+                    "outer_exact_obj": float(candidate_eval.metadata.get("fixgurobi_obj", float("nan"))) if str(candidate_eval.metadata.get("fixgurobi_obj", "")) != "" else float("nan"),
+                    "outer_fixgurobi_time": float(candidate_eval.metadata.get("fixgurobi_solve_time", 0.0) or 0.0),
+                    "cycle_id": int((int(iter_id) - 1) // max(1, len(getattr(self, "resource_layers", []) or [1]))),
+                    "mark": int(self.validated_best_no_change_rounds),
+                    "target_guidance_disabled": bool(getattr(self.cfg, "resource_revolving_mode", False) and not math.isfinite(float(getattr(self.cfg, "resource_target_cmax", float("nan"))))),
                 },
             )
             self.opt.iter_log.append(row)
@@ -2505,9 +3666,21 @@ class ResourceTimeALNSEngine:
         if bool(z_polish_stats.get("applied", False)) or bool(z_polish_stats_after_y.get("applied", False)):
             self.opt.stop_reason = f"{self.opt.stop_reason}+best_z_sortify"
         if self.best_validated.snapshot is not None:
-            self.opt.restore_snapshot(self.best_validated.snapshot)
-            self.opt.best = self.best_validated.snapshot
-            self.opt.work = self.best_validated.snapshot
+            snapshot = self.best_validated.snapshot
+            if hasattr(snapshot, "problem_state"):
+                self.opt.restore_snapshot(snapshot)
+                self.opt.best = snapshot
+                self.opt.work = snapshot
+            else:
+                self.opt.problem = copy.deepcopy(snapshot)
+                self.opt._rebuild_solvers()
+                self._sync_fixgurobi_best_snapshot(float(self.best_validated.makespan), int(self.best_validated.iter_id))
+                if getattr(self.opt, "best", None) is not None:
+                    self.opt.best.problem_state = copy.deepcopy(snapshot)
+                    self.opt.best.subtask_state = None
+                if getattr(self.opt, "work", None) is not None:
+                    self.opt.work.problem_state = copy.deepcopy(snapshot)
+                    self.opt.work.subtask_state = None
             self.opt.work_z = float(self.best_validated.makespan)
         self.opt._write_logs()
         return float(self.best_validated.makespan)

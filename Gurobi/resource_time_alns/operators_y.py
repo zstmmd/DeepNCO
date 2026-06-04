@@ -1705,9 +1705,12 @@ def plan_y_candidate(opt, config: ResourceConfig, destroy_name: str, repair_name
         return {"success": False}
     repair_plan = _plan_y_assignments(opt, config, destroy_ctx.get("released_subtasks", {}), str(repair_name), rng)
     fallback_used = False
+    effective_repair_name = str(repair_name)
     if not bool(repair_plan.get("success", False)):
         repair_plan = _plan_y_assignments(opt, config, destroy_ctx.get("released_subtasks", {}), "y_repair_earliest_finish", rng)
         fallback_used = bool(repair_plan.get("success", False))
+        if bool(fallback_used):
+            effective_repair_name = "y_repair_earliest_finish"
     if not bool(repair_plan.get("success", False)):
         return {"success": False}
     assignments = dict(repair_plan.get("assignments", {}) or {})
@@ -1715,9 +1718,9 @@ def plan_y_candidate(opt, config: ResourceConfig, destroy_name: str, repair_name
         "success": True,
         "destroy_ctx": destroy_ctx,
         "assignments": assignments,
-        "repair_name": str(repair_name),
+        "repair_name": str(effective_repair_name),
         "fallback_used": bool(fallback_used),
-        "action_signature": _build_y_action_signature(str(destroy_name), str(repair_name), destroy_ctx.get("released_subtasks", {}), assignments),
+        "action_signature": _build_y_action_signature(str(destroy_name), str(effective_repair_name), destroy_ctx.get("released_subtasks", {}), assignments),
         "rough_features": _build_y_rough_features(opt, config, destroy_ctx.get("released_subtasks", {}), assignments),
     }
 

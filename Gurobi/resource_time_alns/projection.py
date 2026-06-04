@@ -106,10 +106,15 @@ def apply_projection_repair(
     affected_ids = {int(x) for x in (affected_subtask_ids or [])}
     frozen_ids = set(int(subtask_id) for subtask_id in previous_config.subtasks.keys() if int(subtask_id) not in affected_ids)
     projection_repaired = 0
+    z_repair_fail_count = 0
+    z_repair_fail_reasons: Counter[str] = Counter()
+    z_repair_failed_subtask_ids: List[int] = []
     fallback_used = False
     full_refresh = bool(affected_ids) and float(rng.random()) < float(getattr(opt.cfg, "resource_projection_full_y_refresh_prob", 0.10))
     if full_refresh:
         _full_y_refresh(opt, candidate_config)
+    released_used_totes: Set[int] = set()
+    fixed_used_totes = global_used_totes(candidate_config, exclude_subtask_ids=set(affected_ids))
     for subtask_id in sorted(affected_ids):
         subtask = candidate_config.subtasks.get(int(subtask_id))
         if subtask is None:
@@ -127,12 +132,19 @@ def apply_projection_repair(
             preferred_stack_ids=preferred_stacks,
             strategy="projection",
             allow_fallback=True,
-            external_used_totes=global_used_totes(candidate_config, exclude_subtask_ids={int(subtask.subtask_id)}),
+            external_used_totes=set(fixed_used_totes) | set(released_used_totes),
             rng=rng,
         )
         if success:
             subtask.z_tasks = list(assignment)
+            for descriptor in subtask.z_tasks or []:
+                released_used_totes.update(int(tid) for tid in (getattr(descriptor, "target_tote_ids", ()) or ()) if int(tid) >= 0)
             fallback_used = bool(fallback_used or meta.get("fallback_used", False))
+        else:
+            z_repair_fail_count += 1
+            reason = str(meta.get("reason", meta.get("validation_reason", "z_repair_fail")) or "z_repair_fail")
+            z_repair_fail_reasons[str(reason)] += 1
+            z_repair_failed_subtask_ids.append(int(subtask.subtask_id))
         projection_repaired += 1
     candidate_config.rebuild_indices()
     score_cache = ScoreCache(
@@ -148,4 +160,7 @@ def apply_projection_repair(
         "projection_mode": "full_y_refresh" if full_refresh else ("greedy_repair" if affected_ids else "frozen_only"),
         "projection_repaired_subtask_count": int(projection_repaired),
         "fallback_used": bool(fallback_used),
+        "projection_z_repair_fail_count": int(z_repair_fail_count),
+        "projection_z_repair_fail_reasons": dict(z_repair_fail_reasons),
+        "projection_z_repair_failed_subtask_ids": list(z_repair_failed_subtask_ids[:50]),
     }

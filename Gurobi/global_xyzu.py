@@ -148,6 +148,7 @@ class GlobalXYZUConfig:
     fixed_used_stack_ids_by_order: Optional[Dict[int, List[int]]] = None
     fixed_route_arcs_by_robot: Optional[Dict[int, List[Tuple[int, int]]]] = None
     fixed_route_task_sequence_by_robot: Optional[Dict[int, List[Dict[str, Any]]]] = None
+    fixed_route_arc_fix_nonselected: bool = True
     fixgurobi_no_warm_start: bool = False
     fixgurobi_allow_warm_start_fallback: bool = True
     fixgurobi_warm_bound_only: bool = False
@@ -1038,10 +1039,16 @@ class GlobalXYZUSolver:
                 for unit_id in unit_ids
             ]
             assigned_by_unit: Dict[str, int] = {}
+            fixed_sids: Set[int] = set()
+            released_sids: Set[int] = set()
             for local_idx, unit_ids_raw in enumerate(rows):
                 sid = _slot_id(order_id, int(local_idx))
                 if sid is None:
                     continue
+                if unit_ids_raw is None:
+                    released_sids.add(int(sid))
+                    continue
+                fixed_sids.add(int(sid))
                 unit_ids = {str(unit_id) for unit_id in (unit_ids_raw or [])}
                 model.addConstr(a[sid] == (1 if unit_ids else 0), name=f"FixXActive_{order_id}_{local_idx}_{sid}")
                 constraint_count += 1
@@ -1049,10 +1056,21 @@ class GlobalXYZUSolver:
                     assigned_by_unit[str(unit_id)] = sid
             for unit_id in order_unit_ids:
                 target_sid = assigned_by_unit.get(str(unit_id), None)
-                for sid in slot_ids:
-                    if (str(unit_id), int(sid)) in x:
-                        model.addConstr(x[str(unit_id), int(sid)] == (1 if target_sid == int(sid) else 0), name=f"FixX_{unit_id}_{sid}")
-                        constraint_count += 1
+                if target_sid is not None:
+                    for sid in slot_ids:
+                        if (str(unit_id), int(sid)) in x:
+                            model.addConstr(x[str(unit_id), int(sid)] == (1 if target_sid == int(sid) else 0), name=f"FixX_{unit_id}_{sid}")
+                            constraint_count += 1
+                elif released_sids:
+                    for sid in fixed_sids:
+                        if (str(unit_id), int(sid)) in x:
+                            model.addConstr(x[str(unit_id), int(sid)] == 0, name=f"FixXPartialZero_{unit_id}_{sid}")
+                            constraint_count += 1
+                else:
+                    for sid in slot_ids:
+                        if (str(unit_id), int(sid)) in x:
+                            model.addConstr(x[str(unit_id), int(sid)] == 0, name=f"FixX_{unit_id}_{sid}")
+                            constraint_count += 1
             for sid in slot_ids[len(rows):]:
                 model.addConstr(a[int(sid)] == 0, name=f"FixXInactiveTail_{order_id}_{sid}")
                 constraint_count += 1
@@ -1077,6 +1095,8 @@ class GlobalXYZUSolver:
         for order_key, rows_raw in fixed_z.items():
             order_id = int(order_key)
             for local_idx, descriptors_raw in enumerate(list(rows_raw or [])):
+                if descriptors_raw is None:
+                    continue
                 sid = _slot_id(order_id, int(local_idx))
                 if sid is None:
                     continue
@@ -1224,9 +1244,15 @@ class GlobalXYZUSolver:
                 for arcs in fixed_route_arcs.values()
                 for i, j in (arcs or [])
             } | set(fixed_sequence_arcs)
-            for key in list(route_arc.keys()):
-                model.addConstr(route_arc[key] == (1 if (int(key[0]), int(key[1])) in allowed_arcs else 0), name=f"FixRouteArc_{key[0]}_{key[1]}")
-                constraint_count += 1
+            if bool(getattr(cfg, "fixed_route_arc_fix_nonselected", True)):
+                for key in list(route_arc.keys()):
+                    model.addConstr(route_arc[key] == (1 if (int(key[0]), int(key[1])) in allowed_arcs else 0), name=f"FixRouteArc_{key[0]}_{key[1]}")
+                    constraint_count += 1
+            else:
+                for arc in sorted(allowed_arcs):
+                    if (int(arc[0]), int(arc[1])) in route_arc:
+                        model.addConstr(route_arc[int(arc[0]), int(arc[1])] == 1, name=f"FixRouteArcSelected_{int(arc[0])}_{int(arc[1])}")
+                        constraint_count += 1
             for arc in sorted(allowed_arcs):
                 if (int(arc[0]), int(arc[1])) not in route_arc:
                     _invalid(f"missing_route_arc_{int(arc[0])}_{int(arc[1])}")
