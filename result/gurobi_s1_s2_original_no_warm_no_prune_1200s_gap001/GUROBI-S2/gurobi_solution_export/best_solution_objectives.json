@@ -1,0 +1,82 @@
+{
+  "best_iter": -1,
+  "best_z": 164.167,
+  "model_objective": 164.167,
+  "model_cmax": 164.0,
+  "global_makespan": 164.0,
+  "total_span_overrun": 0.0,
+  "total_deadline_overrun": 0.0,
+  "scale": "GUROBI-S2",
+  "seed": 42,
+  "status": "OPTIMAL",
+  "sp1": {
+    "subtask_count": 3
+  },
+  "sp2": {
+    "station_count": 2
+  },
+  "sp3": {
+    "task_count": 3
+  },
+  "sp4": {
+    "robot_count": 2
+  },
+  "coverage": {
+    "coverage_ok": true,
+    "unmet_sku_total": 0,
+    "unmet_subtask_count": 0,
+    "subtasks": [
+      {
+        "subtask_id": 0,
+        "order_id": 0,
+        "required_sku_units": 6,
+        "provided_sku_units": 6,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 1,
+        "order_id": 1,
+        "required_sku_units": 1,
+        "provided_sku_units": 1,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 2,
+        "order_id": 1,
+        "required_sku_units": 6,
+        "provided_sku_units": 6,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      }
+    ]
+  },
+  "order_time_windows": [
+    {
+      "order_id": 0,
+      "lst_sec": 171.0,
+      "unique_sku_count": 6,
+      "kitting_span_limit_sec": 48.0,
+      "effective_window_sec": 90.0,
+      "arrival_lb": 82.0,
+      "arrival_ub": 171.0,
+      "span_overrun": 0.0,
+      "deadline_overrun": 0.0
+    },
+    {
+      "order_id": 1,
+      "lst_sec": 187.0,
+      "unique_sku_count": 7,
+      "kitting_span_limit_sec": 56.0,
+      "effective_window_sec": 105.0,
+      "arrival_lb": 42.0,
+      "arrival_ub": 147.0,
+      "span_overrun": 0.0,
+      "deadline_overrun": 0.0
+    }
+  ]
+}

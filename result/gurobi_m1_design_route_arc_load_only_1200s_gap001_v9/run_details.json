@@ -1,0 +1,28 @@
+[
+  {
+    "scale": "GUROBI-M1",
+    "status": "OPTIMAL",
+    "error": "",
+    "model_status_code": 2,
+    "model_sol_count": 10,
+    "u_arc_count": 8281,
+    "u_time_window_pruned_arc_count": 0,
+    "u_load_interval_pruned_arc_count": 0,
+    "u_directional_pruned_arc_count": 0,
+    "u_knn_pruned_arc_count": 0,
+    "u_time_window_latest_tightened_node_count": 0,
+    "model_objective": 489.6200000000001,
+    "model_cmax": 489.0,
+    "model_best_bound": 489.51158761528336,
+    "model_gap": 0.0002214214793447112,
+    "runtime_sec": 1118.5147872001398,
+    "solver_runtime_sec": 1116.3672776999883,
+    "gurobi_runtime_sec": 1115.601000070572,
+    "gurobi_solve_time_sec": 1115.6312587999273,
+    "warm_start_enabled": false,
+    "total_span_overrun": 0.0,
+    "total_deadline_overrun": 395.0,
+    "bom_arrival_window_violating_order_count": 0,
+    "solution_export_dir": "result/gurobi_m1_design_route_arc_load_only_1200s_gap001_v9\\GUROBI-M1\\gurobi_solution_export"
+  }
+]

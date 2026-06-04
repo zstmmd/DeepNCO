@@ -1,0 +1,133 @@
+{
+  "status": "PASS",
+  "task_count": 8,
+  "max_task_end": 348.0,
+  "global_makespan": 348.0,
+  "coverage": {
+    "coverage_ok": true,
+    "unmet_sku_total": 0,
+    "unmet_subtask_count": 0,
+    "subtasks": [
+      {
+        "subtask_id": 0,
+        "order_id": 0,
+        "required_sku_units": 5,
+        "provided_sku_units": 5,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 1,
+        "order_id": 4,
+        "required_sku_units": 5,
+        "provided_sku_units": 5,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 2,
+        "order_id": 3,
+        "required_sku_units": 6,
+        "provided_sku_units": 6,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 3,
+        "order_id": 2,
+        "required_sku_units": 6,
+        "provided_sku_units": 6,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 4,
+        "order_id": 1,
+        "required_sku_units": 6,
+        "provided_sku_units": 6,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      }
+    ]
+  },
+  "failures": [],
+  "station_task_rows": [
+    {
+      "station_id": 0,
+      "task_id": 0,
+      "start": 45.0,
+      "end": 195.0,
+      "wait": 0.0,
+      "pick": 150.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 0,
+      "task_id": 1,
+      "start": 195.0,
+      "end": 348.0,
+      "wait": 53.0,
+      "pick": 153.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 1,
+      "task_id": 2,
+      "start": 142.0,
+      "end": 259.0,
+      "wait": 0.0,
+      "pick": 117.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 1,
+      "task_id": 3,
+      "start": 259.0,
+      "end": 322.0,
+      "wait": 117.0,
+      "pick": 63.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 2,
+      "task_id": 4,
+      "start": 174.0,
+      "end": 294.0,
+      "wait": 0.0,
+      "pick": 120.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 2,
+      "task_id": 5,
+      "start": 294.0,
+      "end": 348.0,
+      "wait": 120.0,
+      "pick": 54.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 3,
+      "task_id": 6,
+      "start": 142.0,
+      "end": 226.0,
+      "wait": 0.0,
+      "pick": 84.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 3,
+      "task_id": 7,
+      "start": 226.0,
+      "end": 313.0,
+      "wait": 84.0,
+      "pick": 87.0,
+      "extra": 0.0
+    }
+  ]
+}

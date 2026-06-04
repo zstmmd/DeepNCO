@@ -1,0 +1,173 @@
+{
+  "best_iter": -1,
+  "best_z": 558.5709999999999,
+  "model_objective": 558.5709999999999,
+  "model_cmax": 558.0,
+  "global_makespan": 558.0,
+  "total_span_overrun": 0.0,
+  "total_deadline_overrun": 94.0,
+  "scale": "GUROBI-M3",
+  "seed": 42,
+  "status": "OPTIMAL",
+  "sp1": {
+    "subtask_count": 7
+  },
+  "sp2": {
+    "station_count": 5
+  },
+  "sp3": {
+    "task_count": 11
+  },
+  "sp4": {
+    "robot_count": 5
+  },
+  "coverage": {
+    "coverage_ok": true,
+    "unmet_sku_total": 0,
+    "unmet_subtask_count": 0,
+    "subtasks": [
+      {
+        "subtask_id": 0,
+        "order_id": 3,
+        "required_sku_units": 6,
+        "provided_sku_units": 6,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 1,
+        "order_id": 6,
+        "required_sku_units": 6,
+        "provided_sku_units": 6,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 2,
+        "order_id": 4,
+        "required_sku_units": 6,
+        "provided_sku_units": 6,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 3,
+        "order_id": 0,
+        "required_sku_units": 6,
+        "provided_sku_units": 6,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 4,
+        "order_id": 2,
+        "required_sku_units": 6,
+        "provided_sku_units": 6,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 5,
+        "order_id": 1,
+        "required_sku_units": 6,
+        "provided_sku_units": 6,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 6,
+        "order_id": 5,
+        "required_sku_units": 6,
+        "provided_sku_units": 6,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      }
+    ]
+  },
+  "order_time_windows": [
+    {
+      "order_id": 0,
+      "lst_sec": 291.0,
+      "unique_sku_count": 6,
+      "kitting_span_limit_sec": 48.0,
+      "effective_window_sec": 90.0,
+      "arrival_lb": 216.42417989908682,
+      "arrival_ub": 306.4241798990868,
+      "span_overrun": 0.0,
+      "deadline_overrun": 16.0
+    },
+    {
+      "order_id": 1,
+      "lst_sec": 293.0,
+      "unique_sku_count": 6,
+      "kitting_span_limit_sec": 48.0,
+      "effective_window_sec": 90.0,
+      "arrival_lb": 225.4241798990867,
+      "arrival_ub": 315.4241798990867,
+      "span_overrun": 0.0,
+      "deadline_overrun": 23.0
+    },
+    {
+      "order_id": 2,
+      "lst_sec": 289.0,
+      "unique_sku_count": 6,
+      "kitting_span_limit_sec": 48.0,
+      "effective_window_sec": 90.0,
+      "arrival_lb": 69.0,
+      "arrival_ub": 159.0,
+      "span_overrun": 0.0,
+      "deadline_overrun": 0.0
+    },
+    {
+      "order_id": 3,
+      "lst_sec": 290.0,
+      "unique_sku_count": 6,
+      "kitting_span_limit_sec": 48.0,
+      "effective_window_sec": 90.0,
+      "arrival_lb": 0.0,
+      "arrival_ub": 90.0,
+      "span_overrun": 0.0,
+      "deadline_overrun": 0.0
+    },
+    {
+      "order_id": 4,
+      "lst_sec": 291.0,
+      "unique_sku_count": 6,
+      "kitting_span_limit_sec": 48.0,
+      "effective_window_sec": 90.0,
+      "arrival_lb": 210.4241798990049,
+      "arrival_ub": 300.4241798990049,
+      "span_overrun": 0.0,
+      "deadline_overrun": 10.0
+    },
+    {
+      "order_id": 5,
+      "lst_sec": 289.0,
+      "unique_sku_count": 6,
+      "kitting_span_limit_sec": 48.0,
+      "effective_window_sec": 90.0,
+      "arrival_lb": 216.0,
+      "arrival_ub": 306.0,
+      "span_overrun": 0.0,
+      "deadline_overrun": 17.0
+    },
+    {
+      "order_id": 6,
+      "lst_sec": 288.0,
+      "unique_sku_count": 6,
+      "kitting_span_limit_sec": 48.0,
+      "effective_window_sec": 90.0,
+      "arrival_lb": 225.4241798990867,
+      "arrival_ub": 315.4241798990867,
+      "span_overrun": 0.0,
+      "deadline_overrun": 28.0
+    }
+  ]
+}
