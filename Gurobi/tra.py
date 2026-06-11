@@ -88,6 +88,7 @@ class TRARunConfig:
     log_dir: str = "log"
     export_best_solution: bool = True
     write_iteration_logs: bool = True
+    compact_tra_summary_json: bool = False
 
     # --- SP1 更外层反馈 ---
     enable_sp1_feedback_analysis: bool = True
@@ -8916,7 +8917,8 @@ class TRAOptimizer:
                 "best": best_summary,
                 "best_structure": best_structure,
                 "run_stats": run_stats,
-                "iters": self.iter_log,
+                "iter_count": int(len(self.iter_log)),
+                "iters": [] if bool(getattr(self.cfg, "compact_tra_summary_json", False)) else self.iter_log,
             }, f, ensure_ascii=False, indent=2)
 
         if scheme == "resource_time_alns":

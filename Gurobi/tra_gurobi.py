@@ -324,6 +324,7 @@ def _build_cfg(args: argparse.Namespace, case_name: str, log_dir: str) -> TRARun
         write_iteration_logs=True,
         search_scheme="resource_time_alns",
     )
+    cfg.compact_tra_summary_json = bool(getattr(args, "compact_tra_summary_json", False))
     cfg.resource_eval_backend = "fixgurobi_prefix"
     cfg.resource_fixgurobi_skip_ortools_validation = True
     cfg.fixgurobi_time_limit_sec = float(args.fixgurobi_time_limit_sec)
@@ -362,6 +363,7 @@ def _build_cfg(args: argparse.Namespace, case_name: str, log_dir: str) -> TRARun
     cfg.resource_assert_sp4_ortools_only = False
     cfg.resource_candidate_pool_size = max(1, int(args.fixgurobi_candidate_trial_limit))
     cfg.resource_exact_candidate_trial_limit = max(1, int(args.fixgurobi_candidate_trial_limit))
+    cfg.resource_candidate_pool_log = bool(getattr(args, "resource_candidate_pool_log", True))
     cfg.resource_enable_xyz_operator = True
     cfg.resource_xyz_candidate_pool_size = max(1, int(args.fixgurobi_candidate_trial_limit))
     cfg.resource_xyz_exact_candidate_trial_limit = max(1, int(args.fixgurobi_candidate_trial_limit))
@@ -447,6 +449,7 @@ def _solve_time_stats(rows: List[Dict[str, Any]]) -> Dict[str, float]:
     ]
     compile_times = [value for value in compile_times if math.isfinite(value)]
     compile_hits = sum(1 for row in rows if str(row.get("fixgurobi_compile_cache_hit", "")).lower() == "true")
+    fallback_cache_hits = sum(1 for row in rows if str(row.get("fixgurobi_local_fallback_cache_hit", "")).lower() == "true")
     coarse_times = [_safe_float(row.get("fixgurobi_coarse_time", float("nan"))) for row in rows]
     refine_times = [_safe_float(row.get("fixgurobi_refine_time", float("nan"))) for row in rows]
     full_times = [_safe_float(row.get("fixgurobi_full_time", float("nan"))) for row in rows]
@@ -474,6 +477,8 @@ def _solve_time_stats(rows: List[Dict[str, Any]]) -> Dict[str, float]:
     common = {
         "fixgurobi_compile_cache_hit_count": int(compile_hits),
         "fixgurobi_compile_cache_hit_ratio": float(compile_hits / len(rows)) if rows else float("nan"),
+        "fixgurobi_local_fallback_cache_hit_count": int(fallback_cache_hits),
+        "fixgurobi_local_fallback_cache_hit_ratio": float(fallback_cache_hits / len(rows)) if rows else float("nan"),
         "fixgurobi_total_compile_time": float(sum(compile_times)) if compile_times else 0.0,
         "fixgurobi_total_coarse_time": float(sum(coarse_times)) if coarse_times else 0.0,
         "fixgurobi_total_refine_time": float(sum(refine_times)) if refine_times else 0.0,
@@ -723,6 +728,8 @@ def run_case(args: argparse.Namespace, case_name: str, batch_root: str, gurobi_b
         "fixgurobi_final_validation_gap": _safe_float(final_validation.get("gap", float("nan"))) if "final_validation" in locals() else float("nan"),
         "fixgurobi_coarse_time_limit_sec": float(args.fixgurobi_coarse_time_limit_sec),
         "fixgurobi_coarse_mip_gap": float(args.fixgurobi_coarse_mip_gap),
+        "resource_candidate_pool_log": bool(args.resource_candidate_pool_log),
+        "compact_tra_summary_json": bool(args.compact_tra_summary_json),
         "known_target_guidance": bool(args.known_target_guidance),
         "target_table_fastpath": bool(args.target_table_fastpath),
         "target_probe_case_presets": bool(args.target_probe_case_presets),
@@ -817,6 +824,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--revolving-yz-fix-scope", type=str, default="", help="Override FixGurobi scope for the revolving YZ layer, e.g. LOCALYZ or X.")
     parser.add_argument("--revolving-allow-nonimproving-exact", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--revolving-sa-init-temp", type=float, default=-1.0)
+    parser.add_argument("--resource-candidate-pool-log", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--compact-tra-summary-json", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--candidate-pool-max-attempts", type=int, default=24)
     parser.add_argument("--stop-if-no-change-rounds", type=int, default=40)
     parser.add_argument("--operator-profile", type=str, default="baseline_safe")
@@ -875,6 +884,8 @@ def main() -> None:
             "fixgurobi_final_validation_time_limit_sec": float(args.fixgurobi_final_validation_time_limit_sec),
             "fixgurobi_coarse_time_limit_sec": float(args.fixgurobi_coarse_time_limit_sec),
             "fixgurobi_coarse_mip_gap": float(args.fixgurobi_coarse_mip_gap),
+            "resource_candidate_pool_log": bool(args.resource_candidate_pool_log),
+            "compact_tra_summary_json": bool(args.compact_tra_summary_json),
             "known_target_guidance": bool(args.known_target_guidance),
             "target_table_fastpath": bool(args.target_table_fastpath),
             "target_probe_case_presets": bool(args.target_probe_case_presets),

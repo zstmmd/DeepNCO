@@ -32,6 +32,53 @@ class FixGurobiEvaluator:
     def _compiled_cache_size(self) -> int:
         return max(1, int(getattr(self.cfg, "fixgurobi_compiled_cache_size", 8) or 8))
 
+    def _cache_get(self, cache_key: Tuple[Any, ...]) -> Optional[UpperEvalResult]:
+        cached = self.cache.get(cache_key)
+        if cached is None:
+            return None
+        cache_t0 = time.perf_counter()
+        self.cache.move_to_end(cache_key)
+        self.cache_hit_count += 1
+        out = copy.deepcopy(cached)
+        original_solve_time = float(out.metadata.get("fixgurobi_solve_time", 0.0) or 0.0)
+        out.metadata["fixgurobi_cache_hit"] = True
+        out.metadata["fixgurobi_cached_original_solve_time"] = float(original_solve_time)
+        out.metadata["fixgurobi_solve_time"] = 0.0
+        out.metadata["fixgurobi_wall_time"] = float(time.perf_counter() - cache_t0)
+        out.metadata["fixgurobi_cache_hit_count"] = int(self.cache_hit_count)
+        return out
+
+    def _cache_put(self, cache_key: Tuple[Any, ...], value: UpperEvalResult) -> None:
+        self.cache[cache_key] = copy.deepcopy(value)
+        self.cache.move_to_end(cache_key)
+        while len(self.cache) > self._cache_size():
+            self.cache.popitem(last=False)
+
+    def _cache_context_signature(self, scope: str) -> Tuple[Any, ...]:
+        best = float(getattr(self, "current_best_value", float("inf")) or float("inf"))
+        local_release_scope = str(scope or "").upper() in {"LOCALXYZ", "LOCALYZ"}
+        if bool(getattr(self.cfg, "resource_revolving_allow_nonimproving_exact", False)) and not bool(local_release_scope):
+            best = float("inf")
+        use_two_stage = bool(getattr(self.cfg, "fixgurobi_enable_two_stage", True)) and math.isfinite(best)
+        use_cutoff = bool(getattr(self.cfg, "fixgurobi_enable_cutoff", True)) and math.isfinite(best)
+        cutoff = float(best - 1e-6) if use_cutoff else float("nan")
+        target = float(getattr(self.cfg, "resource_target_cmax", float("nan")))
+        best_obj_stop = float("nan")
+        if bool(getattr(self.cfg, "fixgurobi_enable_best_obj_stop", False)) and math.isfinite(target):
+            slack = float(getattr(self.cfg, "fixgurobi_best_obj_stop_slack", 0.999) or 0.999)
+            best_obj_stop = float(target + slack)
+        return (
+            bool(use_two_stage),
+            bool(use_cutoff),
+            round(float(cutoff), 6) if math.isfinite(cutoff) else None,
+            round(float(best_obj_stop), 6) if math.isfinite(best_obj_stop) else None,
+            round(float(getattr(self.cfg, "fixgurobi_time_limit_sec", 1200.0) or 1200.0), 6),
+            round(float(getattr(self.cfg, "fixgurobi_mip_gap", 0.01) or 0.01), 8),
+            round(float(getattr(self.cfg, "fixgurobi_coarse_time_limit_sec", 8.0) or 8.0), 6),
+            round(float(getattr(self.cfg, "fixgurobi_coarse_mip_gap", 0.05) or 0.05), 8),
+            bool(getattr(self.cfg, "fixgurobi_accept_first_improvement", True)),
+        )
+
     def _scope_for_layer(self, layer: str) -> str:
         if bool(getattr(self.cfg, "resource_revolving_mode", False)) and bool(getattr(self.cfg, "resource_revolving_enable_u_layer", False)):
             layer_name = str(layer or "").upper()
@@ -590,22 +637,13 @@ class FixGurobiEvaluator:
         release_ids = tuple(sorted(int(x) for x in (affected_subtask_ids or []) if int(x) >= 0))
         cache_key = (
             str(scope),
+            self._cache_context_signature(scope),
             self._scope_signature(normalized_config, scope, release_ids),
             release_ids if str(scope).upper() in {"LOCALXYZ", "LOCALYZ"} else (),
         )
-        cached = None if bool(bypass_cache) else self.cache.get(cache_key)
+        cached = None if bool(bypass_cache) else self._cache_get(cache_key)
         if cached is not None:
-            cache_t0 = time.perf_counter()
-            self.cache.move_to_end(cache_key)
-            self.cache_hit_count += 1
-            out = copy.deepcopy(cached)
-            original_solve_time = float(out.metadata.get("fixgurobi_solve_time", 0.0) or 0.0)
-            out.metadata["fixgurobi_cache_hit"] = True
-            out.metadata["fixgurobi_cached_original_solve_time"] = float(original_solve_time)
-            out.metadata["fixgurobi_solve_time"] = 0.0
-            out.metadata["fixgurobi_wall_time"] = float(time.perf_counter() - cache_t0)
-            out.metadata["fixgurobi_cache_hit_count"] = int(self.cache_hit_count)
-            return out
+            return cached
 
         self.cache_miss_count += 1
         if bool(getattr(self.cfg, "fixgurobi_cheap_gate", True)) and not bool(bypass_cache):
@@ -735,83 +773,95 @@ class FixGurobiEvaluator:
             fallback_release_ids: Tuple[int, ...] = ()
             fallback_payload = self._fixed_payload(normalized_config, fallback_scope, fallback_release_ids)
             fallback_cfg = self._build_global_cfg(fallback_payload)
-            fallback_t0 = time.perf_counter()
-            try:
-                fallback_result = self._solve_fixgurobi(fallback_payload, fallback_cfg, fallback_scope)
-                fallback_value = self._objective_from_result(fallback_result)
-                fallback_status = str(getattr(fallback_result, "status", "UNKNOWN") or "UNKNOWN")
-                fallback_diagnostics = dict(getattr(fallback_result, "diagnostics", {}) or {})
-                fallback_materialized_problem = getattr(fallback_result, "materialized_problem", None)
-                fallback_gap = float(getattr(fallback_result, "gap", float("nan")))
-                fallback_bound = float(fallback_diagnostics.get("model_best_bound", float("nan")))
-                fallback_infeasible_reason = "" if math.isfinite(fallback_value) else str(
-                    fallback_diagnostics.get("fallback_reason", fallback_status)
-                )
-            except Exception as exc:
-                fallback_value = float("inf")
-                fallback_status = "EXCEPTION"
-                fallback_gap = float("nan")
-                fallback_bound = float("nan")
-                fallback_diagnostics = {"exception": str(exc)}
-                fallback_materialized_problem = None
-                fallback_infeasible_reason = str(exc)
-            fallback_runtime = float(time.perf_counter() - fallback_t0)
-            fallback_metadata = {
-                "eval_backend": "fixgurobi_prefix",
-                "fixgurobi_status": fallback_status,
-                "fixgurobi_obj": float(fallback_value),
-                "fixgurobi_bound": float(fallback_bound),
-                "fixgurobi_gap": float(fallback_gap),
-                "fixgurobi_solve_time": float(runtime + fallback_runtime),
-                "fixgurobi_wall_time": float(runtime + fallback_runtime),
-                "fixgurobi_fixed_scope": str(fallback_scope),
-                "fixgurobi_infeasible_reason": str(fallback_infeasible_reason),
-                "fixgurobi_cache_hit": False,
-                "fixgurobi_cache_hit_count": int(self.cache_hit_count),
-                "fixgurobi_cache_miss_count": int(self.cache_miss_count),
-                "fixgurobi_diagnostics": fallback_diagnostics,
-                "fixgurobi_local_fallback_used": True,
-                "fixgurobi_local_attempt_scope": str(scope),
-                "fixgurobi_local_attempt_obj": float(value),
-                "fixgurobi_local_attempt_status": str(status),
-                "fixgurobi_local_attempt_solve_time": float(runtime),
-                "fixgurobi_local_fallback_scope": str(fallback_scope),
-                "fixgurobi_local_fallback_solve_time": float(fallback_runtime),
-            }
-            if fallback_materialized_problem is not None and math.isfinite(float(fallback_value)):
-                fallback_metadata["fixgurobi_materialized_problem"] = copy.deepcopy(fallback_materialized_problem)
-            fallback_metadata.update(self._fixed_payload_diag(normalized_config, fallback_payload, fallback_release_ids))
-            for key in (
-                "fixgurobi_compile_cache_hit",
-                "fixgurobi_compile_time",
-                "fixgurobi_compile_cache_hit_count",
-                "fixgurobi_compile_cache_miss_count",
-                "fixgurobi_stage",
-                "fixgurobi_cutoff",
-                "fixgurobi_refined",
-                "fixgurobi_coarse_obj",
-                "fixgurobi_coarse_status",
-                "fixgurobi_coarse_proven_no_improve",
-                "fixgurobi_coarse_time",
-                "fixgurobi_refine_time",
-                "fixgurobi_full_time",
-                "fixgurobi_first_improvement_accepted",
-                "fixgurobi_compiled_fallback_used",
-                "fixgurobi_compiled_fallback_reason",
-                "fixgurobi_fixed_constraint_count",
-                "fixgurobi_invalid_fix_count",
-                "fixgurobi_fixed_route_arc_count_from_cfg",
-                "fixgurobi_fixed_route_arc_robot_count",
-                "fixgurobi_fixed_route_sequence_robot_count",
-                "fixgurobi_fixed_route_sequence_missing_count",
-                "fixgurobi_fixed_route_sequence_missing_rows",
-                "compiled_model_used",
-                "compiled_model_copy_time_sec",
-                "gurobi_solve_time_sec",
-                "gurobi_runtime_sec",
-            ):
-                if key in fallback_diagnostics:
-                    fallback_metadata[key] = fallback_diagnostics.get(key)
+            fallback_cache_key = (
+                str(fallback_scope),
+                self._cache_context_signature(fallback_scope),
+                self._scope_signature(normalized_config, fallback_scope, fallback_release_ids),
+                (),
+            )
+            cached_fallback = None if bool(bypass_cache) else self._cache_get(fallback_cache_key)
+            if cached_fallback is not None:
+                fallback_value = float(cached_fallback.F_raw)
+                fallback_runtime = 0.0
+                fallback_metadata = dict(getattr(cached_fallback, "metadata", {}) or {})
+                fallback_metadata["fixgurobi_solve_time"] = float(runtime)
+                fallback_metadata["fixgurobi_wall_time"] = float(runtime)
+                fallback_metadata["fixgurobi_local_fallback_cache_hit"] = True
+            else:
+                fallback_t0 = time.perf_counter()
+                try:
+                    fallback_result = self._solve_fixgurobi(fallback_payload, fallback_cfg, fallback_scope)
+                    fallback_value = self._objective_from_result(fallback_result)
+                    fallback_status = str(getattr(fallback_result, "status", "UNKNOWN") or "UNKNOWN")
+                    fallback_diagnostics = dict(getattr(fallback_result, "diagnostics", {}) or {})
+                    fallback_materialized_problem = getattr(fallback_result, "materialized_problem", None)
+                    fallback_gap = float(getattr(fallback_result, "gap", float("nan")))
+                    fallback_bound = float(fallback_diagnostics.get("model_best_bound", float("nan")))
+                    fallback_infeasible_reason = "" if math.isfinite(fallback_value) else str(
+                        fallback_diagnostics.get("fallback_reason", fallback_status)
+                    )
+                except Exception as exc:
+                    fallback_value = float("inf")
+                    fallback_status = "EXCEPTION"
+                    fallback_gap = float("nan")
+                    fallback_bound = float("nan")
+                    fallback_diagnostics = {"exception": str(exc)}
+                    fallback_materialized_problem = None
+                    fallback_infeasible_reason = str(exc)
+                fallback_runtime = float(time.perf_counter() - fallback_t0)
+                fallback_metadata = {
+                    "eval_backend": "fixgurobi_prefix",
+                    "fixgurobi_status": fallback_status,
+                    "fixgurobi_obj": float(fallback_value),
+                    "fixgurobi_bound": float(fallback_bound),
+                    "fixgurobi_gap": float(fallback_gap),
+                    "fixgurobi_solve_time": float(runtime + fallback_runtime),
+                    "fixgurobi_wall_time": float(runtime + fallback_runtime),
+                    "fixgurobi_fixed_scope": str(fallback_scope),
+                    "fixgurobi_infeasible_reason": str(fallback_infeasible_reason),
+                    "fixgurobi_cache_hit": False,
+                    "fixgurobi_cache_hit_count": int(self.cache_hit_count),
+                    "fixgurobi_cache_miss_count": int(self.cache_miss_count),
+                    "fixgurobi_diagnostics": fallback_diagnostics,
+                    "fixgurobi_local_fallback_cache_hit": False,
+                }
+                if fallback_materialized_problem is not None and math.isfinite(float(fallback_value)):
+                    fallback_metadata["fixgurobi_materialized_problem"] = copy.deepcopy(fallback_materialized_problem)
+                fallback_metadata.update(self._fixed_payload_diag(normalized_config, fallback_payload, fallback_release_ids))
+                for key in (
+                    "fixgurobi_compile_cache_hit",
+                    "fixgurobi_compile_time",
+                    "fixgurobi_compile_cache_hit_count",
+                    "fixgurobi_compile_cache_miss_count",
+                    "fixgurobi_stage",
+                    "fixgurobi_cutoff",
+                    "fixgurobi_refined",
+                    "fixgurobi_coarse_obj",
+                    "fixgurobi_coarse_status",
+                    "fixgurobi_coarse_proven_no_improve",
+                    "fixgurobi_coarse_time",
+                    "fixgurobi_refine_time",
+                    "fixgurobi_full_time",
+                    "fixgurobi_first_improvement_accepted",
+                    "fixgurobi_compiled_fallback_used",
+                    "fixgurobi_compiled_fallback_reason",
+                    "fixgurobi_fixed_constraint_count",
+                    "fixgurobi_invalid_fix_count",
+                    "fixgurobi_fixed_route_arc_count_from_cfg",
+                    "fixgurobi_fixed_route_arc_robot_count",
+                    "fixgurobi_fixed_route_sequence_robot_count",
+                    "fixgurobi_fixed_route_sequence_missing_count",
+                    "fixgurobi_fixed_route_sequence_missing_rows",
+                    "compiled_model_used",
+                    "compiled_model_copy_time_sec",
+                    "gurobi_solve_time_sec",
+                    "gurobi_runtime_sec",
+                ):
+                    if key in fallback_diagnostics:
+                        fallback_metadata[key] = fallback_diagnostics.get(key)
+                if not bool(bypass_cache):
+                    fallback_out = self._result_from_base(base_eval, value=float(fallback_value), metadata=fallback_metadata)
+                    self._cache_put(fallback_cache_key, fallback_out)
             for key in (
                 "revolving_enabled",
                 "released_layer",
@@ -829,13 +879,17 @@ class FixGurobiEvaluator:
                 if key in (getattr(normalized_config, "metadata", {}) or {}):
                     fallback_metadata[key] = (getattr(normalized_config, "metadata", {}) or {}).get(key)
             fallback_metadata["fixgurobi_local_attempt_metadata"] = local_metadata
+            fallback_metadata["fixgurobi_local_fallback_used"] = True
+            fallback_metadata["fixgurobi_local_attempt_scope"] = str(scope)
+            fallback_metadata["fixgurobi_local_attempt_obj"] = float(value)
+            fallback_metadata["fixgurobi_local_attempt_status"] = str(status)
+            fallback_metadata["fixgurobi_local_attempt_solve_time"] = float(runtime)
+            fallback_metadata["fixgurobi_local_fallback_scope"] = str(fallback_scope)
+            fallback_metadata["fixgurobi_local_fallback_solve_time"] = float(fallback_runtime)
             value = float(fallback_value)
             metadata = fallback_metadata
         out = self._result_from_base(base_eval, value=float(value), metadata=metadata)
         out.affected_subtask_ids = frozenset(int(x) for x in (affected_subtask_ids or getattr(out, "affected_subtask_ids", frozenset()) or []))
         if not bool(bypass_cache):
-            self.cache[cache_key] = copy.deepcopy(out)
-            self.cache.move_to_end(cache_key)
-            while len(self.cache) > self._cache_size():
-                self.cache.popitem(last=False)
+            self._cache_put(cache_key, out)
         return out
