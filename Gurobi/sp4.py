@@ -41,6 +41,7 @@ class SP4_Robot_Router:
         self.t_shift = OFSConfig.PACKING_TIME
         self.t_lift = OFSConfig.LIFTING_TIME
         self.lkh_time_limit_seconds = 100
+        self.sp4_mip_time_limit_seconds = 180
         self.last_infeasible_reason: str = ""
         self.last_conflict_summary: Dict[str, object] = {}
         # --- 初始化 Logger ---
@@ -1003,7 +1004,7 @@ class SP4_Robot_Router:
         with gp.Model("SP4_PDP_v2") as model:
             model.Params.OutputFlag = 1
             model.Params.MIPGap = 0.02
-            model.Params.TimeLimit = 180
+            model.Params.TimeLimit = int(max(1, int(getattr(self, "sp4_mip_time_limit_seconds", 180))))
             model.Params.LazyConstraints = 1
 
             # --- 决策变量 ---
@@ -1152,8 +1153,8 @@ class SP4_Robot_Router:
             model._d_nodes = set(d_nodes)
 
 
-            print("\n  >>> [Phase 1] Quick feasibility (60s)...")
-            model.Params.TimeLimit = 3600
+            print("\n  >>> [Phase 1] Quick feasibility...")
+            model.Params.TimeLimit = int(max(1, int(getattr(self, "sp4_mip_time_limit_seconds", 180))))
             model.Params.MIPFocus = 1
             model.Params.Heuristics = 0.3
 

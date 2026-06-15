@@ -19,6 +19,13 @@ from problemDto.createInstance import CreateOFSProblem
 from Gurobi.global_xyzu import GlobalXYZUConfig, GlobalXYZUSolver
 from Gurobi.tra import TRAOptimizer, TRARunConfig
 
+try:
+    from experiments.run_large_scale_trial import large_scale_configs
+
+    CreateOFSProblem.RUNTIME_SCALE_CONFIGS.update(large_scale_configs())
+except Exception:
+    pass
+
 
 DEFAULT_CASES = [
     "GUROBI-S1",
@@ -332,6 +339,13 @@ def _build_cfg(args: argparse.Namespace, case_name: str, log_dir: str) -> TRARun
     cfg.fixgurobi_candidate_trial_limit = int(args.fixgurobi_candidate_trial_limit)
     cfg.fixgurobi_cache_size = int(args.fixgurobi_cache_size)
     cfg.fixgurobi_compiled_cache_size = int(args.fixgurobi_compiled_cache_size)
+    cfg.fixgurobi_candidate_stack_topk = int(args.fixgurobi_candidate_stack_topk)
+    cfg.fixgurobi_max_candidate_stacks_per_order = int(args.fixgurobi_max_candidate_stacks_per_order)
+    cfg.fixgurobi_candidate_station_topk_per_stack = int(args.fixgurobi_candidate_station_topk_per_stack)
+    cfg.fixgurobi_force_candidate_stacks = bool(args.fixgurobi_force_candidate_stacks)
+    cfg.fixgurobi_enable_scale_adaptive_candidate_prune = bool(args.fixgurobi_enable_scale_adaptive_candidate_prune)
+    cfg.fixgurobi_allow_warm_start_fallback = bool(args.fixgurobi_allow_warm_start_fallback)
+    cfg.fixgurobi_warm_start_subtask_ordering = str(args.fixgurobi_warm_start_subtask_ordering)
     cfg.fixgurobi_force_xyz_scope = bool(args.fixgurobi_force_xyz_scope)
     cfg.fixgurobi_enable_compiled_cache = bool(args.fixgurobi_enable_compiled_cache)
     cfg.fixgurobi_enable_two_stage = bool(args.fixgurobi_enable_two_stage)
@@ -770,6 +784,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fixgurobi-candidate-trial-limit", type=int, default=1)
     parser.add_argument("--fixgurobi-cache-size", type=int, default=128)
     parser.add_argument("--fixgurobi-compiled-cache-size", type=int, default=8)
+    parser.add_argument("--fixgurobi-candidate-stack-topk", type=int, default=999)
+    parser.add_argument("--fixgurobi-max-candidate-stacks-per-order", type=int, default=0)
+    parser.add_argument("--fixgurobi-candidate-station-topk-per-stack", type=int, default=999)
+    parser.add_argument("--fixgurobi-force-candidate-stacks", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--fixgurobi-enable-scale-adaptive-candidate-prune", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--fixgurobi-allow-warm-start-fallback", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--fixgurobi-warm-start-subtask-ordering", choices=["default", "r3", "g3"], default="default")
     parser.add_argument("--fixgurobi-force-xyz-scope", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--fixgurobi-enable-compiled-cache", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--fixgurobi-enable-two-stage", action=argparse.BooleanOptionalAction, default=True)

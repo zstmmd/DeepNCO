@@ -84,6 +84,30 @@ def _write_json(path: str, payload: Any) -> None:
         json.dump(payload, f, ensure_ascii=False, indent=2)
 
 
+def _load_runtime_configs(path: str) -> Dict[str, Dict[str, Any]]:
+    if not str(path or "").strip():
+        return {}
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"runtime config json not found: {path}")
+    with open(path, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+    configs = payload.get("configs", payload) if isinstance(payload, dict) else {}
+    out: Dict[str, Dict[str, Any]] = {}
+    for name, cfg in dict(configs or {}).items():
+        if isinstance(cfg, dict):
+            out[str(name).upper()] = dict(cfg)
+    return out
+
+
+def _install_runtime_configs(path: str) -> None:
+    configs = _load_runtime_configs(path)
+    if configs:
+        from problemDto.createInstance import CreateOFSProblem
+
+        CreateOFSProblem.RUNTIME_SCALE_CONFIGS = dict(getattr(CreateOFSProblem, "RUNTIME_SCALE_CONFIGS", {}) or {})
+        CreateOFSProblem.RUNTIME_SCALE_CONFIGS.update(configs)
+
+
 def _write_csv(path: str, rows: List[Dict[str, Any]]) -> None:
     rows = list(rows or [])
     fieldnames: List[str] = []
@@ -657,6 +681,7 @@ def parse_args():
     parser.add_argument("--fail-on-current-baseline-regression", action="store_true", default=False, help="Exit nonzero if any case is worse than the locked current TRA baseline")
     parser.add_argument("--gurobi-reference-root", type=str, default=os.path.join(ROOT_DIR, "result", "gurobi_s1_s9_no_scale_adapt_300s_001_20260517"))
     parser.add_argument("--gurobi-s6-reference-root", type=str, default=os.path.join(ROOT_DIR, "result", "gurobi_s6_tune_20260517_try3"))
+    parser.add_argument("--runtime-config-json", type=str, default="", help="Optional runtime scale config JSON.")
     parser.add_argument("--write-structure-compare", action="store_true", default=False)
     parser.add_argument("--export-best-solution", action="store_true", help="Keep explicit export_best_solution=True")
     parser.add_argument("--write-iteration-logs", action="store_true", help="Keep explicit write_iteration_logs=True")
@@ -665,6 +690,7 @@ def parse_args():
 
 def main():
     args = parse_args()
+    _install_runtime_configs(str(args.runtime_config_json or ""))
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     batch_root = _ensure_dir(os.path.join(ROOT_DIR, "result", f"tra_alns_{timestamp}"))
 

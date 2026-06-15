@@ -201,6 +201,15 @@ class CreateOFSProblem:
         )
         problem.scale_name = scale_upper
         problem.generator_profile = imbalance_profile or "default"
+        order_lst_sec = cfg.get("order_lst_sec", None)
+        order_lst_multiplier = float(cfg.get("order_lst_multiplier", 1.0) or 1.0)
+        if order_lst_sec is not None or abs(order_lst_multiplier - 1.0) > 1e-9:
+            for order in getattr(problem, "order_list", []) or []:
+                current_lst = float(getattr(order, "lst_sec", 0.0) or 0.0)
+                if order_lst_sec is not None:
+                    order.lst_sec = float(order_lst_sec)
+                else:
+                    order.lst_sec = float(current_lst * order_lst_multiplier)
         return problem
 
     @staticmethod

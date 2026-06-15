@@ -23,6 +23,23 @@ def _order_sku_counts(order_count: int, base: int, bump_every: int = 3) -> tuple
     return tuple(int(base) + (1 if (idx + 1) % max(1, int(bump_every)) == 0 else 0) for idx in range(int(order_count)))
 
 
+def _order_sku_quantity_range(case: str) -> tuple:
+    # Tune demand quantities so every L case is harder than GUROBI-M9
+    # (Cmax 731) without making already-large L cases needlessly slow.
+    ranges = {
+        "L1": (18, 20),
+        "L2": (15, 17),
+        "L3": (9, 11),
+        "L4": (4, 6),
+        "L5": (1, 2),
+        "L6": (1, 2),
+        "L7": (1, 2),
+        "L8": (1, 2),
+        "L9": (1, 2),
+    }
+    return tuple(ranges.get(str(case).upper(), (1, 1)))
+
+
 def large_scale_configs() -> Dict[str, Dict[str, Any]]:
     rows = {
         "L1": {"map_size": (5, 8), "resources": (6, 5, 350), "data": (15, 80), "base_lines": 3, "target_stack_count": 60},
@@ -46,7 +63,7 @@ def large_scale_configs() -> Dict[str, Dict[str, Any]]:
             "inventory_initial_unassigned_skus_per_tote": 3,
             "inventory_max_sku_stack_count": 4,
             "exact_order_sku_counts": _order_sku_counts(order_count, base_lines, bump_every=3),
-            "exact_order_sku_quantity_range": (1, 1),
+            "exact_order_sku_quantity_range": _order_sku_quantity_range(case),
             "bom_colocated_inventory": True,
             "bom_colocated_stack_counts": _stack_counts(order_count, high_every=3),
             "bom_colocated_disjoint_stack_groups": False,

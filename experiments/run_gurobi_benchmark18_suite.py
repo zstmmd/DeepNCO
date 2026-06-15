@@ -197,6 +197,28 @@ def _write_outputs(rows: List[Dict[str, Any]], output_dir: str, details: List[Di
     return {"csv": csv_path, "markdown": md_path, "details": details_path, "table": markdown}
 
 
+def _load_runtime_configs(path: str) -> Dict[str, Dict[str, Any]]:
+    if not str(path or "").strip():
+        return {}
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"runtime config json not found: {path}")
+    with open(path, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+    configs = payload.get("configs", payload) if isinstance(payload, dict) else {}
+    out: Dict[str, Dict[str, Any]] = {}
+    for name, cfg in dict(configs or {}).items():
+        if isinstance(cfg, dict):
+            out[str(name).upper()] = dict(cfg)
+    return out
+
+
+def _install_runtime_configs(path: str) -> None:
+    configs = _load_runtime_configs(path)
+    if configs:
+        CreateOFSProblem.RUNTIME_SCALE_CONFIGS = dict(getattr(CreateOFSProblem, "RUNTIME_SCALE_CONFIGS", {}) or {})
+        CreateOFSProblem.RUNTIME_SCALE_CONFIGS.update(configs)
+
+
 def _resolve_cases(case_set: str, scales: str) -> List[str]:
     if scales:
         return [str(item).strip().upper() for item in str(scales).split(",") if str(item).strip()]
@@ -222,10 +244,13 @@ def main() -> None:
     parser.add_argument("--route-pickup-neighbor-limit", type=int, default=5)
     parser.add_argument("--kitting-span-penalty-weight", type=float, default=5.0)
     parser.add_argument("--deadline-penalty-weight", type=float, default=1000.0)
+    parser.add_argument("--disable-order-time-windows", action="store_true", default=False)
     parser.add_argument("--disable-all-prune", action="store_true", help="Disable all arc and candidate pruning.")
     parser.add_argument("--dry-run", action="store_true", help="Generate cases and summaries without solving Gurobi.")
+    parser.add_argument("--runtime-config-json", type=str, default="", help="Optional runtime scale config JSON.")
     parser.add_argument("--output-dir", type=str, default="")
     args = parser.parse_args()
+    _install_runtime_configs(str(args.runtime_config_json or ""))
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir = args.output_dir or os.path.join(ROOT_DIR, "result", f"gurobi_small_calibration_{timestamp}")
@@ -271,6 +296,7 @@ def main() -> None:
                     u_same_slot_same_robot=True,
                     warm_start_use_sp4=True,
                     enable_sp4_fallback=False,
+                    enable_order_time_windows=not bool(args.disable_order_time_windows),
                     kitting_span_penalty_weight=float(args.kitting_span_penalty_weight),
                     deadline_penalty_weight=float(args.deadline_penalty_weight),
                 )

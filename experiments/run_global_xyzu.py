@@ -16,6 +16,13 @@ from problemDto.createInstance import CreateOFSProblem
 from config.ofs_config import OFSConfig
 from Gurobi.global_xyzu import GlobalXYZUConfig, GlobalXYZUSolver
 
+try:
+    from experiments.run_large_scale_trial import large_scale_configs
+
+    CreateOFSProblem.RUNTIME_SCALE_CONFIGS.update(large_scale_configs())
+except Exception:
+    pass
+
 
 def _normalize_jsonable(value: Any) -> Any:
     if isinstance(value, dict):
@@ -784,6 +791,9 @@ def main() -> None:
     parser.add_argument("--enable-route-arrival-slot-linear", action="store_true", help="Re-enable redundant linear Big-M route-arrival binding.")
     parser.add_argument("--enable-warm-prune-bound-repair", action="store_true", help="Enable experimental pre-arc warm upper-bound repair for route pruning.")
     parser.add_argument("--disable-warm-start-route-repair", action="store_true", help="Disable warm-start route list-scheduling repair before MIP start injection.")
+    parser.add_argument("--gurobi-mem-limit-gb", type=float, default=0.0, help="Optional Gurobi MemLimit in GB; <=0 leaves it unset.")
+    parser.add_argument("--gurobi-nodefile-start-gb", type=float, default=0.0, help="Optional Gurobi NodefileStart in GB; <=0 leaves it unset.")
+    parser.add_argument("--gurobi-threads", type=int, default=0, help="Optional Gurobi thread count; <=0 leaves it unset.")
     parser.add_argument("--full-diag", action="store_true", help="Print full diagnostics payload (may be very large).")
     args = parser.parse_args()
 
@@ -831,6 +841,9 @@ def main() -> None:
         enable_route_arrival_slot_linear=bool(args.enable_route_arrival_slot_linear),
         enable_warm_prune_bound_repair=bool(args.enable_warm_prune_bound_repair),
         enable_warm_start_route_repair=not bool(args.disable_warm_start_route_repair),
+        gurobi_mem_limit_gb=float(args.gurobi_mem_limit_gb) if float(args.gurobi_mem_limit_gb) > 0.0 else None,
+        gurobi_nodefile_start_gb=float(args.gurobi_nodefile_start_gb) if float(args.gurobi_nodefile_start_gb) > 0.0 else None,
+        gurobi_threads=int(args.gurobi_threads) if int(args.gurobi_threads) > 0 else None,
     )
     scale_name = str(args.scale).strip().upper()
     if scale_name == "GUROBI-S7":

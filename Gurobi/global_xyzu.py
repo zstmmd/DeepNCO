@@ -92,6 +92,7 @@ class GlobalXYZUConfig:
     enable_warm_candidate_stack_prune: bool = False
     candidate_station_topk_per_stack: int = 999
     warm_start_sp4_time_limit_sec: int = 15
+    warm_start_subtask_ordering: str = "default"
     u_route_use_mip: bool = True
     big_m_time: float =2000.0
 
@@ -112,6 +113,9 @@ class GlobalXYZUConfig:
     gurobi_method: Optional[int] = None
     gurobi_node_method: Optional[int] = None
     gurobi_mip_focus: Optional[int] = None
+    gurobi_mem_limit_gb: Optional[float] = None
+    gurobi_nodefile_start_gb: Optional[float] = None
+    gurobi_threads: Optional[int] = None
     gurobi_cuts: int = 1
     gurobi_cut_passes: int = 1
     gurobi_presolve: int = 1
@@ -341,6 +345,12 @@ class GlobalXYZUSolver:
             model.Params.NodeMethod = int(getattr(cfg, "gurobi_node_method"))
         if getattr(cfg, "gurobi_mip_focus", None) is not None:
             model.Params.MIPFocus = int(getattr(cfg, "gurobi_mip_focus"))
+        if getattr(cfg, "gurobi_mem_limit_gb", None) is not None:
+            model.Params.MemLimit = float(getattr(cfg, "gurobi_mem_limit_gb"))
+        if getattr(cfg, "gurobi_nodefile_start_gb", None) is not None:
+            model.Params.NodefileStart = float(getattr(cfg, "gurobi_nodefile_start_gb"))
+        if getattr(cfg, "gurobi_threads", None) is not None:
+            model.Params.Threads = int(getattr(cfg, "gurobi_threads"))
         model.Params.Cuts = int(getattr(cfg, "gurobi_cuts", 1))
         if bool(getattr(cfg, "route_lazy_constraint", True)):
             model.Params.LazyConstraints = 1
@@ -703,9 +713,7 @@ class GlobalXYZUSolver:
         try:
             # 主模型：默认是完整 XYZU 一体化 MIP；只有 integrate_u_route=False 时才退化为旧 transport proxy。
             model = gp.Model("Global_XYZU_Integrated")
-            model.Params.OutputFlag = 1 if bool(getattr(cfg, "gurobi_output", True)) else 0
-            model.Params.TimeLimit = float(cfg.time_limit_sec)
-            model.Params.MIPGap = float(cfg.mip_gap)
+            self._set_solve_params(model, cfg)
 
             vars_payload = self._build_model(model, prepared, cfg)
             diagnostics.update(vars_payload.get("diagnostics", {}))
@@ -1358,12 +1366,17 @@ class GlobalXYZUSolver:
         # warm start 流程沿用现有 SP1 -> SP2 -> SP3，目的是给全局 MIP 提供可行参考解。
         sp1 = SP1_BOM_Splitter(problem)
         sub_tasks = sp1.solve(use_mip=False)
+        ordering = str(getattr(cfg, "warm_start_subtask_ordering", "default") or "default").lower()
+        if ordering == "g3":
+            sub_tasks.sort(key=lambda st: (-len(getattr(st, "unique_sku_list", []) or getattr(st, "sku_list", []) or []), int(getattr(st, "id", -1))))
+        elif ordering == "r3":
+            sub_tasks.sort(key=lambda st: (int(getattr(getattr(st, "parent_order", None), "order_id", -1)), int(getattr(st, "id", -1))))
         problem.subtask_list = sub_tasks
         problem.subtask_num = len(sub_tasks)
 
         sp2 = SP2_Station_Assigner(problem)
         sp2.solve_initial_heuristic()
-        sp2_mode = "heuristic"
+        sp2_mode = f"heuristic_{ordering}"
 
         sp3 = SP3_Bin_Hitter(problem)
         try:

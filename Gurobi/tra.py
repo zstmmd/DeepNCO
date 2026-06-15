@@ -235,9 +235,13 @@ class TRARunConfig:
     fixgurobi_cache_size: int = 128
     fixgurobi_compiled_cache_size: int = 8
     fixgurobi_candidate_stack_topk: int = 999
+    fixgurobi_max_candidate_stacks_per_order: int = 0
     fixgurobi_candidate_station_topk_per_stack: int = 999
     fixgurobi_force_candidate_stacks: bool = False
+    fixgurobi_enable_scale_adaptive_candidate_prune: bool = False
     fixgurobi_use_warm_bound: bool = True
+    fixgurobi_allow_warm_start_fallback: bool = False
+    fixgurobi_warm_start_subtask_ordering: str = "default"
     fixgurobi_force_xyz_scope: bool = False
     fixgurobi_enable_compiled_cache: bool = True
     fixgurobi_enable_two_stage: bool = True
@@ -9298,7 +9302,8 @@ class TRAOptimizer:
         coverage = self._compute_solution_coverage()
         bom_arrival_window = self._evaluate_bom_arrival_window()
         order_time_window_metrics = self._evaluate_order_time_window_metrics()
-        best_z = float(self.best.z) if self.best is not None else float("nan")
+        snapshot_best_z = float(self.best.z) if self.best is not None else float("nan")
+        best_z = float(z) if math.isfinite(float(z)) else snapshot_best_z
         global_makespan = float(getattr(self.problem, "global_makespan", 0.0))
         cfg = getattr(self, "cfg", None)
         span_weight = float(getattr(cfg, "kitting_span_penalty_weight", 5.0) or 0.0)
@@ -9408,6 +9413,7 @@ class TRAOptimizer:
             "unmet_subtask_count": int(coverage.get("unmet_subtask_count", 0)),
             "coverage_subtasks": list(coverage.get("subtasks", []) or []),
             "best_z": best_z,
+            "snapshot_best_z": snapshot_best_z,
             "recomputed_z": recomputed_z,
             "global_makespan": global_makespan,
             "objective_value": recomputed_z,
