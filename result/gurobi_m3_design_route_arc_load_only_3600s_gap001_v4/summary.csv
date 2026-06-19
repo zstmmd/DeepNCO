@@ -1,2 +1,0 @@
-﻿算例名称,BOM数目,SKU总数,tote数,工作台数,机器人数,stack数,地图大小,上界,下界,gap,model_objective,model_cmax,total_span_overrun,total_deadline_overrun,bom_arrival_window_violating_order_count,model_gap,scale,status,warm_start_enabled,runtime_sec,solver_runtime_sec,gurobi_runtime_sec,gurobi_solve_time_sec,model_best_bound,model_status_code,model_sol_count,运行时间
-GUROBI-M3,7,44,184,5,5,33,4x5,582.000000,375.451125,0.355611,582.647000,582.000000,0.000000,215.000000,0,0.355611,GUROBI-M3,TIME_LIMIT,False,3604.634370,3602.202030,3600.505000,3600.526974,375.451125,9,10,3604.634370

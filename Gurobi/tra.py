@@ -54,6 +54,7 @@ class TRARunConfig:
     no_improve_limit: int = 3
     epsilon: float = 0.05
     bom_arrival_window_sec: float = 60.0
+    sp1_no_split: bool = False
     enable_order_time_windows: bool = False
     kitting_span_penalty_weight: float = 5.0
     deadline_penalty_weight: float = 1000.0
@@ -254,6 +255,7 @@ class TRARunConfig:
     fixgurobi_coarse_time_limit_sec: float = 8.0
     fixgurobi_coarse_mip_gap: float = 0.05
     fixgurobi_route_arc_prune: bool = True
+    fixgurobi_route_pickup_neighbor_limit: int = 0
     fixgurobi_route_time_window_arc_prune: bool = True
     fixgurobi_route_load_interval_arc_prune: bool = True
     fixgurobi_enable_symmetry: bool = True
@@ -7840,7 +7842,19 @@ class TRAOptimizer:
     # 各阶段求解与回填
     # ----------------------------
     def _run_sp1(self):
-        sub_tasks = self.sp1.solve(use_mip=False)
+        if bool(getattr(self.cfg, "sp1_no_split", False)):
+            sub_tasks = []
+            next_id = 0
+            for order in getattr(self.problem, "order_list", []) or []:
+                sku_list = [
+                    self.problem.id_to_sku[int(sku_id)]
+                    for sku_id in (getattr(order, "order_product_id_list", []) or [])
+                    if int(sku_id) in self.problem.id_to_sku
+                ]
+                sub_tasks.append(SubTask(id=int(next_id), parent_order=order, sku_list=sku_list))
+                next_id += 1
+        else:
+            sub_tasks = self.sp1.solve(use_mip=False)
         self.problem.subtask_list = sub_tasks
         self.problem.subtask_num = len(sub_tasks)
 

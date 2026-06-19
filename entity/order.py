@@ -28,6 +28,9 @@ class Order:
         self.total_qty: int = 0
         self.unique_sku_count: int = 0
         self.deadline_buffer_sec: float = 0.0
+        self.batch_quantity: int = 1
+        self.bom_part_quantity_by_sku: Dict[int, int] = {}
+        self.bom_total_quantity_by_sku: Dict[int, int] = {}
 
     def __str__(self):
         return (

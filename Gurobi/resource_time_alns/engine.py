@@ -33,6 +33,7 @@ from .operators_z import (
     apply_joint_colocated_sort_postprocess,
     apply_single_flip_sortify_polish,
     apply_exact_z_plan,
+    build_full_z_assignment,
     plan_z_candidate,
 )
 from .projection import apply_projection_repair
@@ -559,14 +560,19 @@ class ResourceTimeALNSEngine:
             arms["Z"]["repair"].pop("z_repair_stack_mode_joint_polish", None)
         if profile == "route_polish_exact":
             if "z_destroy_critical_path_window" in arms["Z"]["destroy"]:
-                arms["Z"]["destroy"]["z_destroy_critical_path_window"].weight = 4.0
+                arms["Z"]["destroy"]["z_destroy_critical_path_window"].weight = 6.0
             if "y_destroy_critical_path_block" in arms["Y"]["destroy"]:
                 arms["Y"]["destroy"]["y_destroy_critical_path_block"].weight = 3.5
             if "x_destroy_critical_order_cluster" in arms["X"]["destroy"]:
                 arms["X"]["destroy"]["x_destroy_critical_order_cluster"].weight = 4.0
+            if "z_repair_mode_toggle_contextual" in arms["Z"]["repair"]:
+                arms["Z"]["repair"]["z_repair_mode_toggle_contextual"].weight = 6.0
+            if "z_repair_gurobi_like_sort" in arms["Z"]["repair"]:
+                arms["Z"]["repair"]["z_repair_gurobi_like_sort"].weight = 4.0
         for name, weight in {
             "z_repair_gurobi_like_sort": 3.0,
             "z_repair_sort_range_shrink_first": 2.0,
+            "z_repair_mode_toggle_contextual": 2.5,
             "z_repair_joint_sort_colocated_flip": 2.0,
             "z_repair_spread_region_balance": 2.5,
             "z_repair_load_balance_idle_robot": 2.5,
@@ -576,6 +582,11 @@ class ResourceTimeALNSEngine:
         }.items():
             if name in arms["Z"]["repair"]:
                 arms["Z"]["repair"][name].weight = float(weight)
+        if profile == "route_polish_exact":
+            if "z_repair_mode_toggle_contextual" in arms["Z"]["repair"]:
+                arms["Z"]["repair"]["z_repair_mode_toggle_contextual"].weight = 6.0
+            if "z_repair_gurobi_like_sort" in arms["Z"]["repair"]:
+                arms["Z"]["repair"]["z_repair_gurobi_like_sort"].weight = 4.0
         if "y_repair_station_rank_permutation" in arms["Y"]["repair"]:
             arms["Y"]["repair"]["y_repair_station_rank_permutation"].weight = 3.0
         if "y_repair_station_rank_permutation" in arms["Y"]["repair"] and "y_destroy_rank_window_release" in arms["Y"]["destroy"]:
@@ -604,6 +615,9 @@ class ResourceTimeALNSEngine:
             arms["Y"]["repair"]["y_repair_ejection_chain_balance"].weight = 2.75
         if "z_destroy_critical_path_window" in arms["Z"]["destroy"]:
             arms["Z"]["destroy"]["z_destroy_critical_path_window"].weight = 3.25
+        if profile == "route_polish_exact":
+            if "z_destroy_critical_path_window" in arms["Z"]["destroy"]:
+                arms["Z"]["destroy"]["z_destroy_critical_path_window"].weight = 6.0
         self._apply_operator_weight_floors(arms)
         return arms
 
@@ -655,6 +669,8 @@ class ResourceTimeALNSEngine:
 
     def _available_layers(self, iter_id: int) -> List[str]:
         all_layers = list(getattr(self, "resource_layers", ["X", "Y", "Z"]))
+        if bool(getattr(self.cfg, "sp1_no_split", False)):
+            all_layers = [layer for layer in all_layers if str(layer).upper() not in {"X", "XZ"}]
         self.last_xyz_skip_reason = ""
         configured_order_text = str(getattr(self.cfg, "revolving_layer_order", "") or "").strip()
         configured_revolving_order = {
@@ -874,6 +890,14 @@ class ResourceTimeALNSEngine:
 
     def _sample_operator_pair(self, layer: str) -> Tuple[str, str]:
         if str(layer).upper() == "Y":
+            profile = str(getattr(self.cfg, "resource_operator_profile", "") or "").strip().lower()
+            if (
+                profile == "no_split_y_focus"
+                and "y_destroy_global_station_release" in self.operator_arms["Y"]["destroy"]
+                and "y_repair_global_route_balance" in self.operator_arms["Y"]["repair"]
+                and int(getattr(self, "layer_exec_since_update", {}).get("Y", 0)) % 3 == 0
+            ):
+                return "y_destroy_global_station_release", "y_repair_global_route_balance"
             if (
                 "y_destroy_rank_window_release" in self.operator_arms["Y"]["destroy"]
                 and "y_repair_station_rank_permutation" in self.operator_arms["Y"]["repair"]
@@ -992,6 +1016,8 @@ class ResourceTimeALNSEngine:
         repair_name: str,
         degree: int,
     ) -> Optional[Dict[str, object]]:
+        if bool(getattr(self.cfg, "sp1_no_split", False)):
+            return None
         candidate = base_config.clone()
         destroy_ctx = X_DESTROY_OPERATORS[str(destroy_name)](self.opt, candidate, self.rng, degree)
         if not bool(destroy_ctx.get("success", False)):
@@ -1179,6 +1205,27 @@ class ResourceTimeALNSEngine:
             x_destroy, x_repair = self._sample_operator_pair("X")
             y_destroy, y_repair = self._sample_operator_pair("Y")
             z_destroy, z_repair = self._sample_operator_pair("Z")
+        no_split_full_yz_mode = bool(
+            False
+            and
+            bool(getattr(self.cfg, "sp1_no_split", False))
+            and str(getattr(self.cfg, "resource_operator_profile", "") or "").strip().lower() == "no_split_y_focus"
+            and "y_destroy_global_station_release" in self.operator_arms["Y"]["destroy"]
+            and "y_repair_global_route_balance" in self.operator_arms["Y"]["repair"]
+        )
+        if no_split_full_yz_mode:
+            y_destroy = "y_destroy_global_station_release"
+            y_repair = "y_repair_global_route_balance"
+            z_destroy = "z_destroy_full_rebuild"
+            full_z_strategies = [
+                "z_repair_gurobi_like_sort",
+                "z_repair_flip_compact",
+                "z_repair_multistack_cover_compact",
+                "z_repair_greedy_fallback",
+            ]
+            full_z_pick = int(getattr(self, "no_split_full_z_pick_count", 0))
+            self.no_split_full_z_pick_count = int(full_z_pick) + 1
+            z_repair = str(full_z_strategies[int(full_z_pick) % len(full_z_strategies)])
         action_signature = (
             "XYZ",
             str(x_destroy),
@@ -1198,22 +1245,29 @@ class ResourceTimeALNSEngine:
         local_xyz_degree = max(1, int(getattr(self.cfg, "resource_xyz_local_yz_degree", 3)))
         if bool(getattr(self.cfg, "resource_xyz_use_local_x_window", False)):
             x_degree = max(1, int(getattr(self.cfg, "resource_xyz_local_x_degree", 1)))
-        x_payload = self._apply_x_candidate_to_config(
-            base_config=self.current_config,
-            base_eval=self.current_eval,
-            iter_id=int(iter_id),
-            destroy_name=str(x_destroy),
-            repair_name=str(x_repair),
-            degree=int(x_degree),
-        )
-        if x_payload is None:
-            self.last_xyz_skip_reason = f"x_payload_fail:{x_destroy}+{x_repair}"
-            return None
-        candidate = x_payload["config"]
-        touched_ids = set(int(x) for x in (x_payload.get("affected_ids", set()) or set()))
-        fallback_used = bool(x_payload.get("fallback_used", False))
-        projection_count = int(x_payload.get("projection_repaired_subtask_count", 0))
-        projection_mode = str(x_payload.get("projection_mode", ""))
+        if bool(getattr(self.cfg, "sp1_no_split", False)):
+            candidate = self.current_config.clone()
+            touched_ids = set()
+            fallback_used = False
+            projection_count = 0
+            projection_mode = "sp1_no_split_skip_x"
+        else:
+            x_payload = self._apply_x_candidate_to_config(
+                base_config=self.current_config,
+                base_eval=self.current_eval,
+                iter_id=int(iter_id),
+                destroy_name=str(x_destroy),
+                repair_name=str(x_repair),
+                degree=int(x_degree),
+            )
+            if x_payload is None:
+                self.last_xyz_skip_reason = f"x_payload_fail:{x_destroy}+{x_repair}"
+                return None
+            candidate = x_payload["config"]
+            touched_ids = set(int(x) for x in (x_payload.get("affected_ids", set()) or set()))
+            fallback_used = bool(x_payload.get("fallback_used", False))
+            projection_count = int(x_payload.get("projection_repaired_subtask_count", 0))
+            projection_mode = str(x_payload.get("projection_mode", ""))
 
         yz_degree = int(local_xyz_degree) if bool(local_xyz_mode) else max(1, int(budget))
         y_plan = plan_y_candidate(self.opt, candidate, str(y_destroy), str(y_repair), self.rng, max(1, int(yz_degree)))
@@ -1229,37 +1283,80 @@ class ResourceTimeALNSEngine:
         touched_ids.update(int(x) for x in (y_payload.get("affected_ids", set()) or set()))
         fallback_used = bool(fallback_used or y_payload.get("fallback_used", False))
 
-        z_repair_attempts = [
-            str(z_repair),
-            "z_repair_multistack_cover_compact",
-            "z_repair_gurobi_like_sort",
-            "z_repair_spread_region_balance",
-            "z_repair_greedy_fallback",
-        ]
-        z_repair_attempts = list(dict.fromkeys(z_repair_attempts))
-        z_plan = None
-        z_payload = None
-        z_failure_reason = ""
         z_repair_used = str(z_repair)
-        for z_repair_try in z_repair_attempts:
-            z_plan_i = plan_z_candidate(self.opt, candidate, str(z_destroy), str(z_repair_try), self.rng, max(1, int(yz_degree)))
-            if not bool(z_plan_i.get("success", False)):
-                z_failure_reason = f"plan_fail:{z_destroy}+{z_repair_try}"
-                continue
-            z_payload_i = apply_exact_z_plan(self.opt, candidate, z_plan_i, self.rng)
-            if not bool(z_payload_i.get("success", False)):
-                z_failure_reason = f"apply_fail:{z_destroy}+{z_repair_try}:{z_payload_i.get('reason', '')}"
-                continue
-            z_plan = z_plan_i
-            z_payload = z_payload_i
-            z_repair_used = str(z_repair_try)
-            break
-        if z_plan is None or z_payload is None:
-            self.last_xyz_skip_reason = f"z_repair_fail:{z_failure_reason}"
-            return None
-        candidate = z_payload["config"]
-        touched_ids.update(int(x) for x in (z_payload.get("affected_ids", set()) or set()))
-        fallback_used = bool(fallback_used or z_payload.get("fallback_used", False))
+        if bool(no_split_full_yz_mode):
+            candidate = candidate.clone()
+            for row in candidate.subtasks.values():
+                row.z_tasks = []
+            candidate.next_task_id = 0
+            used_totes = set()
+            rebuilt_ids = set()
+            full_z_failed_reason = ""
+            for row in sorted(
+                candidate.subtasks.values(),
+                key=lambda item: (
+                    int(item.station_id if int(item.station_id) >= 0 else 10**9),
+                    int(item.station_rank if int(item.station_rank) >= 0 else 10**9),
+                    int(item.subtask_id),
+                ),
+            ):
+                ok, descriptors, meta = build_full_z_assignment(
+                    self.opt,
+                    candidate,
+                    int(row.subtask_id),
+                    preferred_stack_ids=[],
+                    strategy=str(z_repair),
+                    allow_fallback=True,
+                    external_used_totes=set(int(x) for x in used_totes),
+                    rng=self.rng,
+                )
+                if not bool(ok):
+                    full_z_failed_reason = f"full_z_fail:{row.subtask_id}:{meta.get('reason', '')}"
+                    break
+                row.z_tasks = list(descriptors)
+                rebuilt_ids.add(int(row.subtask_id))
+                fallback_used = bool(fallback_used or meta.get("fallback_used", False))
+                for descriptor in descriptors:
+                    for tote_id in getattr(descriptor, "target_tote_ids", ()) or ():
+                        used_totes.add(int(tote_id))
+            if full_z_failed_reason:
+                self.last_xyz_skip_reason = full_z_failed_reason
+                return None
+            candidate.rebuild_indices()
+            touched_ids.update(int(x) for x in rebuilt_ids)
+            z_repair_used = f"full_z:{z_repair}"
+        else:
+            z_repair_attempts = [
+                str(z_repair),
+                "z_repair_multistack_cover_compact",
+                "z_repair_flip_compact",
+                "z_repair_gurobi_like_sort",
+                "z_repair_spread_region_balance",
+                "z_repair_greedy_fallback",
+            ]
+            z_repair_attempts = list(dict.fromkeys(z_repair_attempts))
+            z_plan = None
+            z_payload = None
+            z_failure_reason = ""
+            for z_repair_try in z_repair_attempts:
+                z_plan_i = plan_z_candidate(self.opt, candidate, str(z_destroy), str(z_repair_try), self.rng, max(1, int(yz_degree)))
+                if not bool(z_plan_i.get("success", False)):
+                    z_failure_reason = f"plan_fail:{z_destroy}+{z_repair_try}"
+                    continue
+                z_payload_i = apply_exact_z_plan(self.opt, candidate, z_plan_i, self.rng)
+                if not bool(z_payload_i.get("success", False)):
+                    z_failure_reason = f"apply_fail:{z_destroy}+{z_repair_try}:{z_payload_i.get('reason', '')}"
+                    continue
+                z_plan = z_plan_i
+                z_payload = z_payload_i
+                z_repair_used = str(z_repair_try)
+                break
+            if z_plan is None or z_payload is None:
+                self.last_xyz_skip_reason = f"z_repair_fail:{z_failure_reason}"
+                return None
+            candidate = z_payload["config"]
+            touched_ids.update(int(x) for x in (z_payload.get("affected_ids", set()) or set()))
+            fallback_used = bool(fallback_used or z_payload.get("fallback_used", False))
         affected_cap = max(
             1,
             int(
@@ -1595,6 +1692,9 @@ class ResourceTimeALNSEngine:
         }
 
     def _build_xz_exact_candidate(self, iter_id: int, budget: int) -> Optional[Dict[str, object]]:
+        if bool(getattr(self.cfg, "sp1_no_split", False)):
+            self.last_xyz_skip_reason = "xz_disabled_sp1_no_split"
+            return None
         x_destroy, x_repair = self._sample_operator_pair("X")
         z_destroy, z_repair = self._sample_operator_pair("Z")
         action_signature = (

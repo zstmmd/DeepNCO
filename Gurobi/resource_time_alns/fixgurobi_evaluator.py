@@ -80,8 +80,8 @@ class FixGurobiEvaluator:
         )
 
     def _scope_for_layer(self, layer: str) -> str:
+        layer_name = str(layer or "").upper()
         if bool(getattr(self.cfg, "resource_revolving_mode", False)) and bool(getattr(self.cfg, "resource_revolving_enable_u_layer", False)):
-            layer_name = str(layer or "").upper()
             if layer_name == "X":
                 return "Y"
             if layer_name == "XZ":
@@ -103,9 +103,14 @@ class FixGurobiEvaluator:
                 return "XYZ"
             if layer_name in {"XYZ", "XYZU"}:
                 return "LOCALXYZ" if layer_name == "XYZ" else "XYZU"
+        if (
+            bool(getattr(self.cfg, "sp1_no_split", False))
+            and str(getattr(self.cfg, "resource_operator_profile", "") or "").strip().lower() == "no_split_y_focus"
+            and layer_name in {"Y", "Z"}
+        ):
+            return "XY"
         if bool(getattr(self.cfg, "fixgurobi_force_xyz_scope", False)):
             return "XYZ"
-        layer_name = str(layer or "").upper()
         if layer_name == "U":
             return "XYZU"
         if layer_name in {"X", "Y", "Z", "XYZ", "XYZU"}:
@@ -368,7 +373,7 @@ class FixGurobiEvaluator:
             enable_warm_candidate_stack_prune=bool(getattr(self.cfg, "fixgurobi_enable_warm_candidate_stack_prune", False)),
             candidate_station_topk_per_stack=int(getattr(self.cfg, "fixgurobi_candidate_station_topk_per_stack", 999) or 999),
             warm_start_subtask_ordering=str(getattr(self.cfg, "fixgurobi_warm_start_subtask_ordering", "default") or "default"),
-            route_pickup_neighbor_limit=0,
+            route_pickup_neighbor_limit=int(getattr(self.cfg, "fixgurobi_route_pickup_neighbor_limit", 0) or 0),
             enable_scale_adaptive_candidate_prune=bool(getattr(self.cfg, "fixgurobi_enable_scale_adaptive_candidate_prune", False)),
             gurobi_output=bool(getattr(self.cfg, "fixgurobi_output", False)),
             enable_warm_start=bool(getattr(self.cfg, "fixgurobi_use_warm_bound", True)),

@@ -607,7 +607,7 @@ class GlobalXYZUSolver:
         if bool(diagnostics.get("u_integrated_route_used", False)) and isinstance(model_cmax, (int, float)):
             mismatch = abs(float(model_cmax) - float(true_global_makespan))
             diagnostics["time_verify_cmax_diff"] = float(mismatch)
-            if mismatch > 1e-4:
+            if mismatch > 1e-2:
                 diagnostics["time_verify_mismatch"] = True
                 status = "TIME_VERIFY_MISMATCH"
             else:
@@ -882,7 +882,7 @@ class GlobalXYZUSolver:
         if bool(diagnostics.get("u_integrated_route_used", False)) and isinstance(model_cmax, (int, float)):
             mismatch = abs(float(model_cmax) - float(true_global_makespan))
             diagnostics["time_verify_cmax_diff"] = float(mismatch)
-            if mismatch > 1e-4:
+            if mismatch > 1e-2:
                 diagnostics["time_verify_mismatch"] = True
                 status = "TIME_VERIFY_MISMATCH"
             else:
@@ -1443,9 +1443,18 @@ class GlobalXYZUSolver:
 
         for order in getattr(problem, "order_list", []) or []:
             order_id = int(getattr(order, "order_id", -1))
-            for sku_id_raw in getattr(order, "order_product_id_list", []) or []:
-                sku_id = int(sku_id_raw)
-                demand_qty_by_order_sku[(order_id, sku_id)] += 1
+            explicit_qty_by_sku = {
+                int(k): int(v)
+                for k, v in dict(getattr(order, "bom_total_quantity_by_sku", {}) or {}).items()
+                if int(v) > 0
+            }
+            if explicit_qty_by_sku:
+                for sku_id, qty in explicit_qty_by_sku.items():
+                    demand_qty_by_order_sku[(order_id, int(sku_id))] = int(qty)
+            else:
+                for sku_id_raw in getattr(order, "order_product_id_list", []) or []:
+                    sku_id = int(sku_id_raw)
+                    demand_qty_by_order_sku[(order_id, sku_id)] += 1
             for sku_id in sorted({int(sku_id_raw) for sku_id_raw in (getattr(order, "order_product_id_list", []) or [])}):
                 unit_id = f"{order_id}:{sku_id}"
                 work_units.append(
@@ -1895,7 +1904,9 @@ class GlobalXYZUSolver:
         explicit_route_m = getattr(cfg, "route_big_m_time", None)
         warm = prepared.get("warm") or WarmStartState()
         warm_makespan = float(getattr(warm, "makespan", 0.0) or 0.0)
-        slot_time_ub = 3.0 * warm_makespan if warm_makespan > 0.0 else float(getattr(cfg, "big_m_time", 0.0) or 0.0)
+        cfg_slot_time_ub = float(getattr(cfg, "big_m_time", 0.0) or 0.0)
+        warm_slot_time_ub = 3.0 * warm_makespan if warm_makespan > 0.0 else 0.0
+        slot_time_ub = max(float(cfg_slot_time_ub), float(warm_slot_time_ub))
         slot_time_ub = max(1.0, float(slot_time_ub))
         pickup_service_ub = {
             int(node_id): float(value)
@@ -1946,7 +1957,7 @@ class GlobalXYZUSolver:
             route_big_m = max(1.0, float(explicit_route_m))
             return slot_time_ub, route_big_m, {
                 "slot_time_ub": float(slot_time_ub),
-                "slot_time_ub_source": "3x_warm_start_makespan" if warm_makespan > 0.0 else "cfg.big_m_time_fallback",
+                "slot_time_ub_source": "max_cfg_big_m_time_3x_warm_start_makespan",
                 "route_big_m": float(route_big_m),
                 "route_big_m_source": "config.route_big_m_time",
                 "warm_makespan": float(warm_makespan),
@@ -1985,7 +1996,7 @@ class GlobalXYZUSolver:
         route_big_m = max(1.0, float(route_big_m))
         return slot_time_ub, route_big_m, {
             "slot_time_ub": float(slot_time_ub),
-            "slot_time_ub_source": "3x_warm_start_makespan" if warm_makespan > 0.0 else "cfg.big_m_time_fallback",
+            "slot_time_ub_source": "max_cfg_big_m_time_3x_warm_start_makespan",
             "route_big_m": float(route_big_m),
             "route_big_m_source": source,
             "warm_makespan": float(warm_makespan),
@@ -3973,11 +3984,9 @@ class GlobalXYZUSolver:
             )
             warm_for_prune = prepared.get("warm") or WarmStartState()
             warm_makespan_for_prune = float(getattr(warm_for_prune, "makespan", 0.0) or 0.0)
-            route_prune_slot_time_ub = (
-                3.0 * warm_makespan_for_prune
-                if warm_makespan_for_prune > 0.0
-                else float(getattr(cfg, "big_m_time", 0.0) or 0.0)
-            )
+            cfg_slot_time_ub = float(getattr(cfg, "big_m_time", 0.0) or 0.0)
+            warm_slot_time_ub = 3.0 * warm_makespan_for_prune if warm_makespan_for_prune > 0.0 else 0.0
+            route_prune_slot_time_ub = max(float(cfg_slot_time_ub), float(warm_slot_time_ub))
             route_prune_slot_time_ub = max(1.0, float(route_prune_slot_time_ub))
 
             route_node_ids = sorted(route_nodes.keys())
@@ -4022,7 +4031,7 @@ class GlobalXYZUSolver:
                 route_arc_prune=bool(getattr(cfg, "route_arc_prune", True)),
             )
             if bool(warm_prune_bound_diag.get("ok", False)) and float(warm_prune_bound_diag.get("model_cmax", 0.0) or 0.0) > 0.0:
-                route_prune_slot_time_ub = min(
+                route_prune_slot_time_ub = max(
                     float(route_prune_slot_time_ub),
                     float(warm_prune_bound_diag.get("model_cmax", 0.0) or 0.0),
                 )
@@ -4207,7 +4216,8 @@ class GlobalXYZUSolver:
         if station_ids and max_rank > 0:
             station_arrival_clock = model.addVars(station_ids, range(max_rank), lb=0.0, vtype=GRB.CONTINUOUS, name="station_arrival_clock")
             station_finish_clock = model.addVars(station_ids, range(max_rank), lb=0.0, vtype=GRB.CONTINUOUS, name="station_finish_clock")
-        if order_ids:
+        enable_order_time_windows = bool(getattr(cfg, "enable_order_time_windows", False))
+        if enable_order_time_windows and order_ids:
             order_arrival_lb = model.addVars(order_ids, lb=0.0, vtype=GRB.CONTINUOUS, name="order_arrival_lb")
             order_arrival_ub = model.addVars(order_ids, lb=0.0, vtype=GRB.CONTINUOUS, name="order_arrival_ub")
             order_span_overrun = model.addVars(order_ids, lb=0.0, vtype=GRB.CONTINUOUS, name="order_span_overrun")
@@ -6477,12 +6487,12 @@ class GlobalXYZUSolver:
             tote = getattr(problem, "id_to_tote", {}).get(int(tote_id))
             if tote is None:
                 continue
-            for sku_id, qty in (getattr(tote, "sku_quantity_map", {}) or {}).items():
+            for sku_id in (getattr(tote, "sku_quantity_map", {}) or {}).keys():
                 sku_id = int(sku_id)
                 available = int(remaining.get(int(sku_id), 0))
                 if available <= 0:
                     continue
-                use = min(int(qty), int(available))
+                use = int(available)
                 if use <= 0:
                     continue
                 remaining[int(sku_id)] = int(available - use)

@@ -92,9 +92,13 @@ def _problem_summary(problem: Any, scale: str) -> Dict[str, Any]:
     total_quantities = [int(getattr(order, "order_skus_number", 0) or 0) for order in orders]
     demand_quantities_by_sku: List[int] = []
     for order in orders:
-        counts_by_sku: Dict[int, int] = {}
-        for sku_id in getattr(order, "order_product_id_list", []) or []:
-            counts_by_sku[int(sku_id)] = int(counts_by_sku.get(int(sku_id), 0)) + 1
+        counts_by_sku: Dict[int, int] = {
+            int(k): int(v)
+            for k, v in dict(getattr(order, "bom_total_quantity_by_sku", {}) or {}).items()
+        }
+        if not counts_by_sku:
+            for sku_id in getattr(order, "order_product_id_list", []) or []:
+                counts_by_sku[int(sku_id)] = int(counts_by_sku.get(int(sku_id), 0)) + 1
         demand_quantities_by_sku.extend(int(qty) for qty in counts_by_sku.values())
     unique_sku_per_order = ""
     if unique_counts:
@@ -242,6 +246,12 @@ def main() -> None:
     parser.add_argument("--max-candidate-stacks-per-order", type=int, default=0)
     parser.add_argument("--candidate-station-topk-per-stack", type=int, default=0)
     parser.add_argument("--route-pickup-neighbor-limit", type=int, default=5)
+    parser.add_argument("--big-m-time", type=float, default=2000.0)
+    parser.add_argument("--route-big-m-time", type=float, default=0.0)
+    parser.add_argument("--gurobi-mip-focus", type=int, default=None)
+    parser.add_argument("--gurobi-heuristics", type=float, default=None)
+    parser.add_argument("--disable-warm-start", action="store_true", default=False)
+    parser.add_argument("--disable-warm-start-sp4", action="store_true", default=False)
     parser.add_argument("--kitting-span-penalty-weight", type=float, default=5.0)
     parser.add_argument("--deadline-penalty-weight", type=float, default=1000.0)
     parser.add_argument("--disable-order-time-windows", action="store_true", default=False)
@@ -282,19 +292,23 @@ def main() -> None:
                     mip_gap=float(args.mip_gap),
                     candidate_stack_topk=int(args.candidate_stack_topk),
                     max_rank=int(args.max_rank),
-                    enable_warm_start=True,
+                    enable_warm_start=not bool(args.disable_warm_start),
                     write_lp=False,
                     gurobi_output=bool(args.show_gurobi),
                     max_candidate_stacks_per_order=int(args.max_candidate_stacks_per_order),
                     enable_warm_candidate_stack_prune=False,
                     candidate_station_topk_per_stack=int(args.candidate_station_topk_per_stack),
                     route_pickup_neighbor_limit=int(args.route_pickup_neighbor_limit),
+                    big_m_time=float(args.big_m_time),
+                    route_big_m_time=(float(args.route_big_m_time) if float(args.route_big_m_time or 0.0) > 0.0 else None),
+                    gurobi_mip_focus=args.gurobi_mip_focus,
+                    gurobi_heuristics=args.gurobi_heuristics,
                     integrate_u_route=True,
                     route_arc_prune=not bool(args.disable_all_prune),
                     enable_route_time_window_arc_prune=not bool(args.disable_all_prune),
                     enable_route_load_interval_arc_prune=not bool(args.disable_all_prune),
                     u_same_slot_same_robot=True,
-                    warm_start_use_sp4=True,
+                    warm_start_use_sp4=not bool(args.disable_warm_start_sp4),
                     enable_sp4_fallback=False,
                     enable_order_time_windows=not bool(args.disable_order_time_windows),
                     kitting_span_penalty_weight=float(args.kitting_span_penalty_weight),
@@ -351,6 +365,9 @@ def main() -> None:
                         "runtime_sec": runtime,
                         "u_arc_count": int(diag.get("u_arc_count", 0) or 0),
                         "u_time_window_pruned_arc_count": int(diag.get("u_time_window_pruned_arc_count", 0) or 0),
+                        "model_var_count_total": int(diag.get("model_var_count_total", 0) or 0),
+                        "model_var_count_by_type": dict(diag.get("model_var_count_by_type", {}) or {}),
+                        "model_var_count_by_type_json": str(diag.get("model_var_count_by_type_json", "{}") or "{}"),
                         "solution_export_dir": solution_export_dir,
                     }
                 )

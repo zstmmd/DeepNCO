@@ -21,6 +21,7 @@ from problemDto.ofs_problem_dto import OFSProblemDTO
 
 class CreateOFSProblem:
     RUNTIME_SCALE_CONFIGS: Dict[str, Dict[str, Any]] = {}
+    CURRENT_MAP_SIZE_SUM: int = 0
 
     @staticmethod
     def _time_window_rng(base_seed: int, order_id: int) -> random.Random:
@@ -31,12 +32,14 @@ class CreateOFSProblem:
     def _assign_order_time_window(order: Order, base_seed: int = 0) -> None:
         est_sec = 0
         unique_sku_count = int(len(set(int(sku_id) for sku_id in (getattr(order, "order_product_id_list", []) or []))))
-        total_qty = int(len(getattr(order, "order_product_id_list", []) or []))
+        total_qty_map = getattr(order, "bom_total_quantity_by_sku", {}) or {}
+        total_qty = int(sum(int(v) for v in total_qty_map.values())) if total_qty_map else int(len(getattr(order, "order_product_id_list", []) or []))
         kitting_span_limit_sec = float(unique_sku_count * float(OFSConfig.ORDER_KITTING_SPAN_PER_UNIQUE_SKU_SEC))
+        map_size_sum = max(0, int(getattr(CreateOFSProblem, "CURRENT_MAP_SIZE_SUM", 0) or 0))
         rng = CreateOFSProblem._time_window_rng(base_seed=int(base_seed), order_id=int(getattr(order, "order_id", 0)))
         deadline_buffer_sec = float(rng.randint(int(OFSConfig.ORDER_LST_BUFFER_MIN_SEC), int(OFSConfig.ORDER_LST_BUFFER_MAX_SEC)))
         lst_sec = float(
-            float(OFSConfig.ORDER_LST_BASE_SEC)
+            float(map_size_sum) * 30.0
             + float(kitting_span_limit_sec)
             + float(total_qty) * float(OFSConfig.ORDER_LST_PER_QTY_SEC)
             + float(deadline_buffer_sec)
@@ -47,6 +50,7 @@ class CreateOFSProblem:
         order.total_qty = int(total_qty)
         order.unique_sku_count = int(unique_sku_count)
         order.deadline_buffer_sec = float(deadline_buffer_sec)
+        order.map_size_sum_for_lst = int(map_size_sum)
 
     @staticmethod
     def _expand_sku_ids_with_quantities(sku_ids: List[int], fixed_qty: int, qty_range: Tuple[int, int], rng: random.Random) -> List[int]:
@@ -60,6 +64,81 @@ class CreateOFSProblem:
             qty = int(rng.randint(low, high)) if use_range else int(low)
             expanded.extend([int(sku_id)] * int(qty))
         return expanded
+
+    @staticmethod
+    def _apply_bom_batch_quantities(
+            orders: List[Order],
+            batch_quantity_unit: int,
+            batch_quantity_range: Tuple[int, int],
+            base_seed: int = OFSConfig.RANDOM_SEED,
+    ) -> None:
+        if int(batch_quantity_unit or 0) <= 0 or len(batch_quantity_range or ()) != 2:
+            return
+        low = max(1, int(batch_quantity_range[0]))
+        high = max(low, int(batch_quantity_range[1]))
+        unit = max(1, int(batch_quantity_unit))
+        for order in orders or []:
+            order_id = int(getattr(order, "order_id", 0))
+            rng = CreateOFSProblem._time_window_rng(base_seed=int(base_seed) + 524287, order_id=order_id)
+            batch_quantity = int(unit * int(rng.randint(low, high)))
+            part_qty_by_sku: Dict[int, int] = defaultdict(int)
+            for sku_id in getattr(order, "order_product_id_list", []) or []:
+                part_qty_by_sku[int(sku_id)] += 1
+            total_qty_by_sku: Dict[int, int] = {}
+            for sku_id in sorted(part_qty_by_sku.keys()):
+                total_qty_by_sku[int(sku_id)] = int(part_qty_by_sku[int(sku_id)] * batch_quantity)
+            order.batch_quantity = int(batch_quantity)
+            order.bom_part_quantity_by_sku = {int(k): int(v) for k, v in sorted(part_qty_by_sku.items())}
+            order.bom_total_quantity_by_sku = {int(k): int(v) for k, v in sorted(total_qty_by_sku.items())}
+            order.order_product_id_list = sorted(int(k) for k in total_qty_by_sku.keys())
+            order.order_skus_number = int(sum(total_qty_by_sku.values()))
+            CreateOFSProblem._assign_order_time_window(order, base_seed=int(base_seed))
+
+    @staticmethod
+    def _ensure_demand_inventory_quantities(
+            orders: List[Order],
+            skus_list: List[SKUs],
+            tote_list: List[Tote],
+    ) -> None:
+        demand_by_sku: Dict[int, int] = defaultdict(int)
+        for order in orders or []:
+            for sku_id in getattr(order, "order_product_id_list", []) or []:
+                demand_by_sku[int(sku_id)] += 1
+        if not demand_by_sku:
+            return
+        sku_by_id = {int(sku.id): sku for sku in skus_list or []}
+        totes_by_sku: Dict[int, List[Tote]] = defaultdict(list)
+        stock_by_sku: Dict[int, int] = defaultdict(int)
+        for tote in tote_list or []:
+            for sku_id, qty in (getattr(tote, "sku_quantity_map", {}) or {}).items():
+                stock_by_sku[int(sku_id)] += int(qty)
+                totes_by_sku[int(sku_id)].append(tote)
+        for sku_id, demand_qty in sorted(demand_by_sku.items()):
+            deficit = int(demand_qty) - int(stock_by_sku.get(int(sku_id), 0))
+            if deficit <= 0:
+                continue
+            candidate_totes = totes_by_sku.get(int(sku_id), [])
+            if not candidate_totes:
+                continue
+            tote = sorted(candidate_totes, key=lambda item: int(getattr(item, "id", 0)))[0]
+            sku = sku_by_id.get(int(sku_id))
+            if sku is None:
+                continue
+            old_qty = int((getattr(tote, "sku_quantity_map", {}) or {}).get(int(sku_id), 0))
+            new_qty = int(old_qty + deficit)
+            tote.sku_quantity_map[int(sku_id)] = int(new_qty)
+            if sku in getattr(tote, "skus_list", []):
+                idx = tote.skus_list.index(sku)
+                if idx < len(tote.capacity):
+                    tote.capacity[idx] = int(new_qty)
+            else:
+                tote.skus_list.append(sku)
+                tote.capacity.append(int(new_qty))
+            sku.tote_quantity_map[int(tote.id)] = int(new_qty)
+            for idx, tote_id in enumerate(list(getattr(sku, "storeToteList", []) or [])):
+                if int(tote_id) == int(tote.id) and idx < len(sku.storeQuantityList):
+                    sku.storeQuantityList[idx] = int(new_qty)
+                    break
 
     @staticmethod
     def generate_problem_by_scale(scale: str = "SMALL", seed: int = OFSConfig.RANDOM_SEED) -> OFSProblemDTO:
@@ -127,6 +206,8 @@ class CreateOFSProblem:
         rob_n, st_n, tote_n = cfg["resources"]
         ord_n, sku_n = cfg["data"]
         bom_types, bom_qty = cfg["bom_complexity"]
+        warehouse_block_height = int(cfg.get("warehouse_block_height", OFSConfig.WAREHOUSE_BLOCK_HEIGHT))
+        CreateOFSProblem.CURRENT_MAP_SIZE_SUM = int(map_L) + int(map_W)
         exact_bom_sku_count = int(cfg.get("exact_bom_sku_count", 0))
         exact_shared_bom_sku_count = int(cfg.get("exact_shared_bom_sku_count", 0))
         exact_disjoint_bom_sku_count = int(cfg.get("exact_disjoint_bom_sku_count", 0))
@@ -140,6 +221,8 @@ class CreateOFSProblem:
         exact_disjoint_bom_sku_quantity_range = tuple(cfg.get("exact_disjoint_bom_sku_quantity_range", ()))
         exact_order_sku_quantity_range = tuple(cfg.get("exact_order_sku_quantity_range", ()))
         bom_quantity_range = tuple(cfg.get("bom_quantity_range", ()))
+        bom_batch_quantity_unit = int(cfg.get("bom_batch_quantity_unit", 0) or 0)
+        bom_batch_quantity_range = tuple(cfg.get("bom_batch_quantity_range", ()))
         exact_demand_sku_from_tail = bool(cfg.get("exact_demand_sku_from_tail", False))
         exact_demand_sku_strategy = str(cfg.get("exact_demand_sku_strategy", "") or "")
         target_stack_count = int(cfg.get("target_stack_count", 0) or 0)
@@ -168,6 +251,7 @@ class CreateOFSProblem:
             tote_num=tote_n,
             station_num=st_n,
             workstation_rows=3,
+            warehouse_block_height=warehouse_block_height,
             bom_config=(bom_types, bom_qty),
             imbalance_profile=imbalance_profile,
             exact_bom_sku_count=exact_bom_sku_count,
@@ -183,6 +267,8 @@ class CreateOFSProblem:
             exact_disjoint_bom_sku_quantity_range=exact_disjoint_bom_sku_quantity_range,
             exact_order_sku_quantity_range=exact_order_sku_quantity_range,
             bom_quantity_range=bom_quantity_range,
+            bom_batch_quantity_unit=int(bom_batch_quantity_unit),
+            bom_batch_quantity_range=bom_batch_quantity_range,
             exact_demand_sku_from_tail=exact_demand_sku_from_tail,
             exact_demand_sku_strategy=exact_demand_sku_strategy,
             target_stack_count=target_stack_count,
@@ -237,6 +323,8 @@ class CreateOFSProblem:
             exact_disjoint_bom_sku_quantity_range: Tuple[int, int] = (),
             exact_order_sku_quantity_range: Tuple[int, int] = (),
             bom_quantity_range: Tuple[int, int] = (),
+            bom_batch_quantity_unit: int = 0,
+            bom_batch_quantity_range: Tuple[int, int] = (),
             exact_demand_sku_from_tail: bool = False,
             exact_demand_sku_strategy: str = "",
             target_stack_count: int = 0,
@@ -252,6 +340,7 @@ class CreateOFSProblem:
             bom_colocated_sku_copy_count: int = 2,
             bom_colocated_chunked_by_stack: bool = False,
             base_seed: int = OFSConfig.RANDOM_SEED,
+            warehouse_block_height: int = None,
     ) -> OFSProblemDTO:
         """
         构造并返回一个 OFSProblemDTO 实例。
@@ -262,7 +351,7 @@ class CreateOFSProblem:
         map_ = WarehouseMap(
             OFSConfig.WAREHOUSE_BLOCK_WIDTH,
             OFSConfig.WAREHOUSE_BLOCK_LENGTH,
-            OFSConfig.WAREHOUSE_BLOCK_HEIGHT,
+            int(warehouse_block_height or OFSConfig.WAREHOUSE_BLOCK_HEIGHT),
             warehouse_length_block_number,
             warehouse_width_block_number,
             station_num,
@@ -406,43 +495,55 @@ class CreateOFSProblem:
                 initial_unassigned_skus_per_tote=int(inventory_initial_unassigned_skus_per_tote),
                 max_sku_stack_count=int(inventory_max_sku_stack_count),
             )
-            if defer_exact_demand:
-                redundancy_target = CreateOFSProblem._parse_redundancy_strategy(exact_demand_sku_strategy)
-                if redundancy_target is not None:
-                    next_tote_id = max([int(getattr(tote, "id", -1)) for tote in tote_list] + [-1]) + 1
-                    added_totes = CreateOFSProblem._ensure_exact_demand_redundancy(
-                        skus_list=skus_list_obj,
-                        stack_list=final_stack_list,
-                        exact_bom_sku_count=int(exact_bom_sku_count),
-                        exact_disjoint_bom_sku_count=int(exact_disjoint_bom_sku_count),
-                        exact_order_sku_counts=tuple(int(v) for v in (exact_order_sku_counts or ())),
-                        exact_remap_existing_bom_skus=bool(exact_remap_existing_bom_skus),
-                        existing_orders=orders,
-                        order_num=int(order_num),
-                        target_min=int(redundancy_target[0]),
-                        target_max=int(redundancy_target[1]),
-                        next_tote_id=int(next_tote_id),
-                    )
-                    tote_list.extend(added_totes)
-                CreateOFSProblem._assign_exact_demands_from_inventory(
-                    orders=orders,
+
+        if defer_exact_demand:
+            redundancy_target = CreateOFSProblem._parse_redundancy_strategy(exact_demand_sku_strategy)
+            if redundancy_target is not None:
+                next_tote_id = max([int(getattr(tote, "id", -1)) for tote in tote_list] + [-1]) + 1
+                added_totes = CreateOFSProblem._ensure_exact_demand_redundancy(
                     skus_list=skus_list_obj,
                     stack_list=final_stack_list,
                     exact_bom_sku_count=int(exact_bom_sku_count),
-                    exact_shared_bom_sku_count=int(exact_shared_bom_sku_count),
                     exact_disjoint_bom_sku_count=int(exact_disjoint_bom_sku_count),
                     exact_order_sku_counts=tuple(int(v) for v in (exact_order_sku_counts or ())),
                     exact_remap_existing_bom_skus=bool(exact_remap_existing_bom_skus),
-                    exact_bom_sku_quantity=int(exact_bom_sku_quantity),
-                    exact_shared_bom_sku_quantity=int(exact_shared_bom_sku_quantity),
-                    exact_disjoint_bom_sku_quantity=int(exact_disjoint_bom_sku_quantity),
-                    exact_bom_sku_quantity_range=exact_bom_sku_quantity_range,
-                    exact_shared_bom_sku_quantity_range=exact_shared_bom_sku_quantity_range,
-                    exact_disjoint_bom_sku_quantity_range=exact_disjoint_bom_sku_quantity_range,
-                    strategy=str(exact_demand_sku_strategy),
-                    base_seed=int(base_seed),
+                    existing_orders=orders,
+                    order_num=int(order_num),
+                    target_min=int(redundancy_target[0]),
+                    target_max=int(redundancy_target[1]),
+                    next_tote_id=int(next_tote_id),
                 )
-            redundancy_summary = CreateOFSProblem._compute_demanded_sku_redundancy_summary(orders, final_stack_list, target_distinct_stacks=0)
+                tote_list.extend(added_totes)
+            CreateOFSProblem._assign_exact_demands_from_inventory(
+                orders=orders,
+                skus_list=skus_list_obj,
+                stack_list=final_stack_list,
+                exact_bom_sku_count=int(exact_bom_sku_count),
+                exact_shared_bom_sku_count=int(exact_shared_bom_sku_count),
+                exact_disjoint_bom_sku_count=int(exact_disjoint_bom_sku_count),
+                exact_order_sku_counts=tuple(int(v) for v in (exact_order_sku_counts or ())),
+                exact_remap_existing_bom_skus=bool(exact_remap_existing_bom_skus),
+                exact_bom_sku_quantity=int(exact_bom_sku_quantity),
+                exact_shared_bom_sku_quantity=int(exact_shared_bom_sku_quantity),
+                exact_disjoint_bom_sku_quantity=int(exact_disjoint_bom_sku_quantity),
+                exact_bom_sku_quantity_range=exact_bom_sku_quantity_range,
+                exact_shared_bom_sku_quantity_range=exact_shared_bom_sku_quantity_range,
+                exact_disjoint_bom_sku_quantity_range=exact_disjoint_bom_sku_quantity_range,
+                strategy=str(exact_demand_sku_strategy),
+                base_seed=int(base_seed),
+            )
+        CreateOFSProblem._apply_bom_batch_quantities(
+            orders=orders,
+            batch_quantity_unit=int(bom_batch_quantity_unit),
+            batch_quantity_range=tuple(bom_batch_quantity_range or ()),
+            base_seed=int(base_seed),
+        )
+        CreateOFSProblem._ensure_demand_inventory_quantities(
+            orders=orders,
+            skus_list=skus_list_obj,
+            tote_list=tote_list,
+        )
+        redundancy_summary = CreateOFSProblem._compute_demanded_sku_redundancy_summary(orders, final_stack_list, target_distinct_stacks=0)
 
         ofs_problem_dto.tote_list = tote_list
         ofs_problem_dto.id_to_tote = {tote.id: tote for tote in tote_list}
@@ -496,6 +597,8 @@ class CreateOFSProblem:
             "demand_profile_lambda": float(zrich_profile.get("lambda", 0.0)) if zrich_profile else 0.0,
             "required_distinct_stacks": int(redundancy_summary.get("target_distinct_stacks", 0)),
             "demanded_sku_count": int(redundancy_summary.get("demanded_sku_count", 0)),
+            "bom_batch_quantity_unit": int(bom_batch_quantity_unit or 0),
+            "bom_batch_quantity_range": [int(v) for v in tuple(bom_batch_quantity_range or ())],
         }
         if imbalance_profile == "zrich" and float(redundancy_summary.get("demanded_sku_ge_target_share", 0.0)) < 1.0 - 1e-9:
             raise ValueError(f"Z-rich redundancy guarantee violated: {redundancy_summary}")
@@ -1127,12 +1230,21 @@ class CreateOFSProblem:
             for stack_ids in bom_stack_groups.values()
             for stack_id in stack_ids
         }
-        while current_tote_id < int(tote_num):
+        desired_tote_count = max(
+            int(tote_num),
+            int(math.ceil(float(len(active_stacks)) * 5.5)),
+        )
+        while current_tote_id < int(desired_tote_count):
             available = [
                 stack for stack in active_stacks
                 if int(getattr(stack, "current_height", 0)) < int(getattr(stack, "max_height", 0))
                 and int(stack.stack_id) not in bom_stack_id_set
             ]
+            if not available:
+                available = [
+                    stack for stack in active_stacks
+                    if int(getattr(stack, "current_height", 0)) < int(getattr(stack, "max_height", 0))
+                ]
             if not available:
                 break
             stack = sorted(available, key=lambda item: (int(reserved_load_by_stack.get(int(item.stack_id), 0)), random.random(), int(item.stack_id)))[0]
@@ -1181,7 +1293,11 @@ class CreateOFSProblem:
                 return random.choice(hot_skus)
             return random.choice(cold_skus) if cold_skus else random.choice(hot_skus)
 
-        desired_tote_count = max(tote_num, hot_sku_count * 5)
+        desired_tote_count = max(
+            int(tote_num),
+            int(hot_sku_count * 5),
+            int(math.ceil(float(len(stack_list)) * 5.5)),
+        )
         unassigned_skus: Dict[int, SKUs] = {int(sku.id): sku for sku in skus_list}
         current_tote_id = 0
 
@@ -1261,6 +1377,33 @@ class CreateOFSProblem:
                     sku_quantity_map[sku] = int(random.randint(20, 60)) if sku in hot_skus else int(random.randint(10, 40))
                 tote_list.append(CreateOFSProblem._register_tote(stack, current_tote_id, sku_quantity_map))
                 current_tote_id += 1
+
+        while current_tote_id < desired_tote_count:
+            available_stacks = [
+                stack for stack in stack_list
+                if int(getattr(stack, "current_height", 0)) < int(getattr(stack, "max_height", 0))
+            ]
+            if not available_stacks:
+                break
+            available_stacks.sort(key=lambda item: (int(getattr(item, "current_height", 0)), random.random(), int(item.stack_id)))
+            stack = available_stacks[0]
+            tote_skus = []
+            for _ in range(random.randint(3, 5)):
+                attempts = 0
+                while attempts < 10:
+                    candidate = sample_sku_by_popularity()
+                    if candidate not in tote_skus:
+                        tote_skus.append(candidate)
+                        break
+                    attempts += 1
+            if not tote_skus:
+                break
+            sku_quantity_map = {
+                sku: (int(random.randint(20, 60)) if sku in hot_skus else int(random.randint(10, 40)))
+                for sku in tote_skus
+            }
+            tote_list.append(CreateOFSProblem._register_tote(stack, current_tote_id, sku_quantity_map))
+            current_tote_id += 1
 
         final_stack_list = [stack for stack in stack_list if stack.current_height > 0]
         return tote_list, final_stack_list

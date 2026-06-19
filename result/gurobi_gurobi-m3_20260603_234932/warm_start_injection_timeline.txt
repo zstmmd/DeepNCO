@@ -1,7 +1,0 @@
-[Warm Start Injection Timeline]
-warm_start_model_cmax=0.000000
-warm_start_route_end_max=0.000000
-warm_start_route_end_gap=0.000000
-time_violations:
-slot_times:
-route_steps:

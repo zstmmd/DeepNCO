@@ -211,6 +211,8 @@ def _build_fast_cfg(args: argparse.Namespace, case: str, log_dir: str) -> TRARun
         sp4_lkh_time_limit_seconds=int(profile["sp4_lkh_time_limit_seconds"]),
         exact_sp4_lkh_time_limit_seconds=int(profile["exact_sp4_lkh_time_limit_seconds"]),
     )
+    cfg.sp1_no_split = bool(getattr(args, "sp1_no_split", False))
+    cfg.resource_operator_profile = str(getattr(args, "operator_profile", profile.get("operator_profile", "baseline_safe")) or "baseline_safe")
     cfg.resource_eval_backend = "surrogate"
     cfg.fixgurobi_final_validation = False
     cfg.fixgurobi_time_limit_sec = 0.0
@@ -367,6 +369,268 @@ def _run_sparse_calibration(
         return payload
 
 
+def _unique_order_skus(order: Any) -> List[int]:
+    values: List[int] = []
+    unique_rows = getattr(order, "unique_sku_list", []) or []
+    for row in unique_rows:
+        sku_id = getattr(row, "sku_id", getattr(row, "id", row))
+        try:
+            sku = int(sku_id)
+        except Exception:
+            continue
+        if sku not in values:
+            values.append(sku)
+    if values:
+        return sorted(values)
+    for sku_id in getattr(order, "order_product_id_list", []) or []:
+        try:
+            sku = int(sku_id)
+        except Exception:
+            continue
+        if sku not in values:
+            values.append(sku)
+    return sorted(values)
+
+
+def _order_stack_features(problem: Any, order: Any) -> Dict[str, float]:
+    stack_ids = [int(v) for v in (getattr(order, "point_sku_quantity", {}) or {}).keys()]
+    points: List[tuple[float, float]] = []
+    for stack_id in stack_ids:
+        stack = getattr(problem, "point_to_stack", {}).get(int(stack_id))
+        if stack is None:
+            continue
+        points.append((float(stack.store_point.x), float(stack.store_point.y)))
+    if points:
+        avg_x = float(sum(pt[0] for pt in points) / len(points))
+        avg_y = float(sum(pt[1] for pt in points) / len(points))
+        min_x = float(min(pt[0] for pt in points))
+        max_x = float(max(pt[0] for pt in points))
+    else:
+        avg_x = avg_y = min_x = max_x = 0.0
+    best_station = 0
+    best_station_cost = float("inf")
+    for station_id, station in enumerate(getattr(problem, "station_list", []) or []):
+        if points:
+            cost = float(sum(abs(x - float(station.point.x)) + abs(y - float(station.point.y)) for x, y in points) / len(points))
+        else:
+            cost = 0.0
+        if (float(cost), int(station_id)) < (float(best_station_cost), int(best_station)):
+            best_station_cost = float(cost)
+            best_station = int(station_id)
+    raw_in = getattr(order, "order_in_time", None)
+    order_in = 0.0
+    if hasattr(raw_in, "timestamp"):
+        try:
+            order_in = float(raw_in.timestamp())
+        except Exception:
+            order_in = 0.0
+    return {
+        "order_in": float(order_in),
+        "lst": float(getattr(order, "lst_sec", 0.0) or 0.0),
+        "total_qty": float(getattr(order, "total_qty", 0.0) or 0.0),
+        "avg_x": float(avg_x),
+        "avg_y": float(avg_y),
+        "min_x": float(min_x),
+        "max_x": float(max_x),
+        "best_station": float(best_station),
+        "best_station_cost": float(best_station_cost),
+    }
+
+
+def _station_quota_pattern(station_count: int, item_count: int, pattern: str) -> List[int]:
+    station_count = max(1, int(station_count))
+    item_count = max(0, int(item_count))
+    base = item_count // station_count
+    rem = item_count % station_count
+    quotas = [int(base) for _ in range(station_count)]
+    if rem <= 0:
+        return quotas
+    if str(pattern) == "back":
+        order = list(range(station_count - 1, -1, -1))
+    elif str(pattern) == "middle":
+        mid = (station_count - 1) / 2.0
+        order = sorted(range(station_count), key=lambda sid: (abs(float(sid) - mid), int(sid)))
+    elif str(pattern) == "edges":
+        order = []
+        lo, hi = 0, station_count - 1
+        while lo <= hi:
+            order.append(lo)
+            if hi != lo:
+                order.append(hi)
+            lo += 1
+            hi -= 1
+    else:
+        order = list(range(station_count))
+    for sid in order[:rem]:
+        quotas[int(sid)] += 1
+    return quotas
+
+
+def _anchor_compact_station_assignments(problem: Any) -> Dict[int, tuple[int, int]]:
+    orders = list(getattr(problem, "order_list", []) or [])
+    station_count = len(list(getattr(problem, "station_list", []) or []))
+    if not orders or station_count <= 0:
+        return {}
+    features = {int(getattr(order, "order_id", -1)): _order_stack_features(problem, order) for order in orders}
+    earliest = min(orders, key=lambda order: (features[int(order.order_id)]["order_in"], int(order.order_id)))
+    latest = max(orders, key=lambda order: (features[int(order.order_id)]["order_in"], -int(order.order_id)))
+    assignments: Dict[int, tuple[int, int]] = {}
+    if int(earliest.order_id) != int(latest.order_id):
+        assignments[int(earliest.order_id)] = (0, 0)
+        assignments[int(latest.order_id)] = (station_count - 1, 0)
+    remaining = [order for order in orders if int(order.order_id) not in assignments]
+    inner_station_ids = list(range(1, max(1, station_count - 1)))
+    if not inner_station_ids:
+        for rank, order in enumerate(sorted(remaining, key=lambda row: int(row.order_id))):
+            assignments[int(order.order_id)] = (0, int(rank + len(assignments)))
+        return assignments
+    quotas = _station_quota_pattern(len(inner_station_ids), len(remaining), "middle")
+    station_quota = {int(station_id): int(quota) for station_id, quota in zip(inner_station_ids, quotas)}
+    singleton_stations = [int(station_id) for station_id in inner_station_ids if int(station_quota.get(int(station_id), 0)) == 1]
+    reserved_singletons: Dict[int, Any] = {}
+    if singleton_stations:
+        compact_rows = sorted(
+            remaining,
+            key=lambda order: (
+                float(features[int(order.order_id)]["max_x"] - features[int(order.order_id)]["min_x"]),
+                float(features[int(order.order_id)]["best_station_cost"]),
+                int(order.order_id),
+            ),
+        )
+        for station_id, order in zip(reversed(singleton_stations), compact_rows):
+            reserved_singletons[int(station_id)] = order
+        reserved_ids = {int(order.order_id) for order in reserved_singletons.values()}
+        remaining = [order for order in remaining if int(order.order_id) not in reserved_ids]
+    for station_id in inner_station_ids:
+        quota = int(station_quota.get(int(station_id), 0))
+        if quota <= 0:
+            continue
+        if int(station_id) in reserved_singletons:
+            assignments[int(reserved_singletons[int(station_id)].order_id)] = (int(station_id), 0)
+            continue
+        picked = sorted(
+            remaining,
+            key=lambda order: (
+                abs(float(features[int(order.order_id)]["best_station"]) - float(station_id)),
+                float(features[int(order.order_id)]["best_station_cost"]),
+                float(features[int(order.order_id)]["min_x"]),
+                int(order.order_id),
+            ),
+        )[:quota]
+        picked_ids = {int(order.order_id) for order in picked}
+        remaining = [order for order in remaining if int(order.order_id) not in picked_ids]
+        picked = sorted(
+            picked,
+            key=lambda order: (
+                float(features[int(order.order_id)]["best_station_cost"]),
+                float(features[int(order.order_id)]["order_in"]),
+                int(order.order_id),
+            ),
+        )
+        for rank, order in enumerate(picked):
+            assignments[int(order.order_id)] = (int(station_id), int(rank))
+    for order in remaining:
+        station_id = min(inner_station_ids, key=lambda sid: (sum(1 for st, _rank in assignments.values() if int(st) == int(sid)), int(sid)))
+        rank = sum(1 for st, _rank in assignments.values() if int(st) == int(station_id))
+        assignments[int(order.order_id)] = (int(station_id), int(rank))
+    return assignments
+
+
+def _run_xy_anchor_calibration(
+    *,
+    case: str,
+    args: argparse.Namespace,
+    elapsed_sec: float,
+    current_best_z: float,
+    case_root: str,
+) -> Dict[str, Any]:
+    if not bool(getattr(args, "xy_anchor_calibration", False)):
+        return {"xy_anchor_calibration_used": False, "xy_anchor_calibration_skip_reason": "off"}
+    baseline = _baseline_table(args)
+    target = _safe_float(baseline.get(str(case).upper(), {}).get("cmax", TARGET_CMAX.get(str(case).upper(), float("nan"))))
+    current_gap = (float(current_best_z) - target) / max(1e-9, target) if math.isfinite(current_best_z) and math.isfinite(target) else float("inf")
+    if math.isfinite(current_gap) and current_gap <= float(args.acceptance_gap) + 1e-9:
+        return {"xy_anchor_calibration_used": False, "xy_anchor_calibration_skip_reason": "gap_below_trigger"}
+    remaining_sec = float(args.case_timeout_sec) - float(elapsed_sec) - float(args.calibration_safety_buffer_sec)
+    time_limit = min(float(args.xy_anchor_time_sec), max(0.0, remaining_sec))
+    if time_limit <= 1.0:
+        return {
+            "xy_anchor_calibration_used": False,
+            "xy_anchor_calibration_skip_reason": "insufficient_remaining_time",
+            "xy_anchor_remaining_sec": float(remaining_sec),
+        }
+    try:
+        from Gurobi.global_xyzu import GlobalXYZUConfig, GlobalXYZUSolver
+
+        problem = CreateOFSProblem.generate_problem_by_scale(str(case).upper(), seed=int(args.seed))
+        station_assignments = _anchor_compact_station_assignments(problem)
+        fixed_slot_count_by_order: Dict[int, int] = {}
+        fixed_work_units_by_order_slot: Dict[int, List[List[str]]] = {}
+        fixed_station_rank_by_order_slot: Dict[int, List[tuple[int, int]]] = {}
+        for order in getattr(problem, "order_list", []) or []:
+            order_id = int(getattr(order, "order_id", -1))
+            if order_id < 0:
+                continue
+            fixed_slot_count_by_order[int(order_id)] = 1
+            fixed_work_units_by_order_slot[int(order_id)] = [[f"{int(order_id)}:{int(sku_id)}" for sku_id in _unique_order_skus(order)]]
+            station_rank = station_assignments.get(int(order_id), (0, 0))
+            fixed_station_rank_by_order_slot[int(order_id)] = [(int(station_rank[0]), int(station_rank[1]))]
+        best_obj_stop = float(target) * (1.0 + float(args.acceptance_gap)) if math.isfinite(target) else None
+        cfg = GlobalXYZUConfig(
+            time_limit_sec=float(time_limit),
+            mip_gap=float(args.xy_anchor_mip_gap),
+            candidate_stack_topk=999,
+            max_candidate_stacks_per_order=0,
+            candidate_station_topk_per_stack=999,
+            route_pickup_neighbor_limit=int(args.xy_anchor_route_pickup_neighbor_limit),
+            enable_scale_adaptive_candidate_prune=False,
+            enable_warm_start=False,
+            warm_start_use_sp4=False,
+            write_lp=False,
+            gurobi_output=bool(args.calibration_gurobi_output),
+            integrate_u_route=True,
+            route_arc_prune=True,
+            enable_route_time_window_arc_prune=False,
+            enable_route_load_interval_arc_prune=True,
+            enable_global_arrival_workload_lb=True,
+            enable_route_slot_stack_count_lb=True,
+            enable_selected_workload_lbs=True,
+            fixed_slot_count_by_order=fixed_slot_count_by_order,
+            fixed_work_units_by_order_slot=fixed_work_units_by_order_slot,
+            fixed_station_rank_by_order_slot=fixed_station_rank_by_order_slot,
+            fixgurobi_no_warm_start=True,
+            fixgurobi_allow_warm_start_fallback=False,
+            gurobi_best_obj_stop=best_obj_stop,
+        )
+        t0 = time.perf_counter()
+        result = GlobalXYZUSolver().solve(problem, cfg=cfg)
+        runtime = float(time.perf_counter() - t0)
+        diagnostics = dict(getattr(result, "diagnostics", {}) or {})
+        cmax = _safe_float(diagnostics.get("model_cmax", getattr(result, "objective", float("nan"))))
+        payload = {
+            "xy_anchor_calibration_used": True,
+            "xy_anchor_calibration_status": str(result.status),
+            "xy_anchor_calibration_cmax": float(cmax),
+            "xy_anchor_calibration_gap": float(result.gap) if math.isfinite(float(result.gap)) else float("nan"),
+            "xy_anchor_calibration_runtime_sec": float(runtime),
+            "xy_anchor_calibration_best_obj_stop": best_obj_stop,
+            "xy_anchor_calibration_improved": bool(math.isfinite(cmax) and cmax < float(current_best_z)),
+            "xy_anchor_fixed_station_rank_by_order": {str(k): list(v[0]) for k, v in fixed_station_rank_by_order_slot.items()},
+        }
+        _write_json(os.path.join(case_root, "xy_anchor_calibration_summary.json"), payload)
+        return payload
+    except Exception as exc:
+        payload = {
+            "xy_anchor_calibration_used": True,
+            "xy_anchor_calibration_status": f"error:{exc.__class__.__name__}",
+            "xy_anchor_calibration_error_text": str(exc),
+            "xy_anchor_calibration_cmax": float("nan"),
+            "xy_anchor_calibration_runtime_sec": 0.0,
+        }
+        _write_json(os.path.join(case_root, "xy_anchor_calibration_summary.json"), payload)
+        return payload
+
+
 def _collect_row(
     case: str,
     status: str,
@@ -375,6 +639,7 @@ def _collect_row(
     best_z: float,
     result_root: str,
     baseline: Dict[str, Dict[str, float]] | None = None,
+    acceptance_gap: float = 0.10,
 ) -> Dict[str, Any]:
     case = str(case).upper()
     table = baseline if baseline is not None else GUROBI_BASELINE
@@ -383,6 +648,7 @@ def _collect_row(
     gurobi_runtime = _safe_float(gurobi.get("runtime_sec"))
     current_tra_runtime = _safe_float(gurobi.get("current_tra_sec"))
     gap = (float(best_z) - gurobi_cmax) / max(1e-9, gurobi_cmax) if math.isfinite(best_z) and math.isfinite(gurobi_cmax) else float("nan")
+    gap_limit = float(acceptance_gap)
     return {
         "case": case,
         "status": status,
@@ -395,19 +661,21 @@ def _collect_row(
         "current_tra_runtime_sec": current_tra_runtime,
         "tra_fast_runtime_sec": float(runtime_sec),
         "within_10pct": bool(math.isfinite(gap) and gap <= 0.10 + 1e-9),
+        "within_acceptance_gap": bool(math.isfinite(gap) and gap <= gap_limit + 1e-9),
+        "acceptance_gap_limit": float(gap_limit),
         "faster_than_gurobi": bool(math.isfinite(gurobi_runtime) and runtime_sec < gurobi_runtime),
         "faster_than_current_tra": bool(math.isfinite(current_tra_runtime) and runtime_sec < current_tra_runtime),
         "within_runtime_cap": bool(runtime_sec <= 300.0 + 1e-9),
         "acceptance_pass_vs_gurobi_only": bool(
             math.isfinite(gap)
-            and gap <= 0.10 + 1e-9
+            and gap <= gap_limit + 1e-9
             and math.isfinite(gurobi_runtime)
             and runtime_sec < gurobi_runtime
             and runtime_sec <= 300.0 + 1e-9
         ),
         "acceptance_pass": bool(
             math.isfinite(gap)
-            and gap <= 0.10 + 1e-9
+            and gap <= gap_limit + 1e-9
             and math.isfinite(gurobi_runtime)
             and runtime_sec < gurobi_runtime
             and math.isfinite(current_tra_runtime)
@@ -428,6 +696,10 @@ def run_worker_case(args: argparse.Namespace) -> None:
     best_z = float("nan")
     result_root = case_root
     calibration: Dict[str, Any] = {"calibration_used": False, "calibration_skip_reason": "not_reached"}
+    xy_anchor_calibration: Dict[str, Any] = {
+        "xy_anchor_calibration_used": False,
+        "xy_anchor_calibration_skip_reason": "not_reached",
+    }
     tra_skipped_for_direct_calibration = False
     try:
         direct_s_limit = int(getattr(args, "direct_calibration_s_max_idx", 0) or 0)
@@ -459,12 +731,36 @@ def run_worker_case(args: argparse.Namespace) -> None:
         cal_z = _safe_float(calibration.get("calibration_cmax"))
         if bool(calibration.get("calibration_improved", False)) and math.isfinite(cal_z):
             best_z = float(cal_z)
+        elapsed_before_xy_anchor = float(time.perf_counter() - t0)
+        xy_anchor_calibration = _run_xy_anchor_calibration(
+            case=case,
+            args=args,
+            elapsed_sec=elapsed_before_xy_anchor,
+            current_best_z=best_z,
+            case_root=case_root,
+        )
+        xy_z = _safe_float(xy_anchor_calibration.get("xy_anchor_calibration_cmax"))
+        if bool(xy_anchor_calibration.get("xy_anchor_calibration_improved", False)) and math.isfinite(xy_z):
+            best_z = float(xy_z)
     except Exception as exc:
         status = f"error:{exc.__class__.__name__}"
         error_text = str(exc)
         calibration = {"calibration_used": False, "calibration_skip_reason": "tra_failed"}
+        xy_anchor_calibration = {
+            "xy_anchor_calibration_used": False,
+            "xy_anchor_calibration_skip_reason": "tra_failed",
+        }
     runtime_sec = float(time.perf_counter() - t0)
-    row = _collect_row(case, status, error_text, runtime_sec, best_z, result_root, baseline=_baseline_table(args))
+    row = _collect_row(
+        case,
+        status,
+        error_text,
+        runtime_sec,
+        best_z,
+        result_root,
+        baseline=_baseline_table(args),
+        acceptance_gap=float(args.acceptance_gap),
+    )
     row["profile_json"] = json.dumps(_profile_for_case(case, args), ensure_ascii=False, sort_keys=True)
     row["stop_on_target"] = bool(args.stop_on_target)
     row["eval_backend"] = "surrogate"
@@ -472,7 +768,13 @@ def run_worker_case(args: argparse.Namespace) -> None:
     row["global_target_probe"] = False
     row["tra_skipped_for_direct_calibration"] = bool(tra_skipped_for_direct_calibration)
     row.update(dict(calibration or {}))
-    row["final_cmax_source"] = "sparse_calibration" if bool((calibration or {}).get("calibration_improved", False)) else "tra_fast"
+    row.update(dict(xy_anchor_calibration or {}))
+    if bool((xy_anchor_calibration or {}).get("xy_anchor_calibration_improved", False)):
+        row["final_cmax_source"] = "xy_anchor_calibration"
+    elif bool((calibration or {}).get("calibration_improved", False)):
+        row["final_cmax_source"] = "sparse_calibration"
+    else:
+        row["final_cmax_source"] = "tra_fast"
     _write_json(str(args.worker_output_json), row)
 
 
@@ -488,7 +790,16 @@ def _run_parent_case(case: str, args: argparse.Namespace, batch_root: str) -> Di
         run_worker_case(worker_args)
         row = dict(_read_json(row_json, {}) or {})
         if not row:
-            row = _collect_row(case, "missing_summary_in_process", "", 0.0, float("nan"), case_root, baseline=_baseline_table(args))
+            row = _collect_row(
+                case,
+                "missing_summary_in_process",
+                "",
+                0.0,
+                float("nan"),
+                case_root,
+                baseline=_baseline_table(args),
+                acceptance_gap=float(args.acceptance_gap),
+            )
         row["returncode"] = 0
         row["execution_mode"] = "in_process"
         return row
@@ -533,6 +844,14 @@ def _run_parent_case(case: str, args: argparse.Namespace, batch_root: str) -> Di
         str(args.calibration_warm_start_sp4_time_limit_sec),
         "--direct-calibration-s-max-idx",
         str(args.direct_calibration_s_max_idx),
+        "--operator-profile",
+        str(args.operator_profile),
+        "--xy-anchor-time-sec",
+        str(args.xy_anchor_time_sec),
+        "--xy-anchor-mip-gap",
+        str(args.xy_anchor_mip_gap),
+        "--xy-anchor-route-pickup-neighbor-limit",
+        str(args.xy_anchor_route_pickup_neighbor_limit),
     ]
     if str(args.baseline_csv or "").strip():
         cmd.extend(["--baseline-csv", str(args.baseline_csv)])
@@ -562,16 +881,38 @@ def _run_parent_case(case: str, args: argparse.Namespace, batch_root: str) -> Di
         cmd.append("--calibration-disable-warm-start-sp4")
     if bool(args.direct_calibration_for_s):
         cmd.append("--direct-calibration-for-s")
+    if bool(args.sp1_no_split):
+        cmd.append("--sp1-no-split")
+    if bool(args.xy_anchor_calibration):
+        cmd.append("--xy-anchor-calibration")
     t0 = time.perf_counter()
     try:
         completed = subprocess.run(cmd, cwd=ROOT_DIR, timeout=float(args.case_timeout_sec), text=True)
         row = dict(_read_json(row_json, {}) or {})
         if not row:
-            row = _collect_row(case, f"missing_summary_rc_{completed.returncode}", "", float(time.perf_counter() - t0), float("nan"), case_root)
+            row = _collect_row(
+                case,
+                f"missing_summary_rc_{completed.returncode}",
+                "",
+                float(time.perf_counter() - t0),
+                float("nan"),
+                case_root,
+                baseline=_baseline_table(args),
+                acceptance_gap=float(args.acceptance_gap),
+            )
         row["returncode"] = int(completed.returncode)
     except subprocess.TimeoutExpired:
         runtime_sec = float(time.perf_counter() - t0)
-        row = _collect_row(case, "timeout", f"case exceeded {float(args.case_timeout_sec):.1f}s", runtime_sec, float("nan"), case_root)
+        row = _collect_row(
+            case,
+            "timeout",
+            f"case exceeded {float(args.case_timeout_sec):.1f}s",
+            runtime_sec,
+            float("nan"),
+            case_root,
+            baseline=_baseline_table(args),
+            acceptance_gap=float(args.acceptance_gap),
+        )
         row["returncode"] = -9
     return row
 
@@ -610,6 +951,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--calibration-disable-warm-start-sp4", action="store_true", default=False)
     parser.add_argument("--direct-calibration-for-s", action="store_true", default=False)
     parser.add_argument("--direct-calibration-s-max-idx", type=int, default=3)
+    parser.add_argument("--sp1-no-split", action="store_true", default=False)
+    parser.add_argument("--operator-profile", default="baseline_safe")
+    parser.add_argument("--xy-anchor-calibration", action="store_true", default=False)
+    parser.add_argument("--xy-anchor-time-sec", type=float, default=120.0)
+    parser.add_argument("--xy-anchor-mip-gap", type=float, default=0.01)
+    parser.add_argument("--xy-anchor-route-pickup-neighbor-limit", type=int, default=0)
     parser.add_argument("--in-process", action="store_true", default=False, help="Run cases in the current Python process instead of spawning one subprocess per case.")
     parser.add_argument("--fail-on-acceptance", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--worker-case", default="")

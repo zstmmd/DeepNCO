@@ -1195,6 +1195,7 @@ def _rebuild_window(
         )
 
     gurobi_like_sort = str(strategy) == "z_repair_gurobi_like_sort"
+    flip_compact = str(strategy) == "z_repair_flip_compact"
     gurobi_noise_weight = float(getattr(opt.cfg, "resource_gurobi_like_sort_noise_weight", 2.0))
     gurobi_span_weight = float(getattr(opt.cfg, "resource_gurobi_like_sort_span_weight", 0.20))
     gurobi_sort_bonus = float(getattr(opt.cfg, "resource_gurobi_like_sort_bonus", 1.0))
@@ -1303,6 +1304,8 @@ def _rebuild_window(
             modes = ["FLIP", "SORT"]
             if str(strategy) in {"z_repair_sort_range_shrink_first", "z_repair_gurobi_like_sort"}:
                 modes = ["SORT", "FLIP"]
+            elif flip_compact:
+                modes = ["FLIP", "SORT"]
             elif _is_joint_sort_strategy(str(strategy)) and int(stack_id) in set(int(x) for x in joint_seed_hits.keys()):
                 modes = ["SORT", "FLIP"]
             for mode in modes:
@@ -1336,7 +1339,20 @@ def _rebuild_window(
                 same_stack_bonus = 0.0 if int(stack_id) in set(int(x) for x in seed_stack_ids) else 1.0
                 if _is_joint_sort_strategy(str(strategy)) and int(stack_id) in set(int(x) for x in joint_seed_hits.keys()):
                     same_stack_bonus -= 0.1
-                if gurobi_like_sort:
+                if flip_compact:
+                    score = (
+                        -float(coverage_gain),
+                        0.0 if str(mode).upper() == "FLIP" else 1.5,
+                        float(rough_penalty),
+                        float(detour),
+                        float(queue_burden),
+                        float(structural_weight * structural_score + spread_bonus),
+                        float(same_stack_bonus),
+                        float(len(list(plan.get("target_tote_ids", []) or []))),
+                        int(stack_id),
+                        str(mode).upper(),
+                    )
+                elif gurobi_like_sort:
                     score = (
                         -float(coverage_gain),
                         *_gurobi_like_sort_score(temp_descriptor, target_len),
@@ -2147,6 +2163,7 @@ def _apply_joint_z_repair_strategies(opt, candidate: ResourceConfig, exact_ctx: 
     for strategy_name in (
         "z_repair_gurobi_like_sort",
         "z_repair_multistack_cover_compact",
+        "z_repair_flip_compact",
         "z_repair_sort_range_shrink_first",
         "z_repair_mode_toggle_contextual",
         "z_repair_joint_sort_colocated_flip",
@@ -2196,6 +2213,10 @@ def z_repair_mode_toggle_contextual(opt, config: ResourceConfig, ctx: Dict[str, 
     return _repair_window(opt, config, ctx, "z_repair_mode_toggle_contextual", allow_fallback=False, rng=rng)
 
 
+def z_repair_flip_compact(opt, config: ResourceConfig, ctx: Dict[str, object], rng) -> Dict[str, object]:
+    return _repair_window(opt, config, ctx, "z_repair_flip_compact", allow_fallback=False, rng=rng)
+
+
 def z_repair_joint_sort_colocated_flip(opt, config: ResourceConfig, ctx: Dict[str, object], rng) -> Dict[str, object]:
     return _repair_window(opt, config, ctx, "z_repair_joint_sort_colocated_flip", allow_fallback=False, rng=rng)
 
@@ -2242,6 +2263,7 @@ Z_REPAIR_OPERATORS = {
     "z_repair_sort_range_shrink_first": z_repair_sort_range_shrink_first,
     "z_repair_gurobi_like_sort": z_repair_gurobi_like_sort,
     "z_repair_mode_toggle_contextual": z_repair_mode_toggle_contextual,
+    "z_repair_flip_compact": z_repair_flip_compact,
     "z_repair_joint_sort_colocated_flip": z_repair_joint_sort_colocated_flip,
     "z_repair_spread_region_balance": z_repair_spread_region_balance,
     "z_repair_load_balance_idle_robot": z_repair_load_balance_idle_robot,

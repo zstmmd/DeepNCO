@@ -332,6 +332,7 @@ def _build_cfg(args: argparse.Namespace, case_name: str, log_dir: str) -> TRARun
         search_scheme="resource_time_alns",
     )
     cfg.compact_tra_summary_json = bool(getattr(args, "compact_tra_summary_json", False))
+    cfg.sp1_no_split = bool(getattr(args, "sp1_no_split", False))
     cfg.resource_eval_backend = "fixgurobi_prefix"
     cfg.resource_fixgurobi_skip_ortools_validation = True
     cfg.fixgurobi_time_limit_sec = float(args.fixgurobi_time_limit_sec)
@@ -359,14 +360,20 @@ def _build_cfg(args: argparse.Namespace, case_name: str, log_dir: str) -> TRARun
     cfg.fixgurobi_final_validation_time_limit_sec = float(args.fixgurobi_final_validation_time_limit_sec)
     cfg.fixgurobi_coarse_time_limit_sec = float(args.fixgurobi_coarse_time_limit_sec)
     cfg.fixgurobi_coarse_mip_gap = float(args.fixgurobi_coarse_mip_gap)
+    cfg.fixgurobi_route_pickup_neighbor_limit = int(args.fixgurobi_route_pickup_neighbor_limit)
     cfg.fixgurobi_output = bool(args.fixgurobi_output)
     cfg.fixgurobi_fix_used_stack_ids = bool(args.fixgurobi_fix_used_stack_ids)
     if str(case_name).upper() == "GUROBI-S5":
         cfg.fixgurobi_route_time_window_arc_prune = False
+    current_case_target = _safe_float(getattr(args, "_current_case_target_cmax", float("nan")))
     cfg.resource_target_cmax = (
-        float(TARGET_CMAX.get(str(case_name).upper(), float("nan")))
-        if bool(getattr(args, "known_target_guidance", False))
-        else float("nan")
+        float(current_case_target)
+        if bool(getattr(args, "known_target_guidance", False)) and math.isfinite(current_case_target)
+        else (
+            float(TARGET_CMAX.get(str(case_name).upper(), float("nan")))
+            if bool(getattr(args, "known_target_guidance", False))
+            else float("nan")
+        )
     )
     cfg.enable_warm_start = False
     cfg.warm_start_use_sp4 = False
@@ -382,6 +389,8 @@ def _build_cfg(args: argparse.Namespace, case_name: str, log_dir: str) -> TRARun
     cfg.resource_xyz_candidate_pool_size = max(1, int(args.fixgurobi_candidate_trial_limit))
     cfg.resource_xyz_exact_candidate_trial_limit = max(1, int(args.fixgurobi_candidate_trial_limit))
     cfg.resource_candidate_pool_max_attempts = max(1, int(args.candidate_pool_max_attempts))
+    cfg.resource_z_candidate_stack_topk = max(0, int(args.resource_z_candidate_stack_topk))
+    cfg.resource_z_plan_target_stack_topk = max(1, int(args.resource_z_plan_target_stack_topk))
     cfg.resource_global_decomp_repair_enabled = bool(args.resource_global_decomp_repair)
     if bool(getattr(args, "tra_revolving_mode", False)):
         cfg.resource_global_decomp_repair_enabled = False
@@ -399,7 +408,8 @@ def _build_cfg(args: argparse.Namespace, case_name: str, log_dir: str) -> TRARun
     cfg.resource_stop_if_validated_best_no_change_rounds = int(args.stop_if_no_change_rounds)
     cfg.resource_stop_if_best_z_no_change_rounds = int(args.stop_if_no_change_rounds)
     cfg.resource_operator_profile = str(args.operator_profile)
-    if str(args.operator_profile).strip().lower() == "route_polish_exact":
+    profile_name = str(args.operator_profile).strip().lower()
+    if profile_name in {"route_polish_exact", "no_split_y_focus"}:
         cfg.resource_enable_experimental_x_repartition = True
         cfg.resource_enable_critical_path_xyz = True
         cfg.resource_enable_experimental_y_rank_permutation = True
@@ -421,6 +431,17 @@ def _build_cfg(args: argparse.Namespace, case_name: str, log_dir: str) -> TRARun
         cfg.x_repartition_max_groups = 8
         cfg.resource_xyz_use_local_x_window = True
         cfg.resource_xyz_local_x_degree = 1
+    if profile_name == "no_split_y_focus":
+        cfg.resource_component_weight_x = 0.0
+        cfg.resource_component_weight_y = 3.0
+        cfg.resource_component_weight_z = 0.8
+        cfg.resource_component_weight_xyz = 1.5
+        cfg.resource_layer_base_weight_x = 0.0
+        cfg.resource_layer_base_weight_y = 1.2
+        cfg.resource_layer_base_weight_z = 0.2
+        cfg.resource_layer_base_weight_xyz = 0.8
+        cfg.resource_xyz_trigger_stagnation_rounds = 3
+        cfg.resource_force_rotate_threshold = 999999
     cfg.resource_revolving_mode = bool(getattr(args, "tra_revolving_mode", False))
     cfg.resource_revolving_enable_u_layer = bool(getattr(args, "revolving_enable_u_layer", False) or getattr(args, "tra_revolving_mode", False))
     cfg.u_repair_time_limit_sec = float(getattr(args, "u_repair_time_limit_sec", 5.0))
@@ -625,11 +646,12 @@ def run_case(args: argparse.Namespace, case_name: str, batch_root: str, gurobi_b
     iter_rows: List[Dict[str, Any]] = []
     run_stats: Dict[str, Any] = {}
     best_row_payload: Dict[str, Any] = {}
-    target = float(TARGET_CMAX.get(case_name, float("nan")))
     gurobi_row = dict(gurobi_baseline.get(case_name, {}) or {})
     gurobi_cmax = _safe_float(gurobi_row.get("model_cmax", float("nan")))
     gurobi_runtime = _safe_float(gurobi_row.get("runtime_sec", gurobi_row.get("gurobi_runtime_sec", float("nan"))))
     gurobi_gap = _safe_float(gurobi_row.get("model_gap", float("nan")))
+    target = float(gurobi_cmax) if math.isfinite(gurobi_cmax) else float(TARGET_CMAX.get(case_name, float("nan")))
+    setattr(args, "_current_case_target_cmax", float(target))
     probe = {"enabled": False, "accepted": False}
     try:
         probe = _global_target_probe(args, case_name, target)
@@ -779,6 +801,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-iters", type=int, default=300)
     parser.add_argument("--no-improve-limit", type=int, default=3)
+    parser.add_argument("--sp1-no-split", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--fixgurobi-time-limit-sec", type=float, default=300.0)
     parser.add_argument("--fixgurobi-mip-gap", type=float, default=0.01)
     parser.add_argument("--fixgurobi-candidate-trial-limit", type=int, default=1)
@@ -807,6 +830,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fixgurobi-final-validation-heuristics", type=float, default=-1.0)
     parser.add_argument("--fixgurobi-coarse-time-limit-sec", type=float, default=8.0)
     parser.add_argument("--fixgurobi-coarse-mip-gap", type=float, default=0.05)
+    parser.add_argument("--fixgurobi-route-pickup-neighbor-limit", type=int, default=0)
     parser.add_argument("--fixgurobi-fix-used-stack-ids", action="store_true", default=False)
     parser.add_argument("--fixgurobi-output", action="store_true", default=False)
     parser.add_argument("--known-target-guidance", action=argparse.BooleanOptionalAction, default=False)
@@ -848,6 +872,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--resource-candidate-pool-log", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--compact-tra-summary-json", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--candidate-pool-max-attempts", type=int, default=24)
+    parser.add_argument("--resource-z-candidate-stack-topk", type=int, default=6)
+    parser.add_argument("--resource-z-plan-target-stack-topk", type=int, default=3)
     parser.add_argument("--stop-if-no-change-rounds", type=int, default=40)
     parser.add_argument("--operator-profile", type=str, default="baseline_safe")
     parser.add_argument("--output-root", type=str, default="")
