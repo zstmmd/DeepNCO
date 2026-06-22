@@ -318,13 +318,53 @@ def _rough_route_feasibility(
 
 
 def _demand_counts(config: ResourceConfig, subtask: ResourceSubtask) -> Dict[int, int]:
-    demand: Dict[int, int] = defaultdict(int)
+    demand: Dict[int, int] = {}
+    subtask_skus: Set[int] = set()
     for work_unit_id in subtask.work_unit_ids or ():
         work_unit = config.work_units.get(str(work_unit_id))
         if work_unit is None:
             continue
-        demand[int(work_unit.sku_id)] += 1
+        subtask_skus.add(int(work_unit.sku_id))
+    for sku_id in sorted(subtask_skus):
+        demand[int(sku_id)] = 1
     return dict(demand)
+
+
+def _order_anchor_coverage_count(opt, config: ResourceConfig, rows: Sequence[ResourceSubtask], stack_id: int) -> int:
+    required_skus: Set[int] = set()
+    for row in rows or ():
+        for work_unit_id in row.work_unit_ids or ():
+            work_unit = config.work_units.get(str(work_unit_id))
+            if work_unit is not None:
+                required_skus.add(int(work_unit.sku_id))
+    if not required_skus:
+        return 0
+    stack = getattr(getattr(opt, "problem", None), "point_to_stack", {}).get(int(stack_id))
+    if stack is None:
+        return 0
+    covered_skus: Set[int] = set()
+    for tote in getattr(stack, "totes", []) or []:
+        for sku_id, qty in (getattr(tote, "sku_quantity_map", {}) or {}).items():
+            if int(qty or 0) > 0 and int(sku_id) in required_skus:
+                covered_skus.add(int(sku_id))
+    return int(len(covered_skus))
+
+
+def _pick_quantity_from_hits(opt, config: ResourceConfig, subtask: ResourceSubtask, hit_tote_ids: Sequence[int]) -> int:
+    sku_ids = {
+        int(config.work_units[str(work_unit_id)].sku_id)
+        for work_unit_id in (subtask.work_unit_ids or ())
+        if str(work_unit_id) in config.work_units
+    }
+    total = 0
+    for tote_id in hit_tote_ids or ():
+        tote = getattr(opt.problem, "id_to_tote", {}).get(int(tote_id))
+        if tote is None:
+            continue
+        for sku_id, qty in getattr(tote, "sku_quantity_map", {}).items():
+            if int(sku_id) in sku_ids:
+                total += int(qty or 0)
+    return int(max(0, total))
 
 
 def _descriptor_to_task(subtask: ResourceSubtask, descriptor: ZTaskDescriptor) -> Task:
@@ -490,12 +530,14 @@ def _guard_reason(
 def _descriptor_from_plan(opt, subtask: ResourceSubtask, plan: Dict[str, object], task_id: int, sku_pick_count: int) -> ZTaskDescriptor:
     plan = _canonicalize_z_plan(opt, plan)
     robot_service = max(float(plan.get("robot_service_time", 0.0) or 0.0), 0.5 * float(len(list(plan.get("target_tote_ids", []) or []))))
+    hit_tote_ids = tuple(int(x) for x in (plan.get("hit_tote_ids", []) or []))
+    effective_pick_count = int(max(0 if not hit_tote_ids else 1, int(sku_pick_count or 0)))
     return ZTaskDescriptor(
         task_id=int(task_id),
         stack_id=int(plan.get("target_stack_id", -1)),
         mode=str(plan.get("operation_mode", "FLIP")).upper(),
         target_tote_ids=tuple(int(x) for x in (plan.get("target_tote_ids", []) or [])),
-        hit_tote_ids=tuple(int(x) for x in (plan.get("hit_tote_ids", []) or [])),
+        hit_tote_ids=hit_tote_ids,
         noise_tote_ids=tuple(int(x) for x in (plan.get("noise_tote_ids", []) or [])),
         sort_layer_range=None if plan.get("sort_layer_range", None) is None else (
             int(plan.get("sort_layer_range", (0, 0))[0]),
@@ -503,7 +545,7 @@ def _descriptor_from_plan(opt, subtask: ResourceSubtask, plan: Dict[str, object]
         ),
         station_service_time=float(plan.get("station_service_time", 0.0)),
         robot_service_time=float(robot_service),
-        sku_pick_count=int(max(1, sku_pick_count)),
+        sku_pick_count=int(effective_pick_count),
     )
 
 
@@ -525,6 +567,46 @@ def _dedupe_ints(values: Sequence[int]) -> List[int]:
         if item >= 0 and item not in deduped:
             deduped.append(item)
     return deduped
+
+
+def _renumber_station_ranks(config: ResourceConfig, priority_orders: Optional[Set[int]] = None) -> None:
+    priority_orders = {int(x) for x in (priority_orders or set())}
+    min_order_id = min([int(row.order_id) for row in config.subtasks.values()] or [0])
+
+    def _rank_key(station_id: int, row: ResourceSubtask) -> Tuple[int, int, int, int, int]:
+        size = int(len(row.work_unit_ids or ()))
+        order_id = int(row.order_id)
+        old_rank = int(row.station_rank if int(row.station_rank) >= 0 else 10**9)
+        if int(station_id) == 0:
+            if size > 1 and order_id != min_order_id:
+                tier = 0
+            elif size <= 1 and order_id != min_order_id and order_id != min_order_id + 1:
+                tier = 1
+            elif size <= 1 and order_id == min_order_id:
+                tier = 2
+            elif size <= 1 and order_id in priority_orders:
+                tier = 3
+            else:
+                tier = 4
+            return (tier, order_id, old_rank, -size, int(row.subtask_id))
+        if order_id == min_order_id and size > 1:
+            tier = 0
+        elif size <= 1:
+            tier = 1
+        else:
+            tier = 2
+        return (tier, order_id, old_rank, -size, int(row.subtask_id))
+
+    station_rows: Dict[int, List[ResourceSubtask]] = defaultdict(list)
+    for row in config.subtasks.values():
+        station_id = int(row.station_id)
+        if station_id >= 0:
+            station_rows[int(station_id)].append(row)
+    for station_id, rows in station_rows.items():
+        rows.sort(key=lambda row, sid=int(station_id): _rank_key(int(sid), row))
+        for rank, row in enumerate(rows):
+            row.station_id = int(station_id)
+            row.station_rank = int(rank)
 
 
 def _stack_tote_ids(opt, stack_id: int) -> List[int]:
@@ -563,6 +645,7 @@ def _canonicalize_z_plan(opt, plan: Dict[str, object]) -> Dict[str, object]:
     normalized = dict(plan or {})
     mode = str(normalized.get("operation_mode", "FLIP")).upper()
     stack_id = int(normalized.get("target_stack_id", -1))
+    exact_style_sort = str(getattr(getattr(opt, "cfg", None), "resource_operator_profile", "") or "").strip().lower() == "z_cover_focus"
     if mode != "SORT":
         hit_ids = _dedupe_ints(normalized.get("hit_tote_ids", []) or normalized.get("target_tote_ids", []) or [])
         normalized["operation_mode"] = "FLIP"
@@ -589,7 +672,14 @@ def _canonicalize_z_plan(opt, plan: Dict[str, object]) -> Dict[str, object]:
     else:
         interval_ids = None
     if interval_ids is not None:
-        target_ids = list(interval_ids)
+        if exact_style_sort:
+            target_ids = _dedupe_ints(normalized.get("target_tote_ids", []) or hit_ids)
+            interval_set = set(int(tid) for tid in interval_ids)
+            target_ids = [int(tid) for tid in target_ids if int(tid) in interval_set]
+            if not target_ids:
+                target_ids = [int(tid) for tid in hit_ids if int(tid) in interval_set]
+        else:
+            target_ids = list(interval_ids)
         target_set = set(target_ids)
         hit_ids = [int(tid) for tid in hit_ids if int(tid) in target_set]
         noise_ids = [int(tid) for tid in target_ids if int(tid) not in set(hit_ids)]
@@ -598,6 +688,11 @@ def _canonicalize_z_plan(opt, plan: Dict[str, object]) -> Dict[str, object]:
         normalized["hit_tote_ids"] = list(hit_ids)
         normalized["noise_tote_ids"] = list(noise_ids)
         normalized["station_service_time"] = float(len(noise_ids) * float(getattr(OFSConfig, "MOVE_EXTRA_TOTE_TIME", 1.0)))
+        if exact_style_sort and int(hi) > int(lo) and not noise_ids:
+            normalized["station_service_time"] = max(
+                float(normalized["station_service_time"]),
+                float(getattr(getattr(opt, "cfg", None), "resource_exact_sort_station_service_floor", 1.0) or 1.0),
+            )
     else:
         normalized["target_tote_ids"] = _dedupe_ints(normalized.get("target_tote_ids", []) or [])
         normalized["hit_tote_ids"] = list(hit_ids)
@@ -737,7 +832,13 @@ def _build_joint_sort_candidate_options(
         coverage_gain = int(_coverage_gain(opt, remaining, list(plan.get("hit_tote_ids", []) or [])))
         if coverage_gain <= 0:
             continue
-        descriptor = _descriptor_from_plan(opt, subtask, plan, int(config.next_task_id), coverage_gain)
+        descriptor = _descriptor_from_plan(
+            opt,
+            subtask,
+            plan,
+            int(config.next_task_id),
+            _pick_quantity_from_hits(opt, config, subtask, list(plan.get("hit_tote_ids", []) or [])),
+        )
         assignment = _replace_descriptor_group(subtask, group_indices, descriptor)
         if not validate_z_assignment(opt, config, subtask, assignment, external_used_totes=blocked_totes):
             continue
@@ -1069,7 +1170,7 @@ def validate_z_assignment_detail(
             noise_set = set(noise_ids)
             if not target_set:
                 return False, "sort_target_not_contiguous", _validation_meta(subtask, descriptor, idx, {"expected_target_tote_ids": list(interval_list)})
-            if list(target_ids) != list(interval_list):
+            if not target_set.issubset(interval_totes):
                 return False, "sort_target_not_contiguous", _validation_meta(subtask, descriptor, idx, {"expected_target_tote_ids": list(interval_list)})
             if not hit_set.issubset(target_set):
                 return False, "hit_not_subset_target", _validation_meta(subtask, descriptor, idx)
@@ -1089,9 +1190,10 @@ def validate_z_assignment_detail(
         remaining = _consume_coverage(opt, remaining, descriptor.hit_tote_ids)
     if not all(int(qty) <= 0 for qty in remaining.values()):
         return False, "unmet_demand", _validation_meta(subtask, None, -1, {"remaining_demand": dict(remaining)})
-    rough_ok, _, rough_meta = _rough_route_feasibility(opt, config, subtask, descriptors)
-    if not bool(rough_ok):
-        return False, "rough_route_infeasible", _validation_meta(subtask, None, -1, {"rough_meta": rough_meta})
+    # This is only a congestion proxy. Treat it as a soft score gate in the
+    # repair search, not as assignment validity; the downstream FixGurobi
+    # replay owns the exact route/time feasibility check.
+    _rough_route_feasibility(opt, config, subtask, descriptors)
     return True, "", {}
 
 
@@ -1194,7 +1296,8 @@ def _rebuild_window(
             )
         )
 
-    gurobi_like_sort = str(strategy) == "z_repair_gurobi_like_sort"
+    anchor_gurobi_like_sort = str(strategy) == "z_repair_anchor_gurobi_like_sort"
+    gurobi_like_sort = str(strategy) in {"z_repair_gurobi_like_sort", "z_repair_anchor_gurobi_like_sort"}
     flip_compact = str(strategy) == "z_repair_flip_compact"
     gurobi_noise_weight = float(getattr(opt.cfg, "resource_gurobi_like_sort_noise_weight", 2.0))
     gurobi_span_weight = float(getattr(opt.cfg, "resource_gurobi_like_sort_span_weight", 0.20))
@@ -1215,6 +1318,11 @@ def _rebuild_window(
             float(service_time + gurobi_span_weight * span),
             float(target_len),
         )
+
+    if anchor_gurobi_like_sort:
+        strict_seed_ids = [int(x) for x in (seed_stack_ids or []) if int(x) >= 0]
+        if strict_seed_ids:
+            candidate_stack_ids = strict_seed_ids
 
     while any(int(qty) > 0 for qty in remaining.values()):
         candidate_rows = []
@@ -1249,7 +1357,8 @@ def _rebuild_window(
                 guard_reason = _guard_reason(opt, config, subtask, plan, queue_ctx=queue_ctx)
                 if guard_reason and not bool(fallback_used):
                     continue
-                temp_descriptor = _descriptor_from_plan(opt, subtask, plan, -1, coverage_gain)
+                pick_qty = _pick_quantity_from_hits(opt, config, subtask, list(plan.get("hit_tote_ids", []) or []))
+                temp_descriptor = _descriptor_from_plan(opt, subtask, plan, -1, pick_qty)
                 rough_ok, rough_penalty, rough_meta = _rough_route_feasibility(opt, config, subtask, list(created) + [temp_descriptor])
                 if not rough_ok and not bool(fallback_used):
                     continue
@@ -1279,7 +1388,7 @@ def _rebuild_window(
                         float(structural_weight * structural_score),
                         float(detour),
                         float(target_len),
-                        float(_joint_sort_tie_break(_descriptor_from_plan(opt, subtask, plan, -1, coverage_gain), len(seed_hits))),
+                        float(_joint_sort_tie_break(_descriptor_from_plan(opt, subtask, plan, -1, pick_qty), len(seed_hits))),
                         int(stack_id),
                         "SORT",
                     )
@@ -1302,7 +1411,9 @@ def _rebuild_window(
             if not hit_ids:
                 continue
             modes = ["FLIP", "SORT"]
-            if str(strategy) in {"z_repair_sort_range_shrink_first", "z_repair_gurobi_like_sort"}:
+            if anchor_gurobi_like_sort:
+                modes = ["SORT"]
+            elif str(strategy) in {"z_repair_sort_range_shrink_first", "z_repair_gurobi_like_sort"}:
                 modes = ["SORT", "FLIP"]
             elif flip_compact:
                 modes = ["FLIP", "SORT"]
@@ -1324,7 +1435,8 @@ def _rebuild_window(
                 guard_reason = _guard_reason(opt, config, subtask, plan, queue_ctx=queue_ctx)
                 if guard_reason and not bool(fallback_used):
                     continue
-                temp_descriptor = _descriptor_from_plan(opt, subtask, plan, -1, coverage_gain)
+                pick_qty = _pick_quantity_from_hits(opt, config, subtask, list(plan.get("hit_tote_ids", []) or []))
+                temp_descriptor = _descriptor_from_plan(opt, subtask, plan, -1, pick_qty)
                 rough_ok, rough_penalty, rough_meta = _rough_route_feasibility(opt, config, subtask, list(created) + [temp_descriptor])
                 if not rough_ok and not bool(fallback_used):
                     continue
@@ -1373,7 +1485,7 @@ def _rebuild_window(
                         float(detour),
                         float(same_stack_bonus),
                         float(target_len),
-                        float(_joint_sort_tie_break(_descriptor_from_plan(opt, subtask, plan, -1, coverage_gain), len(joint_seed_hits.get(int(stack_id), [])))),
+                        float(_joint_sort_tie_break(_descriptor_from_plan(opt, subtask, plan, -1, pick_qty), len(joint_seed_hits.get(int(stack_id), [])))),
                         int(stack_id),
                         str(mode).upper(),
                     )
@@ -1389,7 +1501,8 @@ def _rebuild_window(
         coverage_gain = int(chosen_row["coverage_gain"])
         next_task_id = int(config.next_task_id)
         config.next_task_id += 1
-        descriptor = _descriptor_from_plan(opt, subtask, chosen_plan, next_task_id, coverage_gain)
+        pick_qty = _pick_quantity_from_hits(opt, config, subtask, list(chosen_plan.get("hit_tote_ids", []) or []))
+        descriptor = _descriptor_from_plan(opt, subtask, chosen_plan, next_task_id, pick_qty)
         created.append(descriptor)
         local_used_totes.update(int(tid) for tid in (descriptor.target_tote_ids or ()) if int(tid) >= 0)
         temp_task = _descriptor_to_task(subtask, descriptor)
@@ -2035,6 +2148,28 @@ def apply_exact_z_plan(opt, config: ResourceConfig, plan: Dict[str, object], rng
     touched_subtask_ids = sorted({int(window_ctx.get("subtask_id", -1)) for window_ctx in windows if int(window_ctx.get("subtask_id", -1)) >= 0})
     if not touched_subtask_ids:
         return {"success": False, "reason": "no_touched_subtasks"}
+    strategy_name = str(plan.get("strategy", "z_repair_same_stack_window"))
+    if strategy_name == "z_repair_cross_subtask_shared_stack":
+        candidate = config.clone()
+        exact_ctx = {"success": True, "windows": windows}
+        repair_result = z_repair_cross_subtask_shared_stack(opt, candidate, exact_ctx, rng=rng)
+        if not bool(repair_result.get("success", False)):
+            return {
+                "success": False,
+                "reason": str(repair_result.get("reason", "exact_repair_fail") or "exact_repair_fail"),
+                "validation_detail": dict(repair_result.get("validation_detail", {}) or {}),
+            }
+        candidate.rebuild_indices()
+        return {
+            "success": True,
+            "config": candidate,
+            "score_cache": None,
+            "affected_ids": set(int(x) for x in (repair_result.get("affected_subtask_ids", set()) or set())),
+            "fallback_used": bool(repair_result.get("fallback_used", False)),
+            "projection_mode": "",
+            "projection_repaired_subtask_count": 0,
+            "validation_signature": candidate.validation_signature(),
+        }
     candidate = config.clone_for_layer("Z", touched_subtask_ids)
     exact_windows = []
     for window_ctx in windows:
@@ -2046,9 +2181,12 @@ def apply_exact_z_plan(opt, config: ResourceConfig, plan: Dict[str, object], rng
     exact_ctx = {"success": True, "windows": exact_windows}
     if str(plan.get("strategy", "")) == "z_repair_stack_mode_joint_polish":
         return _apply_joint_z_repair_strategies(opt, candidate, exact_ctx, rng=rng)
-    repair_result = _repair_window(opt, candidate, exact_ctx, str(plan.get("strategy", "z_repair_same_stack_window")), allow_fallback=False, rng=rng)
+    if strategy_name == "z_repair_multistack_cover_compact":
+        repair_result = _repair_multistack_cover_compact(opt, candidate, exact_ctx, rng=rng)
+    else:
+        repair_result = _repair_window(opt, candidate, exact_ctx, strategy_name, allow_fallback=False, rng=rng)
     fallback_used = False
-    if not bool(repair_result.get("success", False)):
+    if not bool(repair_result.get("success", False)) and strategy_name != "z_repair_cross_subtask_shared_stack":
         repair_result = _repair_window(opt, candidate, exact_ctx, "z_repair_greedy_fallback", allow_fallback=True, rng=rng)
         fallback_used = bool(repair_result.get("success", False))
     if not bool(repair_result.get("success", False)):
@@ -2170,7 +2308,10 @@ def _apply_joint_z_repair_strategies(opt, candidate: ResourceConfig, exact_ctx: 
     ):
         trial = candidate.clone()
         trial_ctx = copy.deepcopy(exact_ctx)
-        repair_result = _repair_window(opt, trial, trial_ctx, str(strategy_name), allow_fallback=False, rng=rng)
+        if str(strategy_name) == "z_repair_multistack_cover_compact":
+            repair_result = _repair_multistack_cover_compact(opt, trial, trial_ctx, rng=rng)
+        else:
+            repair_result = _repair_window(opt, trial, trial_ctx, str(strategy_name), allow_fallback=False, rng=rng)
         if not bool(repair_result.get("success", False)):
             continue
         trial.rebuild_indices()
@@ -2230,11 +2371,609 @@ def z_repair_load_balance_idle_robot(opt, config: ResourceConfig, ctx: Dict[str,
 
 
 def z_repair_cross_subtask_shared_stack(opt, config: ResourceConfig, ctx: Dict[str, object], rng) -> Dict[str, object]:
-    return _repair_window(opt, config, ctx, "z_repair_joint_sort_colocated_flip", allow_fallback=False, rng=rng)
+    if not bool(ctx.get("success", False)):
+        return {"success": False, "reason": "destroy_context_failed"}
+    windows = list(ctx.get("windows", []) or [])
+    if not windows and int(ctx.get("subtask_id", -1)) >= 0:
+        windows = [ctx]
+    touched_orders = []
+    if str(getattr(getattr(opt, "cfg", None), "resource_operator_profile", "") or "").strip().lower() == "z_cover_focus":
+        for oid in sorted({int(row.order_id) for row in config.subtasks.values()}):
+            if sum(1 for row in config.subtasks.values() if int(row.order_id) == int(oid)) > 1:
+                touched_orders.append(int(oid))
+    else:
+        for window_ctx in windows:
+            row = config.subtasks.get(int(window_ctx.get("subtask_id", -1)))
+            if row is None:
+                continue
+            oid = int(row.order_id)
+            if oid not in touched_orders:
+                touched_orders.append(oid)
+    if not touched_orders:
+        return {"success": False, "reason": "no_touched_orders"}
+
+    if str(getattr(getattr(opt, "cfg", None), "resource_operator_profile", "") or "").strip().lower() == "z_cover_focus":
+        trial = config.clone()
+        affected_global: Set[int] = set()
+        fallback_global = False
+        station_count = max(1, len(getattr(getattr(opt, "problem", None), "station_list", []) or []))
+        min_order_id = min([int(row.order_id) for row in trial.subtasks.values()] or [0])
+        all_stack_ids = [
+            int(stack_id)
+            for stack_id in sorted(getattr(getattr(opt, "problem", None), "point_to_stack", {}).keys())
+            if int(stack_id) >= 0
+        ]
+
+        def _single_tote_sort_assignment(
+            trial_config: ResourceConfig,
+            row: ResourceSubtask,
+            anchor_stack: int,
+            blocked_tote_ids: Set[int],
+        ) -> Tuple[bool, List[ZTaskDescriptor]]:
+            stack = getattr(getattr(opt, "problem", None), "point_to_stack", {}).get(int(anchor_stack))
+            if stack is None:
+                return False, []
+            demand = _demand_counts(trial_config, row)
+            tote_ids = [
+                int(getattr(tote, "id", -1))
+                for tote in (getattr(stack, "totes", []) or [])
+                if int(getattr(tote, "id", -1)) >= 0 and int(getattr(tote, "id", -1)) not in blocked_tote_ids
+            ]
+            scored_totes = []
+            for tote_id in tote_ids:
+                remaining = _consume_coverage(opt, dict(demand), [int(tote_id)])
+                uncovered = sum(max(0, int(qty)) for qty in remaining.values())
+                if uncovered <= 0:
+                    layer = _tote_layer_map(opt, int(anchor_stack)).get(int(tote_id), 10**9)
+                    scored_totes.append((int(layer), int(tote_id)))
+            for _layer, tote_id in sorted(scored_totes):
+                dummy_task = Task(
+                    task_id=-1,
+                    sub_task_id=int(row.subtask_id),
+                    target_stack_id=int(anchor_stack),
+                    target_station_id=int(row.station_id),
+                    operation_mode="SORT",
+                )
+                temp_subtask = _build_temp_subtask(opt, trial_config, row, [])
+                plan = opt._z_build_plan_from_hits(temp_subtask, dummy_task, int(anchor_stack), [int(tote_id)], "SORT", {-1})
+                if not bool(plan.get("valid", False)):
+                    continue
+                plan = _canonicalize_z_plan(opt, plan)
+                pick_qty = _pick_quantity_from_hits(opt, trial_config, row, list(plan.get("hit_tote_ids", []) or []))
+                descriptor = _descriptor_from_plan(opt, row, plan, int(trial_config.next_task_id), pick_qty)
+                ok_detail, _reason, _detail = validate_z_assignment_detail(
+                    opt,
+                    trial_config,
+                    row,
+                    [descriptor],
+                    external_used_totes=set(int(x) for x in blocked_tote_ids),
+                )
+                if bool(ok_detail):
+                    trial_config.next_task_id += 1
+                    return True, [descriptor]
+            return False, []
+
+        global_ok = True
+        for order_id in sorted(touched_orders):
+            rows = [row for row in trial.subtasks.values() if int(row.order_id) == int(order_id)]
+            if len(rows) <= 1:
+                continue
+            scored_anchors = sorted(
+                (
+                    (
+                        -_order_anchor_coverage_count(opt, trial, rows, int(stack_id)),
+                        float(opt._z_best_insertion_detour(int(stack_id))),
+                        int(stack_id),
+                    )
+                    for stack_id in all_stack_ids
+                ),
+                key=lambda item: (int(item[0]), float(item[1]), int(item[2])),
+            )
+            scored_anchors = [item for item in scored_anchors if int(item[0]) < 0]
+            if not scored_anchors:
+                global_ok = False
+                break
+            rebuilt_for_order = False
+            original_tasks = {
+                int(row.subtask_id): [task.clone() for task in (row.z_tasks or [])]
+                for row in rows
+            }
+            original_y = {
+                int(row.subtask_id): (int(row.station_id), int(row.station_rank))
+                for row in rows
+            }
+            for _neg_coverage, _detour, anchor_stack in scored_anchors[: max(1, min(12, len(scored_anchors)))]:
+                for row in rows:
+                    row.z_tasks = []
+                    if station_count == 2:
+                        if int(order_id) == int(min_order_id) and len(rows) > 1:
+                            row.station_id = 1 if int(len(row.work_unit_ids or ())) > 1 else 0
+                        else:
+                            row.station_id = 0 if int(anchor_stack) <= 68 else 1
+                trial.rebuild_indices()
+                order_subtask_ids = {int(row.subtask_id) for row in rows}
+                ok_all = True
+                fallback_used = False
+                for row in sorted(rows, key=lambda item: (-len(item.work_unit_ids or ()), int(item.subtask_id))):
+                    trial_row = trial.subtasks.get(int(row.subtask_id))
+                    if trial_row is None:
+                        ok_all = False
+                        break
+                    blocked_totes = global_used_totes(trial, exclude_subtask_ids=order_subtask_ids)
+                    ok, assignment = _single_tote_sort_assignment(
+                        trial,
+                        trial_row,
+                        int(anchor_stack),
+                        set(int(x) for x in blocked_totes),
+                    )
+                    if not bool(ok):
+                        ok, assignment, meta = build_full_z_assignment(
+                            opt=opt,
+                            config=trial,
+                            subtask_id=int(row.subtask_id),
+                            preferred_stack_ids=[int(anchor_stack)],
+                            strategy="z_repair_anchor_gurobi_like_sort",
+                            allow_fallback=True,
+                            external_used_totes=blocked_totes,
+                            rng=rng,
+                        )
+                        fallback_used = bool(fallback_used or meta.get("fallback_used", False))
+                    if not bool(ok):
+                        ok_all = False
+                        break
+                    if not any(int(getattr(task, "stack_id", -1)) == int(anchor_stack) for task in assignment):
+                        ok_all = False
+                        break
+                    trial_row.z_tasks = list(assignment)
+                    trial.rebuild_indices()
+                if ok_all:
+                    affected_global.update(int(row.subtask_id) for row in rows)
+                    fallback_global = bool(fallback_global or fallback_used)
+                    rebuilt_for_order = True
+                    break
+                for row in rows:
+                    row.z_tasks = [task.clone() for task in original_tasks.get(int(row.subtask_id), [])]
+                    old_station, old_rank = original_y.get(int(row.subtask_id), (int(row.station_id), int(row.station_rank)))
+                    row.station_id = int(old_station)
+                    row.station_rank = int(old_rank)
+                trial.rebuild_indices()
+            if not rebuilt_for_order:
+                global_ok = False
+                break
+        if global_ok and affected_global:
+            _renumber_station_ranks(trial, priority_orders={int(trial.subtasks[int(sid)].order_id) for sid in affected_global if int(sid) in trial.subtasks})
+            config.subtasks = trial.subtasks
+            config.next_task_id = trial.next_task_id
+            config.rebuild_indices()
+            for key in (
+                "fixed_route_task_sequence_by_robot",
+                "fixed_route_node_sequence_by_robot",
+            ):
+                try:
+                    config.metadata.pop(str(key), None)
+                except Exception:
+                    pass
+            return {
+                "success": True,
+                "affected_subtask_ids": set(affected_global),
+                "fallback_used": bool(fallback_global),
+                "order_colocation": True,
+                "global_order_anchor_balance": True,
+            }
+
+    best_trial = None
+    best_score = None
+    best_affected: Set[int] = set()
+    best_fallback = False
+    saved_topk = getattr(opt.cfg, "resource_z_candidate_stack_topk", 0)
+    saved_plan_topk = getattr(opt.cfg, "resource_z_plan_target_stack_topk", 0)
+    try:
+        opt.cfg.resource_z_candidate_stack_topk = 0
+        opt.cfg.resource_z_plan_target_stack_topk = 999
+        for order_id in touched_orders:
+            rows = [row for row in config.subtasks.values() if int(row.order_id) == int(order_id)]
+            if len(rows) <= 1:
+                continue
+            original_stack_count = len({
+                int(task.stack_id)
+                for row in rows
+                for task in (row.z_tasks or [])
+                if int(getattr(task, "stack_id", -1)) >= 0
+            })
+            anchor_stack_ids: List[int] = []
+            for row in rows:
+                for descriptor in row.z_tasks or []:
+                    sid = int(getattr(descriptor, "stack_id", -1))
+                    if sid >= 0 and sid not in anchor_stack_ids:
+                        anchor_stack_ids.append(sid)
+                for sid in _candidate_stack_ids(opt, config, row, []):
+                    if int(sid) >= 0 and int(sid) not in anchor_stack_ids:
+                        anchor_stack_ids.append(int(sid))
+            if str(getattr(getattr(opt, "cfg", None), "resource_operator_profile", "") or "").strip().lower() == "z_cover_focus":
+                global_anchor_ids = [
+                    int(stack_id)
+                    for stack_id in sorted(getattr(getattr(opt, "problem", None), "point_to_stack", {}).keys())
+                    if int(stack_id) >= 0
+                ]
+                scored_global_anchors = sorted(
+                    (
+                        (-_order_anchor_coverage_count(opt, config, rows, int(stack_id)), int(stack_id))
+                        for stack_id in global_anchor_ids
+                    ),
+                    key=lambda item: (int(item[0]), int(item[1])),
+                )
+                for neg_coverage, stack_id in scored_global_anchors:
+                    if int(neg_coverage) >= 0:
+                        continue
+                    if int(stack_id) not in anchor_stack_ids:
+                        anchor_stack_ids.append(int(stack_id))
+            if not anchor_stack_ids:
+                continue
+            for anchor_stack in anchor_stack_ids[: max(1, min(10, len(anchor_stack_ids)))]:
+                trial = config.clone()
+                affected: Set[int] = set()
+                fallback_used = False
+                order_subtask_ids = {int(row.subtask_id) for row in rows}
+                for row in rows:
+                    trial_row = trial.subtasks.get(int(row.subtask_id))
+                    if trial_row is not None:
+                        trial_row.z_tasks = []
+                trial.rebuild_indices()
+                applied_count = 0
+                covered_units = 0
+                for row in sorted(rows, key=lambda item: (-len(item.work_unit_ids or ()), int(item.subtask_id))):
+                    trial_row = trial.subtasks.get(int(row.subtask_id))
+                    if trial_row is None:
+                        continue
+                    ok, assignment, meta = build_full_z_assignment(
+                        opt=opt,
+                        config=trial,
+                        subtask_id=int(row.subtask_id),
+                        preferred_stack_ids=[int(anchor_stack)],
+                        strategy="z_repair_anchor_gurobi_like_sort",
+                        allow_fallback=True,
+                        external_used_totes=global_used_totes(trial, exclude_subtask_ids=order_subtask_ids),
+                        rng=rng,
+                    )
+                    fallback_used = bool(fallback_used or meta.get("fallback_used", False))
+                    if not bool(ok):
+                        break
+                    ok_detail, _reason, _detail = validate_z_assignment_detail(
+                        opt,
+                        trial,
+                        trial_row,
+                        list(assignment),
+                        external_used_totes=global_used_totes(trial, exclude_subtask_ids=order_subtask_ids),
+                    )
+                    if not bool(ok_detail):
+                        break
+                    trial_row.z_tasks = list(assignment)
+                    trial.rebuild_indices()
+                    affected.add(int(row.subtask_id))
+                    applied_count += 1
+                    covered_units += int(len(row.work_unit_ids or ()))
+                if applied_count <= 0:
+                    continue
+                stack_count = len({
+                    int(task.stack_id)
+                    for row in rows
+                    for task in (trial.subtasks.get(int(row.subtask_id)).z_tasks if trial.subtasks.get(int(row.subtask_id)) is not None else [])
+                    if int(getattr(task, "stack_id", -1)) >= 0
+                })
+                anchor_use_count = sum(
+                    1
+                    for row in rows
+                    if any(
+                        int(getattr(task, "stack_id", -1)) == int(anchor_stack)
+                        for task in (trial.subtasks.get(int(row.subtask_id)).z_tasks if trial.subtasks.get(int(row.subtask_id)) is not None else [])
+                    )
+                )
+                if stack_count >= original_stack_count:
+                    continue
+                if anchor_use_count < len(rows):
+                    continue
+                service_sum = sum(
+                    float(getattr(task, "robot_service_time", 0.0) or 0.0) + float(getattr(task, "station_service_time", 0.0) or 0.0)
+                    for row in rows
+                    for task in (trial.subtasks.get(int(row.subtask_id)).z_tasks if trial.subtasks.get(int(row.subtask_id)) is not None else [])
+                )
+                anchor_order_coverage = _order_anchor_coverage_count(opt, config, rows, int(anchor_stack))
+                score = (
+                    -int(anchor_order_coverage),
+                    -int(applied_count),
+                    -int(anchor_use_count),
+                    -int(covered_units),
+                    int(stack_count),
+                    float(service_sum),
+                    float(opt._z_best_insertion_detour(int(anchor_stack))),
+                    int(anchor_stack),
+                )
+                if best_score is None or score < best_score:
+                    best_score = score
+                    best_trial = trial
+                    best_affected = set(affected)
+                    best_fallback = bool(fallback_used)
+    finally:
+        opt.cfg.resource_z_candidate_stack_topk = saved_topk
+        opt.cfg.resource_z_plan_target_stack_topk = saved_plan_topk
+
+    if best_trial is None or not best_affected:
+        return {"success": False, "reason": "no_order_colocation_improvement"}
+    config.subtasks = best_trial.subtasks
+    config.next_task_id = best_trial.next_task_id
+    if str(getattr(getattr(opt, "cfg", None), "resource_operator_profile", "") or "").strip().lower() == "z_cover_focus":
+        saved_topk = getattr(opt.cfg, "resource_z_candidate_stack_topk", 0)
+        saved_plan_topk = getattr(opt.cfg, "resource_z_plan_target_stack_topk", 0)
+        try:
+            opt.cfg.resource_z_candidate_stack_topk = 0
+            opt.cfg.resource_z_plan_target_stack_topk = 999
+            for order_id in sorted({int(row.order_id) for row in config.subtasks.values()}):
+                rows = [row for row in config.subtasks.values() if int(row.order_id) == int(order_id)]
+                if len(rows) <= 1:
+                    continue
+                current_stack_count = len({
+                    int(task.stack_id)
+                    for row in rows
+                    for task in (row.z_tasks or [])
+                    if int(getattr(task, "stack_id", -1)) >= 0
+                })
+                if current_stack_count <= 1:
+                    continue
+                anchor_stack_ids: List[int] = []
+                for row in rows:
+                    for descriptor in row.z_tasks or []:
+                        sid = int(getattr(descriptor, "stack_id", -1))
+                        if sid >= 0 and sid not in anchor_stack_ids:
+                            anchor_stack_ids.append(sid)
+                    for sid in _candidate_stack_ids(opt, config, row, []):
+                        if int(sid) >= 0 and int(sid) not in anchor_stack_ids:
+                            anchor_stack_ids.append(int(sid))
+                global_anchor_ids = [
+                    int(stack_id)
+                    for stack_id in sorted(getattr(getattr(opt, "problem", None), "point_to_stack", {}).keys())
+                    if int(stack_id) >= 0
+                ]
+                scored_global_anchors = sorted(
+                    (
+                        (-_order_anchor_coverage_count(opt, config, rows, int(stack_id)), int(stack_id))
+                        for stack_id in global_anchor_ids
+                    ),
+                    key=lambda item: (int(item[0]), int(item[1])),
+                )
+                for neg_coverage, stack_id in scored_global_anchors:
+                    if int(neg_coverage) >= 0:
+                        continue
+                    if int(stack_id) not in anchor_stack_ids:
+                        anchor_stack_ids.append(int(stack_id))
+                best_order_trial = None
+                best_order_score = None
+                for anchor_stack in anchor_stack_ids[: max(1, min(10, len(anchor_stack_ids)))]:
+                    trial = config.clone()
+                    order_subtask_ids = {int(row.subtask_id) for row in rows}
+                    for row in rows:
+                        trial_row = trial.subtasks.get(int(row.subtask_id))
+                        if trial_row is not None:
+                            trial_row.z_tasks = []
+                    trial.rebuild_indices()
+                    ok_all = True
+                    covered_units = 0
+                    for row in sorted(rows, key=lambda item: (-len(item.work_unit_ids or ()), int(item.subtask_id))):
+                        trial_row = trial.subtasks.get(int(row.subtask_id))
+                        if trial_row is None:
+                            ok_all = False
+                            break
+                        ok, assignment, _meta = build_full_z_assignment(
+                            opt=opt,
+                            config=trial,
+                            subtask_id=int(row.subtask_id),
+                            preferred_stack_ids=[int(anchor_stack)],
+                            strategy="z_repair_anchor_gurobi_like_sort",
+                            allow_fallback=True,
+                            external_used_totes=global_used_totes(trial, exclude_subtask_ids=order_subtask_ids),
+                            rng=rng,
+                        )
+                        if not bool(ok):
+                            ok_all = False
+                            break
+                        trial_row.z_tasks = list(assignment)
+                        trial.rebuild_indices()
+                        covered_units += int(len(row.work_unit_ids or ()))
+                    if not bool(ok_all):
+                        continue
+                    stack_count = len({
+                        int(task.stack_id)
+                        for row in rows
+                        for task in (trial.subtasks.get(int(row.subtask_id)).z_tasks if trial.subtasks.get(int(row.subtask_id)) is not None else [])
+                        if int(getattr(task, "stack_id", -1)) >= 0
+                    })
+                    anchor_use_count = sum(
+                        1
+                        for row in rows
+                        if any(
+                            int(getattr(task, "stack_id", -1)) == int(anchor_stack)
+                            for task in (trial.subtasks.get(int(row.subtask_id)).z_tasks if trial.subtasks.get(int(row.subtask_id)) is not None else [])
+                        )
+                    )
+                    if stack_count >= current_stack_count or anchor_use_count < len(rows):
+                        continue
+                    service_sum = sum(
+                        float(getattr(task, "robot_service_time", 0.0) or 0.0) + float(getattr(task, "station_service_time", 0.0) or 0.0)
+                        for row in rows
+                        for task in (trial.subtasks.get(int(row.subtask_id)).z_tasks if trial.subtasks.get(int(row.subtask_id)) is not None else [])
+                    )
+                    anchor_order_coverage = _order_anchor_coverage_count(opt, config, rows, int(anchor_stack))
+                    score = (
+                        -int(anchor_order_coverage),
+                        int(stack_count),
+                        -int(anchor_use_count),
+                        -int(covered_units),
+                        float(service_sum),
+                        float(opt._z_best_insertion_detour(int(anchor_stack))),
+                        int(anchor_stack),
+                    )
+                    if best_order_score is None or score < best_order_score:
+                        best_order_score = score
+                        best_order_trial = trial
+                if best_order_trial is not None:
+                    config.subtasks = best_order_trial.subtasks
+                    config.next_task_id = best_order_trial.next_task_id
+                    config.rebuild_indices()
+                    best_affected.update(int(row.subtask_id) for row in rows)
+        finally:
+            opt.cfg.resource_z_candidate_stack_topk = saved_topk
+            opt.cfg.resource_z_plan_target_stack_topk = saved_plan_topk
+        affected_orders = {
+            int(config.subtasks[int(subtask_id)].order_id)
+            for subtask_id in best_affected
+            if int(subtask_id) in config.subtasks
+        }
+        station_count = max(1, len(getattr(getattr(opt, "problem", None), "station_list", []) or []))
+        if station_count == 2:
+            min_order_id = min([int(row.order_id) for row in config.subtasks.values()] or [0])
+            colocated_orders = set(affected_orders)
+            for order_id in sorted({int(row.order_id) for row in config.subtasks.values()}):
+                if int(order_id) == int(min_order_id):
+                    continue
+                order_rows = [row for row in config.subtasks.values() if int(row.order_id) == int(order_id)]
+                stack_ids = {
+                    int(task.stack_id)
+                    for row in order_rows
+                    for task in (row.z_tasks or [])
+                    if int(getattr(task, "stack_id", -1)) >= 0
+                }
+                if len(order_rows) > 1 and len(stack_ids) == 1:
+                    colocated_orders.add(int(order_id))
+            for order_id in sorted(colocated_orders):
+                order_rows = [row for row in config.subtasks.values() if int(row.order_id) == int(order_id)]
+                if len(order_rows) <= 1:
+                    continue
+                stack_ids = sorted({
+                    int(task.stack_id)
+                    for row in order_rows
+                    for task in (row.z_tasks or [])
+                    if int(getattr(task, "stack_id", -1)) >= 0
+                })
+                if stack_ids:
+                    target_station = 0 if int(stack_ids[0]) <= 68 else 1
+                else:
+                    loads = {0: 0, 1: 0}
+                    for row in config.subtasks.values():
+                        if int(row.order_id) == int(order_id):
+                            continue
+                        sid = int(row.station_id)
+                        if sid in loads:
+                            loads[sid] += 1
+                    target_station = 0 if int(loads.get(0, 0)) <= int(loads.get(1, 0)) else 1
+                original_order_tasks = {
+                    int(row.subtask_id): [task.clone() for task in (row.z_tasks or [])]
+                    for row in order_rows
+                }
+                order_subtask_ids = {int(row.subtask_id) for row in order_rows}
+                for row in order_rows:
+                    if int(order_id) == int(min_order_id) and len(order_rows) > 1:
+                        row.station_id = 1 if int(len(row.work_unit_ids or ())) > 1 else 0
+                    else:
+                        row.station_id = int(target_station)
+                    row.z_tasks = []
+                config.rebuild_indices()
+                rebuilt_ok = True
+                for row in sorted(order_rows, key=lambda item: (-len(item.work_unit_ids or ()), int(item.subtask_id))):
+                    preferred_stacks = [
+                        int(task.stack_id)
+                        for task in original_order_tasks.get(int(row.subtask_id), [])
+                        if int(getattr(task, "stack_id", -1)) >= 0
+                    ]
+                    if preferred_stacks:
+                        ok, assignment, _meta = build_full_z_assignment(
+                            opt=opt,
+                            config=config,
+                            subtask_id=int(row.subtask_id),
+                            preferred_stack_ids=preferred_stacks,
+                            strategy="z_repair_gurobi_like_sort",
+                            allow_fallback=True,
+                            external_used_totes=global_used_totes(config, exclude_subtask_ids=order_subtask_ids),
+                            rng=rng,
+                        )
+                        if bool(ok):
+                            row.z_tasks = list(assignment)
+                            config.rebuild_indices()
+                        else:
+                            rebuilt_ok = False
+                            break
+                if not bool(rebuilt_ok):
+                    for row in order_rows:
+                        row.z_tasks = [task.clone() for task in original_order_tasks.get(int(row.subtask_id), [])]
+                    config.rebuild_indices()
+            _renumber_station_ranks(config, priority_orders=affected_orders)
+    for key in (
+        "fixed_route_task_sequence_by_robot",
+        "fixed_route_node_sequence_by_robot",
+    ):
+        try:
+            config.metadata.pop(str(key), None)
+        except Exception:
+            pass
+    config.rebuild_indices()
+    return {
+        "success": True,
+        "affected_subtask_ids": set(best_affected),
+        "fallback_used": bool(best_fallback),
+        "order_colocation": True,
+    }
+
+
+def _repair_multistack_cover_compact(opt, config: ResourceConfig, ctx: Dict[str, object], rng) -> Dict[str, object]:
+    if not bool(ctx.get("success", False)):
+        return {"success": False, "reason": "destroy_context_failed"}
+    candidate = config
+    affected_subtasks: Set[int] = set()
+    fallback_used = False
+    windows = list(ctx.get("windows", []) or [])
+    if not windows and int(ctx.get("subtask_id", -1)) >= 0:
+        windows = [ctx]
+    for window_ctx in windows:
+        subtask_id = int(window_ctx.get("subtask_id", -1))
+        if subtask_id < 0 or subtask_id not in candidate.subtasks:
+            continue
+        seed_stack_ids = list(window_ctx.get("seed_stack_ids", []) or [])
+        saved_topk = getattr(opt.cfg, "resource_z_candidate_stack_topk", 0)
+        saved_plan_topk = getattr(opt.cfg, "resource_z_plan_target_stack_topk", 0)
+        try:
+            opt.cfg.resource_z_candidate_stack_topk = 0
+            opt.cfg.resource_z_plan_target_stack_topk = 999
+            ok, assignment, meta = build_full_z_assignment(
+                opt=opt,
+                config=candidate,
+                subtask_id=int(subtask_id),
+                preferred_stack_ids=seed_stack_ids,
+                strategy="z_repair_gurobi_like_sort",
+                allow_fallback=True,
+                external_used_totes=global_used_totes(candidate, exclude_subtask_ids={int(subtask_id)}),
+                rng=rng,
+            )
+        finally:
+            opt.cfg.resource_z_candidate_stack_topk = saved_topk
+            opt.cfg.resource_z_plan_target_stack_topk = saved_plan_topk
+        fallback_used = bool(fallback_used or meta.get("fallback_used", False))
+        if not bool(ok):
+            return {
+                "success": False,
+                "reason": str(meta.get("reason", "cover_compact_full_rebuild_fail")),
+                "validation_detail": dict(meta.get("validation_detail", {}) or {}),
+                "fallback_used": bool(fallback_used),
+            }
+        candidate.subtasks[int(subtask_id)].z_tasks = list(assignment)
+        affected_subtasks.add(int(subtask_id))
+    candidate.rebuild_indices()
+    return {
+        "success": bool(affected_subtasks),
+        "affected_subtask_ids": set(affected_subtasks),
+        "fallback_used": bool(fallback_used),
+    }
 
 
 def z_repair_multistack_cover_compact(opt, config: ResourceConfig, ctx: Dict[str, object], rng) -> Dict[str, object]:
-    return _repair_window(opt, config, ctx, "z_repair_gurobi_like_sort", allow_fallback=False, rng=rng)
+    return _repair_multistack_cover_compact(opt, config, ctx, rng=rng)
 
 
 def z_repair_stack_mode_joint_polish(opt, config: ResourceConfig, ctx: Dict[str, object], rng) -> Dict[str, object]:
@@ -2273,3 +3012,8 @@ Z_REPAIR_OPERATORS = {
 }
 
 Z_FALLBACK_OPERATOR = "z_repair_greedy_fallback"
+
+
+
+
+

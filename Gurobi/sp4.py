@@ -1,4 +1,4 @@
-import math
+﻿import math
 import gurobipy as gp
 from gurobipy import GRB
 from typing import Any, List, Dict, Tuple, Set, Optional
@@ -751,6 +751,12 @@ class SP4_Robot_Router:
         else:
             if lkh_time_limit_seconds is not None:
                 self.lkh_time_limit_seconds = int(lkh_time_limit_seconds)
+            if int(self.lkh_time_limit_seconds) <= 0 and bool(enable_greedy_fallback):
+                return self._greedy_fallback_route(
+                    [st for st in sub_tasks if getattr(st, "execution_tasks", None)],
+                    same_subtask_vehicle_mode=same_subtask_vehicle_mode,
+                    same_subtask_vehicle_threshold=same_subtask_vehicle_threshold,
+                )
             try:
                 return self._solve_LKH(
                     sub_tasks,
@@ -1934,4 +1940,5 @@ if __name__ == "__main__":
     for st_id, r_id in robot_assign.items():
         st = next(t for t in sub_tasks if t.id == st_id)
         print(f"SubTask {st_id} -> Robot {r_id} | Tasks: {len(st.execution_tasks)}")
+
 

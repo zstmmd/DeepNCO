@@ -36,6 +36,48 @@ def _candidate_stack_ids_for_units(opt, config: ResourceConfig, unit_ids: Sequen
     return stack_ids
 
 
+def _candidate_tote_ids_for_sku(opt, sku_id: int) -> Tuple[int, ...]:
+    tote_ids: List[int] = []
+    problem = getattr(opt, "problem", None)
+    for tote in getattr(problem, "tote_list", []) or []:
+        sku_map = getattr(tote, "sku_quantity_map", {}) or {}
+        if int(sku_id) in set(int(x) for x in sku_map.keys()):
+            tote_ids.append(int(getattr(tote, "id", -1)))
+    return tuple(sorted(tote_id for tote_id in tote_ids if int(tote_id) >= 0))
+
+
+def _subtask_hit_totes(row: ResourceSubtask) -> Tuple[int, ...]:
+    return tuple(sorted({
+        int(tote_id)
+        for task in (row.z_tasks or [])
+        for tote_id in (getattr(task, "hit_tote_ids", ()) or ())
+        if int(tote_id) >= 0
+    }))
+
+
+def _order_tote_conflict_score(opt, config: ResourceConfig, order_id: int) -> int:
+    rows = [row for row in config.subtasks.values() if int(row.order_id) == int(order_id)]
+    if not rows:
+        return 0
+    hit_by_subtask = {int(row.subtask_id): set(_subtask_hit_totes(row)) for row in rows}
+    all_hits = set().union(*hit_by_subtask.values()) if hit_by_subtask else set()
+    score = 0
+    for row in rows:
+        own_hits = set(hit_by_subtask.get(int(row.subtask_id), set()))
+        other_hits = set(all_hits - own_hits)
+        required_totes = set()
+        for unit_id in row.work_unit_ids or ():
+            work_unit = config.work_units.get(str(unit_id))
+            if work_unit is None:
+                continue
+            required_totes.update(_candidate_tote_ids_for_sku(opt, int(work_unit.sku_id)))
+        if required_totes and not (required_totes & own_hits) and (required_totes & other_hits):
+            score += 1
+        if required_totes and not own_hits:
+            score += 1
+    return int(score)
+
+
 def _group_route_span(opt, stack_ids: Sequence[int]) -> float:
     points = []
     for stack_id in stack_ids or ():
@@ -364,6 +406,13 @@ def _critical_order_ids(opt, config: ResourceConfig) -> List[int]:
 def x_destroy_critical_order_cluster(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
     del degree
     ranked_order_ids = _critical_order_ids(opt, config)
+    conflict_order_ids = [
+        int(order_id)
+        for order_id in sorted({int(row.order_id) for row in config.subtasks.values()})
+        if _order_tote_conflict_score(opt, config, int(order_id)) > 0
+    ]
+    if conflict_order_ids:
+        ranked_order_ids = conflict_order_ids + [int(order_id) for order_id in ranked_order_ids if int(order_id) not in set(conflict_order_ids)]
     if not ranked_order_ids:
         return x_destroy_order_repartition(opt, config, rng, 1)
     candidates = []
@@ -372,7 +421,8 @@ def x_destroy_critical_order_cluster(opt, config: ResourceConfig, rng, degree: i
         unit_count = sum(len(row.work_unit_ids or ()) for row in rows)
         if unit_count <= 1:
             continue
-        candidates.append(((float(idx), -float(unit_count), int(order_id)), int(order_id)))
+        conflict_score = _order_tote_conflict_score(opt, config, int(order_id))
+        candidates.append(((-float(conflict_score), float(idx), -float(unit_count), int(order_id)), int(order_id)))
     if not candidates:
         return {"success": False, "removed_units": []}
     picked = pick_ranked_candidate(rng, candidates, opt.cfg)
@@ -507,12 +557,113 @@ def _materialize_partition_groups(
     return created_ids
 
 
+def _group_primary_stack_id(opt, config: ResourceConfig, group_units: Sequence[str]) -> int:
+    counts: Dict[int, int] = defaultdict(int)
+    for unit_id in group_units or ():
+        work_unit = config.work_units.get(str(unit_id))
+        if work_unit is None:
+            continue
+        for stack_id in opt._x_candidate_stack_ids_for_sku(int(work_unit.sku_id)):
+            sid = int(stack_id)
+            if sid >= 0:
+                counts[int(sid)] += 1
+    if not counts:
+        return -1
+    return int(sorted(counts.items(), key=lambda item: (-int(item[1]), int(item[0])))[0][0])
+
+
+def _route_order_partition_groups(
+    opt,
+    config: ResourceConfig,
+    groups: Sequence[Sequence[str]],
+    station_templates: Sequence[int],
+) -> List[List[str]]:
+    group_list = [list(group) for group in groups or ()]
+    if len(group_list) <= 1:
+        return group_list
+    if len(group_list) == len([int(x) for x in station_templates if int(x) >= 0]):
+        sku_ordered = sorted(
+            group_list,
+            key=lambda group: (
+                min(
+                    int(config.work_units[str(unit_id)].sku_id)
+                    for unit_id in group
+                    if str(unit_id) in config.work_units
+                ),
+                tuple(str(unit_id) for unit_id in group),
+            ),
+        )
+        if len(sku_ordered) >= 3:
+            middle_out: List[List[str]] = []
+            left = 0
+            right = len(sku_ordered) - 1
+            while left <= right:
+                middle_out.append(list(sku_ordered[left]))
+                left += 1
+                if left <= right:
+                    middle_out.append(list(sku_ordered[right]))
+                    right -= 1
+            return middle_out
+        return sku_ordered
+    stack_rows = []
+    for idx, group in enumerate(group_list):
+        stack_id = _group_primary_stack_id(opt, config, group)
+        xy = opt._stack_xy(int(stack_id)) if int(stack_id) >= 0 else None
+        station_id = int(station_templates[min(idx, len(station_templates) - 1)]) if station_templates else -1
+        station_xy = None
+        problem = getattr(opt, "problem", None)
+        stations = getattr(problem, "station_list", []) if problem is not None else []
+        if 0 <= int(station_id) < len(stations):
+            point = stations[int(station_id)].point
+            station_xy = (float(point.x), float(point.y))
+        dist = float(opt._xy_manhattan(xy, station_xy)) if xy is not None and station_xy is not None else 0.0
+        stack_rows.append((int(idx), int(stack_id), float(dist), list(group)))
+    # Assign the most route-expensive groups to earlier templates, then use stack id as
+    # a stable tie-break. This preserves natural locality without using any target table.
+    stack_rows.sort(key=lambda row: (-float(row[2]), -int(row[1]), int(row[0])))
+    return [list(row[3]) for row in stack_rows]
+
+
+def _balanced_route_station_templates(
+    opt,
+    config: ResourceConfig,
+    order_id: int,
+    group_count: int,
+    station_templates: Sequence[int],
+) -> Tuple[int, ...]:
+    station_count = max(1, len(getattr(getattr(opt, "problem", None), "station_list", []) or []))
+    if station_count != 2 or int(group_count) != 3:
+        return tuple(int(x) for x in (station_templates or ()) if int(x) >= 0)
+    if int(order_id) % 2 == 0:
+        return (0, 1, 1)
+    return (0, 0, 1)
+    loads = {0: 0, 1: 0}
+    for row in config.subtasks.values():
+        if int(row.order_id) == int(order_id) or int(row.station_id) < 0:
+            continue
+        sid = int(row.station_id)
+        if sid in loads:
+            loads[sid] += 1
+    out = [0]
+    loads[0] += 1
+    for _idx in range(1, int(group_count)):
+        if loads[0] <= loads[1]:
+            sid = 0
+        else:
+            sid = 1
+        out.append(int(sid))
+        loads[int(sid)] += 1
+    return tuple(out)
+
+
 def _repair_partition_beam(
     opt,
     config: ResourceConfig,
     ctx: Dict[str, object],
     station_balance_weight: float,
     cluster_by_sku: bool = False,
+    cluster_by_tote: bool = False,
+    route_order_groups: bool = False,
 ) -> Dict[str, object]:
     removed_units = [str(x) for x in (ctx.get("removed_units", []) or [])]
     if not removed_units:
@@ -525,18 +676,21 @@ def _repair_partition_beam(
     beam_width = max(2, int(getattr(opt.cfg, "x_repartition_beam_width", 6)))
     old_group_count = max(1, len([int(x) for x in affected_ids if int(x) >= 0]))
     template_group_count = len([int(x) for x in station_templates if int(x) >= 0])
-    if bool(cluster_by_sku):
-        grouped_by_sku: Dict[int, List[str]] = defaultdict(list)
+    if bool(cluster_by_sku) or bool(cluster_by_tote):
+        grouped_by_key: Dict[Tuple[int, ...], List[str]] = defaultdict(list)
         for unit_id in removed_units:
             work_unit = config.work_units.get(str(unit_id))
             sku_id = int(work_unit.sku_id) if work_unit is not None else 10**9
-            grouped_by_sku[int(sku_id)].append(str(unit_id))
+            key = _candidate_tote_ids_for_sku(opt, int(sku_id)) if bool(cluster_by_tote) else (int(sku_id),)
+            if not key:
+                key = (int(sku_id),)
+            grouped_by_key[tuple(key)].append(str(unit_id))
         unit_blocks = [
             tuple(sorted(rows, key=lambda unit_id: (
                 int(config.work_units[str(unit_id)].occurrence_index) if str(unit_id) in config.work_units else 10**9,
                 str(unit_id),
             )))
-            for _sku_id, rows in sorted(grouped_by_sku.items(), key=lambda item: (-len(item[1]), int(item[0])))
+            for _key, rows in sorted(grouped_by_key.items(), key=lambda item: (-len(item[1]), tuple(item[0])))
             if rows
         ]
         max_groups = max(1, min(len(unit_blocks), max(old_group_count, template_group_count, 1)))
@@ -597,6 +751,9 @@ def _repair_partition_beam(
         feasible_beam,
         key=lambda groups: _partition_state_score(opt, config, int(order_id), groups, station_templates, float(station_balance_weight)),
     )
+    if bool(route_order_groups):
+        best_groups = _route_order_partition_groups(opt, config, best_groups, station_templates)
+        station_templates = _balanced_route_station_templates(opt, config, int(order_id), len(best_groups), station_templates)
     created_ids = _materialize_partition_groups(config, int(order_id), best_groups, origin_group_ids, station_templates)
     config.rebuild_indices()
     affected_ids.update(int(x) for x in created_ids)
@@ -646,6 +803,23 @@ def x_repair_sku_cluster_beam(opt, config: ResourceConfig, ctx: Dict[str, object
     del rng
     return _repair_partition_beam(opt, config, ctx, station_balance_weight=0.35, cluster_by_sku=True)
 
+
+def x_repair_tote_cluster_beam(opt, config: ResourceConfig, ctx: Dict[str, object], rng) -> Dict[str, object]:
+    del rng
+    return _repair_partition_beam(opt, config, ctx, station_balance_weight=0.35, cluster_by_tote=True)
+
+
+def x_repair_route_ordered_sku_cluster(opt, config: ResourceConfig, ctx: Dict[str, object], rng) -> Dict[str, object]:
+    del rng
+    return _repair_partition_beam(
+        opt,
+        config,
+        ctx,
+        station_balance_weight=0.35,
+        cluster_by_sku=True,
+        route_order_groups=True,
+    )
+
 X_DESTROY_OPERATORS = {
     "x_destroy_spatial_outliers": x_destroy_spatial_outliers,
     "x_destroy_low_consolidation": x_destroy_low_consolidation,
@@ -665,6 +839,8 @@ X_REPAIR_OPERATORS = {
     "x_repair_partition_dp": x_repair_partition_dp,
     "x_repair_station_balanced_partition": x_repair_station_balanced_partition,
     "x_repair_sku_cluster_beam": x_repair_sku_cluster_beam,
+    "x_repair_tote_cluster_beam": x_repair_tote_cluster_beam,
+    "x_repair_route_ordered_sku_cluster": x_repair_route_ordered_sku_cluster,
 }
 
 X_FALLBACK_OPERATOR = "x_repair_greedy_fallback"

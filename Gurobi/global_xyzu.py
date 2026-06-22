@@ -1,9 +1,10 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 import copy
 import json
 import math
+import os
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
@@ -152,7 +153,9 @@ class GlobalXYZUConfig:
     fixed_used_stack_ids_by_order: Optional[Dict[int, List[int]]] = None
     fixed_route_arcs_by_robot: Optional[Dict[int, List[Tuple[int, int]]]] = None
     fixed_route_task_sequence_by_robot: Optional[Dict[int, List[Dict[str, Any]]]] = None
+    fixed_route_node_sequence_by_robot: Optional[Dict[int, List[Dict[str, Any]]]] = None
     fixed_route_arc_fix_nonselected: bool = True
+    fixgurobi_relax_sort_tote_fix: bool = False
     fixgurobi_no_warm_start: bool = False
     fixgurobi_allow_warm_start_fallback: bool = True
     fixgurobi_warm_bound_only: bool = False
@@ -532,6 +535,15 @@ class GlobalXYZUSolver:
                     diagnostics["gurobi_runtime_sec"] = float(diagnostics["gurobi_solve_time_sec"])
             diagnostics["model_status_code"] = int(model.Status)
             diagnostics["model_sol_count"] = int(model.SolCount)
+            debug_iis_path = str(getattr(cfg, "debug_iis_path", "") or "").strip()
+            if debug_iis_path and int(model.Status) == GRB.INFEASIBLE:
+                try:
+                    os.makedirs(os.path.dirname(debug_iis_path), exist_ok=True)
+                    model.computeIIS()
+                    model.write(debug_iis_path)
+                    diagnostics["debug_iis_path"] = debug_iis_path
+                except Exception as iis_exc:
+                    diagnostics["debug_iis_error"] = str(iis_exc)
             try:
                 diagnostics["model_best_bound"] = float(model.ObjBound)
             except Exception:
@@ -577,6 +589,11 @@ class GlobalXYZUSolver:
             if not getattr(warm, "subtask_by_order", None):
                 raise
             self._materialize_warm_start(problem, warm)
+            warm_cmax = diagnostics.get("warm_start_model_cmax", None)
+            if isinstance(warm_cmax, (int, float)) and math.isfinite(float(warm_cmax)):
+                diagnostics["model_cmax"] = float(warm_cmax)
+                diagnostics["model_objective"] = float(warm_cmax)
+                diagnostics["objective_value"] = float(warm_cmax)
             gap = float("nan")
             status = "WARM_START_FALLBACK"
         if str(diagnostics.get("fallback", "")) == "warm_start":
@@ -794,6 +811,15 @@ class GlobalXYZUSolver:
                     diagnostics["gurobi_runtime_sec"] = float(diagnostics["gurobi_solve_time_sec"])
             diagnostics["model_status_code"] = int(model.Status)
             diagnostics["model_sol_count"] = int(model.SolCount)
+            debug_iis_path = str(getattr(cfg, "debug_iis_path", "") or "").strip()
+            if debug_iis_path and int(model.Status) == GRB.INFEASIBLE:
+                try:
+                    os.makedirs(os.path.dirname(debug_iis_path), exist_ok=True)
+                    model.computeIIS()
+                    model.write(debug_iis_path)
+                    diagnostics["debug_iis_path"] = debug_iis_path
+                except Exception as iis_exc:
+                    diagnostics["debug_iis_error"] = str(iis_exc)
             try:
                 diagnostics["model_best_bound"] = float(model.ObjBound)
             except Exception:
@@ -843,6 +869,11 @@ class GlobalXYZUSolver:
             if not warm.subtask_by_order:
                 raise
             self._materialize_warm_start(problem, warm)
+            warm_cmax = diagnostics.get("warm_start_model_cmax", None)
+            if isinstance(warm_cmax, (int, float)) and math.isfinite(float(warm_cmax)):
+                diagnostics["model_cmax"] = float(warm_cmax)
+                diagnostics["model_objective"] = float(warm_cmax)
+                diagnostics["objective_value"] = float(warm_cmax)
             gap = float("nan")
             status = "WARM_START_FALLBACK"
 
@@ -974,9 +1005,71 @@ class GlobalXYZUSolver:
                 arcs.add((int(spec.pickup_node), int(spec.delivery_node)))
                 prev_node = int(spec.delivery_node)
             arcs.add((int(prev_node), int(end_node)))
+        node_sequence_by_robot = dict(getattr(cfg, "fixed_route_node_sequence_by_robot", None) or {})
+        for robot_key, raw_nodes in node_sequence_by_robot.items():
+            robot_id = int(robot_key)
+            start_node = int(route_start_nodes.get(robot_id, -1))
+            end_node = int(route_end_nodes.get(robot_id, -1))
+            if start_node < 0 or end_node < 0:
+                missing_rows.append({"robot_id": robot_id, "reason": "missing_robot_start_or_end"})
+                continue
+            prev_node = int(start_node)
+            saw_end = False
+            for raw_node in raw_nodes or []:
+                node = dict(raw_node or {})
+                kind = str(node.get("kind", "")).lower()
+                if kind == "start":
+                    prev_node = int(start_node)
+                    continue
+                if kind == "end":
+                    arcs.add((int(prev_node), int(end_node)))
+                    prev_node = int(end_node)
+                    saw_end = True
+                    continue
+                if kind not in {"pickup", "delivery"}:
+                    missing_rows.append({"robot_id": robot_id, "kind": kind, "reason": "unknown_route_node_kind"})
+                    continue
+                if "slot_id" in node:
+                    slot_id = int(node.get("slot_id", -1))
+                elif "order_id" in node and "local_slot_index" in node:
+                    order_id = int(node.get("order_id", -1))
+                    local_idx = int(node.get("local_slot_index", -1))
+                    slot_ids = list(slot_ids_by_order.get(order_id, []) or [])
+                    slot_id = int(slot_ids[local_idx]) if 0 <= local_idx < len(slot_ids) else -1
+                else:
+                    slot_id = int(node.get("subtask_id", -1))
+                stack_id = int(node.get("stack_id", node.get("target_stack_id", -1)))
+                station_id = int(node.get("station_id", node.get("target_station_id", -1)))
+                task_key = route_task_by_tuple.get((int(slot_id), int(stack_id), int(station_id)))
+                if task_key is None or int(task_key) not in route_tasks:
+                    missing_rows.append(
+                        {
+                            "robot_id": robot_id,
+                            "slot_id": int(slot_id),
+                            "stack_id": int(stack_id),
+                            "station_id": int(station_id),
+                            "kind": kind,
+                            "reason": "missing_route_task_tuple",
+                        }
+                    )
+                    continue
+                spec = route_tasks[int(task_key)]
+                next_node = int(spec.pickup_node if kind == "pickup" else spec.delivery_node)
+                arcs.add((int(prev_node), int(next_node)))
+                prev_node = int(next_node)
+            if not saw_end:
+                arcs.add((int(prev_node), int(end_node)))
+        listed_robots = {int(k) for k in sequence_by_robot.keys()} | {int(k) for k in node_sequence_by_robot.keys()}
+        has_explicit_route_fix = bool(arcs or sequence_by_robot or node_sequence_by_robot)
+        if has_explicit_route_fix:
+            for robot_id, start_node in dict(route_start_nodes or {}).items():
+                rid = int(robot_id)
+                if rid not in listed_robots and rid in route_end_nodes:
+                    arcs.add((int(start_node), int(route_end_nodes[rid])))
         return arcs, {
             "fixgurobi_fixed_route_arc_count_from_cfg": int(len(arcs)),
             "fixgurobi_fixed_route_sequence_robot_count": int(len(sequence_by_robot)),
+            "fixgurobi_fixed_route_node_sequence_robot_count": int(len(node_sequence_by_robot)),
             "fixgurobi_fixed_route_sequence_missing_count": int(len(missing_rows)),
             "fixgurobi_fixed_route_sequence_missing_rows": missing_rows[:50],
         }
@@ -994,7 +1087,8 @@ class GlobalXYZUSolver:
         fixed_used_stacks = dict(getattr(cfg, "fixed_used_stack_ids_by_order", None) or {})
         fixed_route_arcs = dict(getattr(cfg, "fixed_route_arcs_by_robot", None) or {})
         fixed_route_sequences = dict(getattr(cfg, "fixed_route_task_sequence_by_robot", None) or {})
-        if not any([fixed_units, fixed_y, fixed_z, fixed_used_stacks, fixed_route_arcs, fixed_route_sequences]):
+        fixed_route_node_sequences = dict(getattr(cfg, "fixed_route_node_sequence_by_robot", None) or {})
+        if not any([fixed_units, fixed_y, fixed_z, fixed_used_stacks, fixed_route_arcs, fixed_route_sequences, fixed_route_node_sequences]):
             return {"fixgurobi_fixed_constraint_count": 0, "fixgurobi_invalid_fix_count": 0}
 
         x = payload["x"]
@@ -1022,10 +1116,12 @@ class GlobalXYZUSolver:
 
         constraint_count = 0
         invalid_count = 0
+        invalid_reasons: List[str] = []
 
         def _invalid(reason: str) -> None:
             nonlocal invalid_count, constraint_count
             invalid_count += 1
+            invalid_reasons.append(str(reason))
             model.addConstr(payload["cmax"] <= -1.0, name=f"FixGurobiInvalid_{invalid_count}_{str(reason)[:40]}")
             constraint_count += 1
 
@@ -1116,6 +1212,7 @@ class GlobalXYZUSolver:
                 selected_hit_totes: Set[int] = set()
                 selected_noise_totes: Set[int] = set()
                 selected_flip_hit_totes: Set[int] = set()
+                slot_has_sort_fix = False
                 for item in descriptors:
                     stack_id = int(item.get("stack_id", -1))
                     mode = str(item.get("mode", "FLIP") or "FLIP").upper()
@@ -1130,6 +1227,7 @@ class GlobalXYZUSolver:
                             selected_flip_stacks.add(int(stack_id))
                         selected_flip_hit_totes.update(int(v) for v in hit_totes)
                     else:
+                        slot_has_sort_fix = True
                         sort_range = item.get("sort_layer_range", None)
                         chosen_key = None
                         if sort_range is not None:
@@ -1152,20 +1250,22 @@ class GlobalXYZUSolver:
                         if int(key[0]) == sid and int(key[1]) == int(stack_id) and key not in selected_sort_keys:
                             model.addConstr(sort_var[key] == 0, name=f"FixZSortZero_{key[0]}_{key[1]}_{key[2]}_{key[3]}")
                             constraint_count += 1
-                for tote_id in support_totes_by_order.get(order_id, []):
-                    if (sid, int(tote_id)) in carry and int(tote_id) not in selected_carry_totes:
-                        model.addConstr(carry[sid, int(tote_id)] == 0, name=f"FixZCarryZero_{sid}_{tote_id}")
-                        constraint_count += 1
-                    if (sid, int(tote_id)) in noise and int(tote_id) not in selected_noise_totes:
-                        model.addConstr(noise[sid, int(tote_id)] == 0, name=f"FixZNoiseZero_{sid}_{tote_id}")
-                        constraint_count += 1
-                for tote_id in demand_hit_totes_by_order.get(order_id, []):
-                    if (sid, int(tote_id)) in hit and int(tote_id) not in selected_hit_totes:
-                        model.addConstr(hit[sid, int(tote_id)] == 0, name=f"FixZHitZero_{sid}_{tote_id}")
-                        constraint_count += 1
-                    if (sid, int(tote_id)) in flip_hit and int(tote_id) not in selected_flip_hit_totes:
-                        model.addConstr(flip_hit[sid, int(tote_id)] == 0, name=f"FixZFlipHitZero_{sid}_{tote_id}")
-                        constraint_count += 1
+                relax_sort_tote_fix = bool(getattr(cfg, "fixgurobi_relax_sort_tote_fix", False)) and bool(slot_has_sort_fix)
+                if not relax_sort_tote_fix:
+                    for tote_id in support_totes_by_order.get(order_id, []):
+                        if (sid, int(tote_id)) in carry and int(tote_id) not in selected_carry_totes:
+                            model.addConstr(carry[sid, int(tote_id)] == 0, name=f"FixZCarryZero_{sid}_{tote_id}")
+                            constraint_count += 1
+                        if (sid, int(tote_id)) in noise and int(tote_id) not in selected_noise_totes:
+                            model.addConstr(noise[sid, int(tote_id)] == 0, name=f"FixZNoiseZero_{sid}_{tote_id}")
+                            constraint_count += 1
+                    for tote_id in demand_hit_totes_by_order.get(order_id, []):
+                        if (sid, int(tote_id)) in hit and int(tote_id) not in selected_hit_totes:
+                            model.addConstr(hit[sid, int(tote_id)] == 0, name=f"FixZHitZero_{sid}_{tote_id}")
+                            constraint_count += 1
+                        if (sid, int(tote_id)) in flip_hit and int(tote_id) not in selected_flip_hit_totes:
+                            model.addConstr(flip_hit[sid, int(tote_id)] == 0, name=f"FixZFlipHitZero_{sid}_{tote_id}")
+                            constraint_count += 1
 
                 for desc_idx, item in enumerate(descriptors):
                     stack_id = int(item.get("stack_id", -1))
@@ -1238,7 +1338,7 @@ class GlobalXYZUSolver:
                     model.addConstr(gp.quicksum(terms) == 0, name=f"FixUsedStackZero_{order_id}_{stack_id}")
                 constraint_count += 1
 
-        if (fixed_route_arcs or fixed_route_sequences) and route_arc is not None:
+        if (fixed_route_arcs or fixed_route_sequences or fixed_route_node_sequences) and route_arc is not None:
             fixed_sequence_arcs, fixed_sequence_diag = self._fixed_route_arcs_from_cfg(
                 cfg=cfg,
                 route_task_by_tuple=route_task_by_tuple,
@@ -1277,7 +1377,9 @@ class GlobalXYZUSolver:
             "fixgurobi_fixed_used_stack_order_count": int(len(fixed_used_stacks)),
             "fixgurobi_fixed_route_arc_robot_count": int(len(fixed_route_arcs)),
             "fixgurobi_fixed_route_sequence_robot_count": int(len(fixed_route_sequences)),
+            "fixgurobi_fixed_route_node_sequence_robot_count": int(len(fixed_route_node_sequences)),
             "fixgurobi_fixed_route_sequence_missing_count": int(route_sequence_missing_count),
+            "fixgurobi_invalid_fix_reasons": list(invalid_reasons[:50]),
         }
 
     @staticmethod
@@ -1394,16 +1496,22 @@ class GlobalXYZUSolver:
         if bool(getattr(cfg, "warm_start_use_sp4", False)):
             sp4_clock = time.perf_counter()
             try:
-                # warm start 默认使用 SP4 的LKH 路由；失败时退回本地贪心。
-                from Gurobi.sp4 import SP4_Robot_Router
+                warm_sp4_limit = int(getattr(cfg, "warm_start_sp4_time_limit_sec", 15) or 0)
+                if warm_sp4_limit <= 0:
+                    self._greedy_route_assign(problem)
+                    sp4_mode = "greedy"
+                else:
+                    # warm start uses SP4 only when an explicit positive budget is configured.
+                    from Gurobi.sp4 import SP4_Robot_Router
 
-                sp4 = SP4_Robot_Router(problem)
-                sp4.solve(
-                    problem.subtask_list,
-                    use_mip=False,
-                    lkh_time_limit_seconds=int(cfg.warm_start_sp4_time_limit_sec),
-                )
-                sp4_mode = "lkh"
+                    sp4 = SP4_Robot_Router(problem)
+                    sp4.solve(
+                        problem.subtask_list,
+                        use_mip=False,
+                        lkh_time_limit_seconds=warm_sp4_limit,
+                        enable_greedy_fallback=True,
+                    )
+                    sp4_mode = "lkh"
             except Exception as exc:
                 sp4_mode = "greedy_fallback"
                 sp4_error = str(exc)
@@ -3989,11 +4097,26 @@ class GlobalXYZUSolver:
             route_prune_slot_time_ub = max(float(cfg_slot_time_ub), float(warm_slot_time_ub))
             route_prune_slot_time_ub = max(1.0, float(route_prune_slot_time_ub))
 
+            fixed_route_arcs_for_legalization, fixed_route_legalization_diag = self._fixed_route_arcs_from_cfg(
+                cfg=cfg,
+                route_task_by_tuple=route_task_by_tuple,
+                route_tasks=route_tasks,
+                route_start_nodes=route_start_nodes,
+                route_end_nodes=route_end_nodes,
+                slot_ids_by_order=slot_ids_by_order,
+            )
+            time_big_m_diagnostics.update({
+                "fixgurobi_fixed_route_arc_legalized_count": int(len(fixed_route_arcs_for_legalization)),
+                "fixgurobi_fixed_route_arc_legalized_missing_count": int(fixed_route_legalization_diag.get("fixgurobi_fixed_route_sequence_missing_count", 0) or 0),
+            })
             route_node_ids = sorted(route_nodes.keys())
             # 生成允许弧和 travel time 矩阵，后续所有机器人共享同一弧集合。
             capacity_pruned_pickup_pickup_arc_count = 0
             for i in route_node_ids:
                 for j in route_node_ids:
+                    if (int(i), int(j)) in fixed_route_arcs_for_legalization:
+                        route_tau[(int(i), int(j))] = _route_travel_time(int(i), int(j))
+                        continue
                     allowed, reason = self._route_arc_decision(
                         int(i),
                         int(j),
@@ -4867,6 +4990,18 @@ class GlobalXYZUSolver:
             pickup_nodes = [int(spec.pickup_node) for spec in route_tasks.values()]
             delivery_nodes = [int(spec.delivery_node) for spec in route_tasks.values()]
             service_nodes = pickup_nodes + delivery_nodes
+            fixed_route_arcs_for_legalization, fixed_route_legalization_diag = self._fixed_route_arcs_from_cfg(
+                cfg=cfg,
+                route_task_by_tuple=route_task_by_tuple,
+                route_tasks=route_tasks,
+                route_start_nodes=route_start_nodes,
+                route_end_nodes=route_end_nodes,
+                slot_ids_by_order=slot_ids_by_order,
+            )
+            time_big_m_diagnostics.update({
+                "fixgurobi_fixed_route_arc_legalized_count": int(len(fixed_route_arcs_for_legalization)),
+                "fixgurobi_fixed_route_arc_legalized_missing_count": int(fixed_route_legalization_diag.get("fixgurobi_fixed_route_sequence_missing_count", 0) or 0),
+            })
             route_node_ids = sorted(route_nodes.keys())
 
             route_service_expr_by_node: Dict[int, Any] = {int(node_id): gp.LinExpr(0.0) for node_id in route_node_ids}
@@ -6336,6 +6471,7 @@ class GlobalXYZUSolver:
 
         subtasks: List[SubTask] = []
         all_tasks: List[Task] = []
+        route_key_to_task_id: Dict[int, int] = {}
         next_task_id = 0
 
         slot_rows = sorted(
@@ -6413,6 +6549,8 @@ class GlobalXYZUSolver:
                     sp3_station_service_inputs=f"mode={mode};noise_cnt={len(noise_tote_ids)}",
                     sku_pick_count=int(sku_pick_count),
                 )
+                if route_key >= 0:
+                    route_key_to_task_id[int(route_key)] = int(task.task_id)
                 if route_row:
                     # 一体化 U 已给出机器人和时间，直接写入 Task/SubTask，不再调用 SP4。
                     robot_id = int(route_row.get("robot_id", -1))
@@ -6435,6 +6573,17 @@ class GlobalXYZUSolver:
         problem.subtask_num = len(subtasks)
         problem.task_list = all_tasks
         problem.task_num = len(all_tasks)
+        robot_node_routes = dict(extraction.get("robot_node_routes", {}) or {})
+        sp4_route_sequences: List[Dict[str, Any]] = []
+        for robot_id, nodes in robot_node_routes.items():
+            for seq_idx, node in enumerate(nodes or []):
+                row = dict(node or {})
+                row["robot_id"] = int(robot_id)
+                row["sequence_index"] = int(seq_idx)
+                task_key = int(row.get("task_key", -1))
+                row["task_id"] = int(route_key_to_task_id.get(task_key, -1))
+                sp4_route_sequences.append(row)
+        problem.sp4_route_sequences = sp4_route_sequences
 
     def _materialize_warm_start(self, problem: OFSProblemDTO, warm: WarmStartState) -> None:
         # 主 MIP 无解或环境不可用时，回填 warm start 作为可比较的保底解。
@@ -6677,3 +6826,7 @@ class GlobalXYZUSolver:
 def solve_global_xyzu(problem: OFSProblemDTO, cfg: Optional[GlobalXYZUConfig] = None) -> GlobalXYZUResult:
     # 便捷函数：保持和其他 Gurobi 求解器一致的一行式调用入口。
     return GlobalXYZUSolver().solve(problem, cfg=cfg)
+
+
+
+

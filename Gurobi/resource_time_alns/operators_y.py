@@ -1490,6 +1490,76 @@ def _plan_y_left_right_tail_balance(opt, config: ResourceConfig, released_ids: S
     return assignments if len(assignments) == len(rows) else {}
 
 
+def _plan_y_order_interleave_balance(opt, config: ResourceConfig, released_ids: Sequence[int]) -> Dict[int, Dict[str, int]]:
+    station_count = _station_count(opt)
+    if station_count != 2:
+        return {}
+    rows = [config.subtasks[int(subtask_id)] for subtask_id in released_ids if int(subtask_id) in config.subtasks]
+    if len(rows) < 4:
+        return {}
+    by_order: Dict[int, List[ResourceSubtask]] = defaultdict(list)
+    for row in rows:
+        by_order[int(row.order_id)].append(row)
+    if len(by_order) < 2:
+        return {}
+
+    station_rows: Dict[int, List[ResourceSubtask]] = {0: [], 1: []}
+    station_loads: Dict[int, float] = {0: 0.0, 1: 0.0}
+    for order_pos, order_id in enumerate(sorted(by_order)):
+        order_rows = sorted(
+            by_order[int(order_id)],
+            key=lambda row: (
+                int(row.station_rank if int(row.station_rank) >= 0 else 10**9),
+                int(row.subtask_id),
+            ),
+        )
+        if len(order_rows) == 3:
+            templates = ((0, 1, 1), (0, 0, 1))
+        else:
+            templates = tuple(
+                tuple((idx + offset) % 2 for idx in range(len(order_rows)))
+                for offset in (0, 1)
+            )
+        scored_templates = []
+        for template in templates:
+            projected = dict(station_loads)
+            for idx, row in enumerate(order_rows):
+                projected[int(template[int(idx)])] += float(_subtask_station_work(row))
+            scored_templates.append(
+                (
+                    float(max(projected.values()) - min(projected.values())),
+                    float(projected[1] - projected[0]),
+                    int(order_pos),
+                    tuple(int(x) for x in template),
+                )
+            )
+        scored_templates.sort(key=lambda item: (float(item[0]), abs(float(item[1])), int(item[2]), item[3]))
+        chosen = tuple(int(x) for x in scored_templates[0][3])
+        for idx, row in enumerate(order_rows):
+            station_id = int(chosen[int(idx)])
+            station_rows[int(station_id)].append(row)
+            station_loads[int(station_id)] += float(_subtask_station_work(row))
+
+    assignments: Dict[int, Dict[str, int]] = {}
+    robot_frontier = _snapshot_robot_frontier(opt)
+    for station_id, assigned_rows in station_rows.items():
+        assigned_rows.sort(
+            key=lambda row: (
+                int(row.station_rank if int(row.station_rank) >= 0 else 10**9),
+                int(row.order_id),
+                int(row.subtask_id),
+            )
+        )
+        for rank, row in enumerate(assigned_rows):
+            selected_robot_id = int(_triangle_arrival_cost(opt, config, row, int(station_id), robot_frontier=robot_frontier)[1])
+            assignments[int(row.subtask_id)] = {
+                "station_id": int(station_id),
+                "station_rank": int(rank),
+                "selected_robot_id": int(selected_robot_id),
+            }
+    return assignments if len(assignments) == len(rows) else {}
+
+
 def _plan_y_global_route_balance(opt, config: ResourceConfig, released_ids: Sequence[int], rng=None) -> Dict[int, Dict[str, int]]:
     del rng
     station_count = _station_count(opt)
@@ -1498,6 +1568,10 @@ def _plan_y_global_route_balance(opt, config: ResourceConfig, released_ids: Sequ
     remaining = [int(subtask_id) for subtask_id in released_ids if int(subtask_id) in config.subtasks]
     if not remaining:
         return {}
+    if str(getattr(opt.cfg, "resource_operator_profile", "") or "").strip().lower() == "z_cover_focus":
+        interleaved = _plan_y_order_interleave_balance(opt, config, remaining)
+        if interleaved:
+            return interleaved
     max_per_station = max(1, int(math.ceil(float(len(remaining)) / float(station_count))))
     robot_frontier = _snapshot_robot_frontier(opt)
     call_index = int(getattr(opt, "_resource_y_global_route_balance_calls", 0))

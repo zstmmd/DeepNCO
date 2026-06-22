@@ -24,6 +24,21 @@ except Exception:
     pass
 
 
+
+def _install_runtime_configs(path: str) -> None:
+    if not str(path or "").strip():
+        return
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"runtime config json not found: {path}")
+    with open(path, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+    configs = payload.get("configs", payload) if isinstance(payload, dict) else {}
+    if not isinstance(configs, dict):
+        return
+    CreateOFSProblem.RUNTIME_SCALE_CONFIGS = dict(getattr(CreateOFSProblem, "RUNTIME_SCALE_CONFIGS", {}) or {})
+    for name, cfg in configs.items():
+        if isinstance(cfg, dict):
+            CreateOFSProblem.RUNTIME_SCALE_CONFIGS[str(name).upper()] = dict(cfg)
 def _normalize_jsonable(value: Any) -> Any:
     if isinstance(value, dict):
         return {str(k): _normalize_jsonable(v) for k, v in value.items()}
@@ -503,6 +518,30 @@ def _write_warm_start_export(result_root: str, solver: Any, scale: str, seed: in
                 f"arrival_stack={float(getattr(t, 'arrival_time_at_stack', 0.0) or 0.0):.6f}, arrival_station={float(getattr(t, 'arrival_time_at_station', 0.0) or 0.0):.6f}, "
                 f"start_process={float(getattr(t, 'start_process_time', 0.0) or 0.0):.6f}, end_process={float(getattr(t, 'end_process_time', 0.0) or 0.0):.6f}\n"
             )
+        route_rows = sorted(
+            list(getattr(problem, "sp4_route_sequences", []) or []),
+            key=lambda row: (int(row.get("robot_id", -1)), int(row.get("sequence_index", 0))),
+        )
+        if route_rows:
+            f.write("\n[SP4 Full Node Sequence By Robot]\n")
+            f.write("route_sequence_source=global_xyzu, consistent_with_task_rows=True\n")
+            by_robot: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+            for row in route_rows:
+                by_robot[int(row.get("robot_id", -1))].append(dict(row))
+            for robot_id, rows in sorted(by_robot.items()):
+                tokens = []
+                for row in rows:
+                    kind = str(row.get("kind", ""))
+                    time_value = float(row.get("time", 0.0) or 0.0)
+                    if kind == "start":
+                        tokens.append(f"start(t={time_value:.6f})")
+                    elif kind == "end":
+                        tokens.append(f"end(t={time_value:.6f})")
+                    elif kind == "pickup":
+                        tokens.append(f"pickup(task={int(row.get('task_id', -1))},stack={int(row.get('stack_id', -1))},t={time_value:.6f})")
+                    elif kind == "delivery":
+                        tokens.append(f"delivery(task={int(row.get('task_id', -1))},station={int(row.get('station_id', -1))},t={time_value:.6f})")
+                f.write(f"robot_id={int(robot_id)}, sequence={' -> '.join(tokens)}\n")
 
     verification_result = _verify_makespan_breakdown(problem, out_dir)
     audit = _build_solution_audit(problem, best_z=float(getattr(warm, "makespan", 0.0) or 0.0), verification_result=verification_result)
@@ -609,6 +648,30 @@ def _write_gurobi_solution_export(result_root: str, problem: Any, result: Any, s
                 f"arrival_stack={float(getattr(t, 'arrival_time_at_stack', 0.0) or 0.0):.6f}, arrival_station={float(getattr(t, 'arrival_time_at_station', 0.0) or 0.0):.6f}, "
                 f"start_process={float(getattr(t, 'start_process_time', 0.0) or 0.0):.6f}, end_process={float(getattr(t, 'end_process_time', 0.0) or 0.0):.6f}\n"
             )
+        route_rows = sorted(
+            list(getattr(problem, "sp4_route_sequences", []) or []),
+            key=lambda row: (int(row.get("robot_id", -1)), int(row.get("sequence_index", 0))),
+        )
+        if route_rows:
+            f.write("\n[SP4 Full Node Sequence By Robot]\n")
+            f.write("route_sequence_source=global_xyzu, consistent_with_task_rows=True\n")
+            by_robot: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+            for row in route_rows:
+                by_robot[int(row.get("robot_id", -1))].append(dict(row))
+            for robot_id, rows in sorted(by_robot.items()):
+                tokens = []
+                for row in rows:
+                    kind = str(row.get("kind", ""))
+                    time_value = float(row.get("time", 0.0) or 0.0)
+                    if kind == "start":
+                        tokens.append(f"start(t={time_value:.6f})")
+                    elif kind == "end":
+                        tokens.append(f"end(t={time_value:.6f})")
+                    elif kind == "pickup":
+                        tokens.append(f"pickup(task={int(row.get('task_id', -1))},stack={int(row.get('stack_id', -1))},t={time_value:.6f})")
+                    elif kind == "delivery":
+                        tokens.append(f"delivery(task={int(row.get('task_id', -1))},station={int(row.get('station_id', -1))},t={time_value:.6f})")
+                f.write(f"robot_id={int(robot_id)}, sequence={' -> '.join(tokens)}\n")
 
     verification_result = _verify_makespan_breakdown(problem, out_dir)
     audit = _build_solution_audit(problem, best_z=float(global_makespan), verification_result=verification_result)
@@ -631,9 +694,9 @@ def _write_gurobi_solution_export(result_root: str, problem: Any, result: Any, s
     return out_dir
 
 
-def _write_result_files(problem: Any, result: Any, scale: str, seed: int, cfg: GlobalXYZUConfig) -> str:
+def _write_result_files(problem: Any, result: Any, scale: str, seed: int, cfg: GlobalXYZUConfig, output_root: str = "") -> str:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    result_root = os.path.join(ROOT_DIR, "result", f"gurobi_{str(scale).lower()}_{timestamp}")
+    result_root = str(output_root or os.path.join(ROOT_DIR, "result", f"gurobi_{str(scale).lower()}_{timestamp}"))
     os.makedirs(result_root, exist_ok=True)
 
     payload: Dict[str, Any] = {
@@ -795,7 +858,10 @@ def main() -> None:
     parser.add_argument("--gurobi-nodefile-start-gb", type=float, default=0.0, help="Optional Gurobi NodefileStart in GB; <=0 leaves it unset.")
     parser.add_argument("--gurobi-threads", type=int, default=0, help="Optional Gurobi thread count; <=0 leaves it unset.")
     parser.add_argument("--full-diag", action="store_true", help="Print full diagnostics payload (may be very large).")
+    parser.add_argument("--runtime-config-json", type=str, default="")
+    parser.add_argument("--output-root", type=str, default="")
     args = parser.parse_args()
+    _install_runtime_configs(str(args.runtime_config_json or ""))
 
     problem = CreateOFSProblem.generate_problem_by_scale(args.scale, seed=args.seed)
     cfg = GlobalXYZUConfig(
@@ -851,7 +917,7 @@ def main() -> None:
         cfg.enable_route_load_interval_arc_prune = False
     solver = GlobalXYZUSolver()
     result = solver.solve(problem, cfg=cfg)
-    result_root = _write_result_files(problem, result, scale=args.scale, seed=args.seed, cfg=cfg)
+    result_root = _write_result_files(problem, result, scale=args.scale, seed=args.seed, cfg=cfg, output_root=str(args.output_root or ""))
     warm_start_root = _write_warm_start_export(result_root=result_root, solver=solver, scale=args.scale, seed=args.seed)
 
     print("=== Global XYZU Result ===")

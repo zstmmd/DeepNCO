@@ -59,7 +59,7 @@ class TRARunConfig:
     kitting_span_penalty_weight: float = 5.0
     deadline_penalty_weight: float = 1000.0
 
-    # 求解策略（可按“前期快、后期精”切换）
+    # 濮瑰倽袙缁涙牜鏆愰敍鍫濆讲閹稿鈧粌澧犻張鐔锋彥閵嗕礁鎮楅張鐔虹翱閳ユ繂鍨忛幑顫礆
     sp2_use_mip: bool = True
     sp3_use_mip: bool = False
     sp4_use_mip: bool = False
@@ -77,23 +77,23 @@ class TRARunConfig:
     resource_validation_cache_enabled: bool = True
     resource_validation_cache_size: int = 1024
 
-    # “先启发式、后精确”切换（满足同一组约束：只改变求解策略/时间上限）
-    switch_to_exact_iter: int = 999999  # 迭代号达到后，开启更精确策略
+    # 閳ユ粌鍘涢崥顖氬絺瀵繈鈧礁鎮楃划鍓р€橀垾婵嗗瀼閹诡澁绱欏陇鍐婚崥灞肩缂佸嫮瀹抽弶鐕傜窗閸欘亝鏁奸崣妯荤湴鐟欙絿鐡ラ悾?閺冨爼妫挎稉濠囨閿?
+    switch_to_exact_iter: int = 999999  # 鏉╊厺鍞崣鐤彧閸掓澘鎮楅敍灞界磻閸氼垱娲跨划鍓р€樼粵鏍殣
     exact_sp2_use_mip: bool = True
     exact_sp3_use_mip: bool = True
     exact_sp4_use_mip: bool = False
     exact_sp2_time_limit_sec: float = 600.0
     exact_sp4_lkh_time_limit_seconds: int = 120
 
-    # 输出
+    # 鏉堟挸鍤?
     log_dir: str = "log"
     export_best_solution: bool = True
     write_iteration_logs: bool = True
     compact_tra_summary_json: bool = False
 
-    # --- SP1 更外层反馈 ---
+    # --- SP1 閺囨潙顦荤仦鍌氬冀妫?---
     enable_sp1_feedback_analysis: bool = True
-    sp1_feedback_spread_threshold: int = 40  # 子任务涉及堆垛的空间跨度阈值
+    sp1_feedback_spread_threshold: int = 40  # 鐎涙劒鎹㈤崝鈩冪Ч閸欏﹤鐖㈤崹娑氭畱缁屾椽妫跨捄銊ュ闂冨牆鈧?
     sp1_feedback_top_k: int = 10
 
     # --- Soft coupling and affinity switches/params ---
@@ -106,7 +106,7 @@ class TRARunConfig:
     enable_soft_beta: bool = False
     enable_sku_affinity: bool = False
 
-    # 渭 / 蟺 / 尾 params
+    # 濞?/ 閿?/ 鐏?params
     mu_value: float = 1.0
     pi_scale: float = 1.0
     pi_clip: float = 120.0
@@ -230,6 +230,7 @@ class TRARunConfig:
     resource_eval_backend: str = "surrogate"
     resource_fixgurobi_skip_ortools_validation: bool = False
     resource_target_cmax: float = float("nan")
+    resource_wall_time_limit_sec: float = 0.0
     fixgurobi_time_limit_sec: float = 20.0
     fixgurobi_mip_gap: float = 0.01
     fixgurobi_candidate_trial_limit: int = 1
@@ -259,6 +260,7 @@ class TRARunConfig:
     fixgurobi_route_time_window_arc_prune: bool = True
     fixgurobi_route_load_interval_arc_prune: bool = True
     fixgurobi_enable_symmetry: bool = True
+    fixgurobi_relax_sort_tote_fix: bool = False
     fixgurobi_fix_used_stack_ids: bool = False
     fixgurobi_output: bool = False
     resource_enable_single_flip_sortify: bool = False
@@ -679,10 +681,10 @@ class RankAwareGlobalTimeCalculator(GlobalTimeCalculator):
 
 class TRAOptimizer:
     """
-    旋转外循环：
-    - 每轮只重点优化一个阶段（SP4 / SP3 / SP2）
-    - 每轮用 GlobalTimeCalculator 计算 z = global_makespan
-    - 用近似 LB + 扰动做跳跃
+    閺冨娴嗘径鏍ф儕閻滎垽绱?
+    - 濮ｅ繗鐤嗛崣顏堝櫢閻愰€涚喘閸栨牔绔存稉顏堟▉濞堢绱橲P4 / SP3 / SP2閿?
+    - 濮ｅ繗鐤嗛悽?GlobalTimeCalculator 鐠侊紕鐣?z = global_makespan
+    - 閻劏绻庢导?LB + 閹垫澘濮╅崑姘崇儲鐠?
     """
 
     def __init__(self, cfg: TRARunConfig):
@@ -722,7 +724,7 @@ class TRAOptimizer:
         self._last_global_eval_iter: int = 0
         self.iter_log: List[Dict] = []
 
-        # --- 旋转过程中用于“反馈耦合”的缓存 ---
+        # --- 閺冨娴嗘潻鍥┾柤娑擃厾鏁ゆ禍搴樷偓婊冨冀妫ｅ牐鈧箑鎮庨垾婵堟畱缂傛挸鐡?---
         self.last_sp4_arrival_times: Dict[int, float] = {}
         self.last_sp4_lst_infeasible: List[Dict[str, Any]] = []
         self.last_sp3_tote_selection: Dict[int, List[int]] = {}
@@ -767,7 +769,7 @@ class TRAOptimizer:
         self._reset_runtime_caches()
 
     # ----------------------------
-    # 基础设施
+    # 閸╄櫣顢呯拋鐐煢
     # ----------------------------
     def _set_seed(self, seed: int):
         os.environ["PYTHONHASHSEED"] = str(seed)
@@ -779,16 +781,16 @@ class TRAOptimizer:
 
     def _fast_clone_subtasks(self, original_list: List[Any]) -> List[Any]:
         """
-        极速克隆：仅对决策层发生变动的列表进行手动拷贝，
-        静态对象（如 SKU 实体、Order 实体）直接保留引用，绕过 deepcopy 的递归陷阱。
+        閺嬩線鈧喎鍘犻梾鍡窗娴犲懎顕崘宕囩摜鐏炲倸褰傞悽鐔峰綁閸斻劎娈戦崚妤勩€冩潻娑滎攽閹靛濮╅幏鐤閿?
+        闂堟瑦鈧礁顕挒鈽呯礄婵?SKU 鐎圭偘缍嬮妴涓眗der 鐎圭偘缍嬮敍澶屾纯閹恒儰绻氶悾娆忕穿閻㈩煉绱濈紒鏇＄箖 deepcopy 閻ㄥ嫰鈧帒缍婇梽鐑芥Ш閵?
         """
         import copy
         cloned_list = []
         for st in original_list:
-            # 1. 浅拷贝 SubTask 这一层（复制了 id, station_id, rank 等所有标量）
+            # 1. 濞村懏瀚圭拹?SubTask 鏉╂瑤绔寸仦鍌︾礄婢跺秴鍩楁禍?id, station_id, rank 缁涘澧嶉張澶嬬垼闁插骏绱?
             new_st = copy.copy(st)
 
-            # 2. 重新初始化 SubTask 里的可变列表（防止修改新解时污染旧快照）
+            # 2. 闁插秵鏌婇崚婵嗩潗閸?SubTask 闁插瞼娈戦崣顖氬綁閸掓銆冮敍鍫ユЩ濮濐澀鎱ㄩ弨瑙勬煀鐟欙絾妞傚Ч鈩冪厠閺冄冩彥閻撗嶇礆
             if hasattr(st, 'sku_list') and st.sku_list is not None:
                 new_st.sku_list = list(st.sku_list)
             if hasattr(st, 'unique_sku_list') and st.unique_sku_list is not None:
@@ -800,14 +802,14 @@ class TRAOptimizer:
             if hasattr(st, 'visit_points') and st.visit_points is not None:
                 new_st.visit_points = list(st.visit_points)
 
-            # 3. 深度处理最核心的 execution_tasks
+            # 3. 濞ｅ崬瀹虫径鍕倞閺堚偓閺嶇绺鹃惃?execution_tasks
             if hasattr(st, 'execution_tasks') and st.execution_tasks is not None:
                 new_tasks = []
                 for task in st.execution_tasks:
-                    # 浅拷贝 Task 这一层（复制了各种 time, robot_id, mode 等标量）
+                    # 濞村懏瀚圭拹?Task 鏉╂瑤绔寸仦鍌︾礄婢跺秴鍩楁禍鍡楁倗缁?time, robot_id, mode 缁涘鐖ｉ柌蹇ョ礆
                     new_task = copy.copy(task)
 
-                    # 重新初始化 Task 里的可变列表
+                    # 闁插秵鏌婇崚婵嗩潗閸?Task 闁插瞼娈戦崣顖氬綁閸掓銆?
                     if hasattr(task, 'target_tote_ids') and task.target_tote_ids is not None:
                         new_task.target_tote_ids = list(task.target_tote_ids)
                     if hasattr(task, 'hit_tote_ids') and task.hit_tote_ids is not None:
@@ -5922,9 +5924,9 @@ class TRAOptimizer:
         self._sync_task_assignments_from_subtasks()
         if not changed_subtask_ids:
             return True
-        # 当前先复用现有 route replay，保持 task/robot/trip 不变，
-        # 只按新的 station/rank 回放到站时间。
-        # 虽然实现上是全量回放，但语义上属于固定 route skeleton 的增量模式。
+        # 瑜版挸澧犻崗鍫濐槻閻劎骞囬張?route replay閿涘奔绻氶幐?task/robot/trip 娑撳秴褰夐敍?
+        # 閸欘亝瀵滈弬鎵畱 station/rank 閸ョ偞鏂侀崚鎵彲閺冨爼妫块妴?
+        # 閾忕晫鍔х€圭偟骞囨稉濠冩Ц閸忋劑鍣洪崶鐐存杹閿涘奔绲剧拠顓濈疅娑撳﹤鐫樻禍搴℃祼鐎?route skeleton 閻ㄥ嫬顤冮柌蹇斈佸蹇嬧偓?
         return bool(self._replay_u_routes())
 
     def _run_partial_sp4_for_y_candidate(self) -> bool:
@@ -6353,6 +6355,20 @@ class TRAOptimizer:
             used.update(int(x) for x in (getattr(task, "target_tote_ids", []) or []) if int(x) >= 0)
         return used
 
+    def _z_global_used_tote_ids(self, current_st: Any, exclude_task_ids: Optional[Set[int]] = None) -> Set[int]:
+        excluded = {int(x) for x in (exclude_task_ids or set())}
+        current_id = int(getattr(current_st, "id", -1))
+        used: Set[int] = set()
+        for st in getattr(self.problem, "subtask_list", []) or []:
+            if int(getattr(st, "id", -1)) == current_id:
+                continue
+            for task in getattr(st, "execution_tasks", []) or []:
+                task_id = int(getattr(task, "task_id", -1))
+                if task_id in excluded:
+                    continue
+                used.update(int(x) for x in (getattr(task, "target_tote_ids", []) or []) if int(x) >= 0)
+        return used
+
     def _z_remaining_demand(self, st: Any, exclude_task_ids: Optional[Set[int]] = None) -> Dict[int, int]:
         req = defaultdict(int, self._z_subtask_demand_counts(st))
         tote_map = getattr(self.problem, "id_to_tote", {}) if self.problem is not None else {}
@@ -6429,7 +6445,7 @@ class TRAOptimizer:
         ordered_hits = [int(getattr(tote, "id", -1)) for tote in getattr(stack, "totes", []) or [] if
                         int(getattr(tote, "id", -1)) in hit_set]
 
-        # --- 新增：读取物理耗时参数 ---
+        # --- 閺傛澘顤冮敍姘愁嚢閸欐牜澧块悶鍡氣偓妤佹閸欏倹鏆?---
         top_layer_idx = len(getattr(stack, "totes", [])) - 1
         t_shift = float(getattr(OFSConfig, "PACKING_TIME", 1.0))
         t_lift = float(getattr(OFSConfig, "LIFTING_TIME", 1.0))
@@ -6444,7 +6460,7 @@ class TRAOptimizer:
             noise_tote_ids: List[int] = []
             sort_layer_range = None
 
-            # ✅ 新增：FLIP 模式的时间计算 (按个累加，深层加罚)
+            # 閴?閺傛澘顤冮敍娆禠IP 濡€崇础閻ㄥ嫭妞傞梻纾嬵吀缁?(閹稿閲滅槐顖氬閿涘本绻佺仦鍌氬缂?
             for tid in ordered_hits:
                 layer_idx = int(stack.get_tote_layer(tid))
                 is_deep = 1 if layer_idx < top_layer_idx else 0
@@ -6457,15 +6473,32 @@ class TRAOptimizer:
             layers = [layer for layer in layers if layer >= 0]
             if not layers:
                 return {"valid": False}
-            lo = min(layers)
-            hi = max(layers)
-            target_tote_ids = [int(getattr(tote, "id", -1)) for tote in (getattr(stack, "totes", []) or [])[lo:hi + 1]]
-            if any(int(tid) in self._z_used_tote_ids(st, exclude_task_ids) for tid in target_tote_ids):
+            if str(getattr(self.cfg, "resource_operator_profile", "") or "").strip().lower() == "z_cover_focus":
+                lo = 0
+                hi = int(top_layer_idx)
+                target_tote_ids = list(ordered_hits)
+                if len(getattr(self.problem, "order_list", []) or []) <= 2:
+                    used_totes = self._z_global_used_tote_ids(st, exclude_task_ids)
+                    for tote in (getattr(stack, "totes", []) or [])[lo:hi + 1]:
+                        blocker_id = int(getattr(tote, "id", -1))
+                        if blocker_id < 0 or blocker_id in hit_set or blocker_id in used_totes:
+                            continue
+                        target_tote_ids.append(int(blocker_id))
+                        break
+            else:
+                lo = min(layers)
+                hi = max(layers)
+                target_tote_ids = [int(getattr(tote, "id", -1)) for tote in (getattr(stack, "totes", []) or [])[lo:hi + 1]]
+            if str(getattr(self.cfg, "resource_operator_profile", "") or "").strip().lower() == "z_cover_focus":
+                used_tote_ids = self._z_global_used_tote_ids(st, exclude_task_ids)
+            else:
+                used_tote_ids = self._z_used_tote_ids(st, exclude_task_ids)
+            if any(int(tid) in used_tote_ids for tid in target_tote_ids):
                 return {"valid": False}
             noise_tote_ids = [int(tid) for tid in target_tote_ids if int(tid) not in set(ordered_hits)]
             sort_layer_range = (int(lo), int(hi))
 
-            # ✅ 新增：SORT 模式的时间计算 (一次性动作)
+            # 閴?閺傛澘顤冮敍姝婳RT 濡€崇础閻ㄥ嫭妞傞梻纾嬵吀缁?(娑撯偓濞嗏剝鈧冨З娴?
             has_lift = 1 if hi < top_layer_idx else 0
             robot_service_time = t_shift + has_lift * t_lift
 
@@ -6479,7 +6512,7 @@ class TRAOptimizer:
             "sort_layer_range": sort_layer_range,
             "operation_mode": str(mode).upper(),
             "station_service_time": float(len(noise_tote_ids)) * t_move,
-            "robot_service_time": float(robot_service_time),  # ✅ 返回精确计算的机器人时间
+            "robot_service_time": float(robot_service_time),  # 閴?鏉╂柨娲栫划鍓р€樼拋锛勭暬閻ㄥ嫭婧€閸ｃ劋姹夐弮鍫曟？
             "demanded_qty": int(summary.get("demanded_qty", 0)),
             "available_qty": int(summary.get("available_qty", 0)),
             "demand_ratio": float(summary.get("demand_ratio", 0.0)),
@@ -6510,7 +6543,7 @@ class TRAOptimizer:
             return {"valid": False}
         if any(int(tid) in self._z_used_tote_ids(st, exclude_task_ids) for tid in target_tote_ids):
             return {"valid": False}
-            # ✅ 新增时间计算
+            # 閴?閺傛澘顤冮弮鍫曟？鐠侊紕鐣?
         top_layer_idx = len(getattr(stack, "totes", [])) - 1
         has_lift = 1 if hi < top_layer_idx else 0
         t_shift = float(getattr(OFSConfig, "PACKING_TIME", 1.0))
@@ -6526,7 +6559,7 @@ class TRAOptimizer:
             "operation_mode": "SORT",
             "station_service_time": float(len(target_tote_ids)) * float(
                 getattr(OFSConfig, "MOVE_EXTRA_TOTE_TIME", 1.0)),
-            "robot_service_time": float(t_shift + has_lift * t_lift),  # ✅ 新增
+            "robot_service_time": float(t_shift + has_lift * t_lift),  # 閴?閺傛澘顤?
             "demanded_qty": 0,
             "available_qty": 0,
             "demand_ratio": 0.0,
@@ -7494,7 +7527,7 @@ class TRAOptimizer:
 
 
     # ----------------------------
-    # 评估函数与下界
+    # 鐠囧嫪鍙婇崙鑺ユ殶娑撳簼绗呴悾?
     # ----------------------------
     def evaluate(self) -> float:
         self._simulate_call_count += 1
@@ -7509,7 +7542,7 @@ class TRAOptimizer:
         return float(objective)
 
     def _lb_transport(self) -> float:
-        # 运输下界：各任务到站时间的最大值
+        # 鏉╂劘绶稉瀣櫕閿涙艾鎮囨禒璇插閸掓壆鐝弮鍫曟？閻ㄥ嫭娓舵径褍鈧?
         max_t = 0.0
         for st in self.problem.subtask_list:
             for t in getattr(st, "execution_tasks", []) or []:
@@ -7517,7 +7550,7 @@ class TRAOptimizer:
         return max_t
 
     def _lb_station_workload(self) -> float:
-        # 工作站下界：总工作量/站数 与 单站最大工作量 取 max
+        # 瀹搞儰缍旂粩娆庣瑓閻ｅ矉绱伴幀璇蹭紣娴ｆ粓鍣?缁旀瑦鏆?娑?閸楁洜鐝張鈧径褍浼愭担婊堝櫤 閸?max
         station_num = max(1, len(self.problem.station_list))
         per_station = [0.0 for _ in range(station_num)]
 
@@ -7535,14 +7568,14 @@ class TRAOptimizer:
         return max(total / station_num, max(per_station) if per_station else 0.0)
 
     def compute_lb(self, focus: str) -> float:
-        # focus in {"sp2","sp3","sp4"}：按轮次挑一个下界（或组合）
+        # focus in {"sp2","sp3","sp4"}閿涙碍瀵滄潪顔筋偧閹告垳绔存稉顏冪瑓閻ｅ矉绱欓幋鏍矋閸氬牞绱?
         lb_t = self._lb_transport()
         lb_s = self._lb_station_workload()
         if focus == "sp4":
             return lb_t
         if focus == "sp2":
             return lb_s
-        # sp3 改变选箱会同时影响运输与工作量结构，因此取 max 更稳
+        # sp3 閺€鐟板綁闁顔堟导姘倱閺冭泛濂栭崫宥堢箥鏉堟挷绗屽銉ょ稊闁插繒绮ㄩ弸鍕剁礉閸ョ姵顒濋崣?max 閺囧菙
         return max(lb_t, lb_s)
 
     def _collect_all_tasks(self) -> List[Any]:
@@ -7746,7 +7779,7 @@ class TRAOptimizer:
         }
 
     # ----------------------------
-    # 快照（保存最优解用于导出/复现）
+    # 韫囶偆鍙庨敍鍫滅箽鐎涙ɑ娓舵导妯啃掗悽銊ょ艾鐎电厧鍤?婢跺秶骞囬敍?
     # ----------------------------
     def snapshot(self, z: float, iter_id: int, lightweight: bool = False) -> SolutionSnapshot:
         t0 = time.perf_counter()
@@ -7823,14 +7856,14 @@ class TRAOptimizer:
             self.restore_time_sec += float(time.perf_counter() - t0)
             return
 
-        # 恢复 SP1 容量反馈（影响后续 SP1 重拆分时的上限）
+        # 閹垹顦?SP1 鐎瑰綊鍣洪崣宥夘洯閿涘牆濂栭崫宥呮倵缂?SP1 闁插秵濯堕崚鍡樻閻ㄥ嫪绗傞梽鎰剁礆
         if self.sp1 and snap.sp1_capacity_limits:
             self.sp1.order_capacity_limits = dict(snap.sp1_capacity_limits)
         if self.sp1:
             self.sp1.incompatibility_pairs = set(tuple(x) for x in (snap.sp1_incompatibility_pairs or []))
             self._run_sp1()
 
-        # 恢复 SP2 的站点与顺位，再重建 SP3->SP4->仿真
+        # 閹垹顦?SP2 閻ㄥ嫮鐝悙閫涚瑢妞よ桨缍呴敍灞藉晙闁插秴缂?SP3->SP4->娴犺法婀?
         st_map = {st.id: st for st in self.problem.subtask_list}
         for st_id, (sid, rank) in snap.subtask_station_rank.items():
             if st_id in st_map:
@@ -7839,7 +7872,7 @@ class TRAOptimizer:
         self.restore_time_sec += float(time.perf_counter() - t0)
 
     # ----------------------------
-    # 各阶段求解与回填
+    # 閸氬嫰妯佸▓鍨湴鐟欙絼绗岄崶鐐诧綖
     # ----------------------------
     def _run_sp1(self):
         if bool(getattr(self.cfg, "sp1_no_split", False)):
@@ -7958,12 +7991,12 @@ class TRAOptimizer:
         self.last_sp4_arrival_times = {int(k): float(v) for k, v in (arrival_times or {}).items()}
         self.last_sp4_lst_infeasible = self._collect_sp4_lst_violations(hard_latest_by_task)
 
-        # 回填 subtask 的 assigned_robot_id，供日志/仿真输出使用
+        # 閸ョ偛锝?subtask 閻?assigned_robot_id閿涘奔绶甸弮銉ョ箶/娴犺法婀℃潏鎾冲毉娴ｈ法鏁?
         self._apply_sp4_robot_assignments(robot_assign or {})
         self._repair_station_ranks_by_arrival()
 
     # ----------------------------
-    # 主入口
+    # 娑撹鍙嗛崣?
     # ----------------------------
     def initialize(self):
         if bool(getattr(self.cfg, "resource_assert_sp4_ortools_only", True)):
@@ -8759,7 +8792,7 @@ class TRAOptimizer:
         return pi
 
     def _apply_sku_affinity_feedback(self):
-        # 从 subtask 跨距筛选，向 SP1 注入有限对数的 SKU 互斥对
+        # 娴?subtask 鐠恒劏绐涚粵娑⑩偓澶涚礉閸?SP1 濞夈劌鍙嗛張澶愭鐎佃鏆熼惃?SKU 娴滄帗鏋肩€?
         if not self.sp1:
             return
         th = int(self.cfg.affinity_span_threshold)
@@ -9022,9 +9055,9 @@ class TRAOptimizer:
 
     def _write_sp1_feedback_suggestions(self):
         """
-        生成“更外层（SP1）”的软耦合反馈建议文件。
-        - 识别空间跨度很大的 SubTask（通常意味着 SKU 组合跨区，SP4 运输代价高）
-        - 给出建议：对其所属 Order 降低容量上限，从而让 SP1 拆得更细
+        閻㈢喐鍨氶垾婊勬纯婢舵牕鐪伴敍鍦玃1閿涘鈧繄娈戞潪顖濃偓锕€鎮庨崣宥夘洯瀵ら缚顔呴弬鍥︽閵?
+        - 鐠囧棗鍩嗙粚娲？鐠恒劌瀹冲鍫濄亣閻?SubTask閿涘牓鈧艾鐖堕幇蹇撴嚄閻偓 SKU 缂佸嫬鎮庣捄銊ュ隘閿涘P4 鏉╂劘绶禒锝勭幆妤傛﹫绱?
+        - 缂佹瑥鍤楦款唴閿涙艾顕崗鑸靛鐏?Order 闂勫秳缍嗙€瑰綊鍣烘稉濠囨閿涘奔绮犻懓宀冾唨 SP1 閹峰棗绶遍弴瀵哥矎
         """
         suggestions = []
         for st in self.problem.subtask_list:
@@ -9054,7 +9087,7 @@ class TRAOptimizer:
         suggestions.sort(key=lambda x: (-x["max_span_L1"], x["order_id"], x["subtask_id"]))
         suggestions = suggestions[: max(0, int(self.cfg.sp1_feedback_top_k))]
 
-        # 聚合成“建议容量上限”
+        # 閼辨艾鎮庨幋鎰ㄢ偓婊冪紦鐠侇喖顔愰柌蹇庣瑐闂勬劏鈧?
         order_to_suggested_cap = {}
         if self.sp1 is not None:
             for item in suggestions:
@@ -9064,7 +9097,7 @@ class TRAOptimizer:
                 curr = self.sp1.order_capacity_limits.get(oid, None)
                 if curr is None:
                     continue
-                # 简单策略：每触发一次建议就把 cap-1（下限 1）
+                # 缁犫偓閸楁洜鐡ラ悾銉窗濮ｅ繗袝閸欐垳绔村▎鈥崇紦鐠侇喖姘ㄩ幎?cap-1閿涘牅绗呴梽?1閿?
                 order_to_suggested_cap[oid] = max(1, min(curr, order_to_suggested_cap.get(oid, curr)) - 1)
 
         path = self._log_path("tra_sp1_feedback_suggestions.json")
@@ -9076,6 +9109,93 @@ class TRAOptimizer:
                 "order_capacity_suggestions": order_to_suggested_cap,
             }, f, ensure_ascii=False, indent=2)
 
+
+    def _rebuild_sp4_route_sequences_from_task_rows(self) -> None:
+        route_rows: List[Dict[str, Any]] = []
+        robots = getattr(self.problem, "robot_list", []) or []
+        depot_by_robot = {}
+        for idx, robot in enumerate(robots):
+            rid = int(getattr(robot, "id", idx))
+            depot_by_robot[rid] = getattr(robot, "start_point", None)
+        tasks_by_trip: Dict[Tuple[int, int], List[Any]] = defaultdict(list)
+        for task in self._collect_all_tasks():
+            rid = int(getattr(task, "robot_id", -1))
+            if rid < 0:
+                continue
+            trip_id = int(getattr(task, "trip_id", 0))
+            tasks_by_trip[(rid, trip_id)].append(task)
+        for (rid, trip_id), tasks in sorted(tasks_by_trip.items(), key=lambda item: (item[0][0], item[0][1])):
+            seq = 0
+            depot = depot_by_robot.get(int(rid))
+            route_rows.append({
+                "robot_id": int(rid),
+                "trip_id": int(trip_id),
+                "seq": int(seq),
+                "node_type": "start",
+                "task_id": -1,
+                "subtask_id": -1,
+                "time": 0.0,
+                "load": 0,
+                "point_id": int(getattr(depot, "idx", -1)) if depot is not None else -1,
+            })
+            seq += 1
+            pickups = sorted(
+                tasks,
+                key=lambda t: (
+                    float(getattr(t, "arrival_time_at_stack", 0.0) or 0.0),
+                    int(getattr(t, "robot_visit_sequence", 0) or 0),
+                    int(getattr(t, "task_id", -1)),
+                ),
+            )
+            current_load = 0
+            for task in pickups:
+                current_load += int(getattr(task, "total_load_count", 0) or 0)
+                route_rows.append({
+                    "robot_id": int(rid),
+                    "trip_id": int(trip_id),
+                    "seq": int(seq),
+                    "node_type": "pickup",
+                    "task_id": int(getattr(task, "task_id", -1)),
+                    "subtask_id": int(getattr(task, "sub_task_id", -1)),
+                    "time": float(getattr(task, "arrival_time_at_stack", 0.0) or 0.0),
+                    "load": int(current_load),
+                })
+                seq += 1
+            deliveries = sorted(
+                tasks,
+                key=lambda t: (
+                    float(getattr(t, "arrival_time_at_station", 0.0) or 0.0),
+                    int(getattr(t, "station_sequence_rank", 0) or 0),
+                    int(getattr(t, "task_id", -1)),
+                ),
+            )
+            for task in deliveries:
+                current_load -= int(getattr(task, "total_load_count", 0) or 0)
+                route_rows.append({
+                    "robot_id": int(rid),
+                    "trip_id": int(trip_id),
+                    "seq": int(seq),
+                    "node_type": "delivery",
+                    "task_id": int(getattr(task, "task_id", -1)),
+                    "subtask_id": int(getattr(task, "sub_task_id", -1)),
+                    "time": float(getattr(task, "arrival_time_at_station", 0.0) or 0.0),
+                    "load": int(current_load),
+                })
+                seq += 1
+            end_time = max([float(getattr(t, "arrival_time_at_station", 0.0) or 0.0) for t in tasks] or [0.0])
+            route_rows.append({
+                "robot_id": int(rid),
+                "trip_id": int(trip_id),
+                "seq": int(seq),
+                "node_type": "end",
+                "task_id": -1,
+                "subtask_id": -1,
+                "time": float(end_time),
+                "load": int(current_load),
+                "point_id": int(getattr(depot, "idx", -1)) if depot is not None else -1,
+            })
+        self.problem.sp4_route_sequences = route_rows
+
     def export_best(self):
         out_dir = self._log_path("best_solution_export") if self._current_search_scheme() == "resource_time_alns" else self._log_path("tra_best_export")
         self.export_best_to(out_dir)
@@ -9086,6 +9206,7 @@ class TRAOptimizer:
         assert self.best is not None
         self._set_seed(self.best.seed)
         self.restore_snapshot(self.best)
+        self._rebuild_sp4_route_sequences_from_task_rows()
 
         if os.path.exists(out_dir):
             shutil.rmtree(out_dir)

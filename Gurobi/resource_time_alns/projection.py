@@ -101,6 +101,7 @@ def apply_projection_repair(
     affected_subtask_ids: Sequence[int],
     iter_id: int,
     rng,
+    preserve_candidate_y: bool = False,
 ) -> Tuple[ResourceConfig, ScoreCache, Dict[str, object]]:
     del iter_id
     affected_ids = {int(x) for x in (affected_subtask_ids or [])}
@@ -120,7 +121,7 @@ def apply_projection_repair(
         if subtask is None:
             continue
         primary_seed, secondary_seeds = _seed_candidates(previous_config, subtask)
-        if not full_refresh:
+        if not full_refresh and not (bool(preserve_candidate_y) and int(subtask.station_id) >= 0):
             chosen_station = _choose_station(opt, candidate_config, subtask, primary_seed, secondary_seeds)
             subtask.station_id = int(chosen_station)
             subtask.station_rank = int(len(candidate_config.station_subtasks(int(chosen_station))))

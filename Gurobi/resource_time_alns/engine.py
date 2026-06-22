@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import copy
 from collections import deque
@@ -17,7 +17,12 @@ from .operators_x import (
     X_DESTROY_OPERATORS,
     X_FALLBACK_OPERATOR,
     X_REPAIR_OPERATORS,
+    _build_repartition_context,
+    _order_tote_conflict_score,
+    x_destroy_critical_order_cluster,
     x_repair_greedy_fallback,
+    x_repair_route_ordered_sku_cluster,
+    x_repair_tote_cluster_beam,
 )
 from .operators_y import (
     Y_DESTROY_OPERATORS,
@@ -35,6 +40,7 @@ from .operators_z import (
     apply_exact_z_plan,
     build_full_z_assignment,
     plan_z_candidate,
+    validate_z_assignment_detail,
 )
 from .projection import apply_projection_repair
 from .reporting import build_iter_row
@@ -43,6 +49,7 @@ from .surrogate import ResourceSurrogateScorer, config_distance
 from .validator import ResourceValidator
 from .fixgurobi_evaluator import FixGurobiEvaluator
 from .revolving_solver import RevolvingSolver
+from .utils import global_used_totes
 
 
 class ResourceTimeALNSEngine:
@@ -60,6 +67,10 @@ class ResourceTimeALNSEngine:
             and bool(getattr(self.cfg, "resource_fixgurobi_skip_ortools_validation", False))
         )
         self.current_config: ResourceConfig = build_initial_resource_config(opt)
+        self._bootstrap_x_tote_conflicts(self.current_config)
+        self._bootstrap_x_route_ordered_chunks(self.current_config)
+        self._bootstrap_z_coverage(self.current_config)
+        self._bootstrap_z_stacked_sort(self.current_config)
         self.initial_config: ResourceConfig = self.current_config.clone()
         skip_initial_fixgurobi = bool(
             self.eval_backend == "fixgurobi_prefix"
@@ -186,6 +197,242 @@ class ResourceTimeALNSEngine:
         self.opt.joint_colocated_sort_postprocess_stats = self.joint_colocated_sort_postprocess_stats
         self._refresh_operator_stats_payload()
 
+    def _bootstrap_x_tote_conflicts(self, config: ResourceConfig) -> None:
+        if str(getattr(self.cfg, "resource_operator_profile", "") or "").strip().lower() != "z_cover_focus":
+            return
+        repaired = False
+        order_ids = sorted({int(row.order_id) for row in config.subtasks.values()})
+        ranked_orders = sorted(
+            order_ids,
+            key=lambda order_id: (-int(_order_tote_conflict_score(self.opt, config, int(order_id))), int(order_id)),
+        )
+        for order_id in ranked_orders:
+            if _order_tote_conflict_score(self.opt, config, int(order_id)) <= 0:
+                continue
+            trial = config.clone()
+            destroy_ctx = _build_repartition_context(trial, int(order_id))
+            if not bool(destroy_ctx.get("success", False)):
+                continue
+            repair_result = x_repair_tote_cluster_beam(self.opt, trial, destroy_ctx, self.rng)
+            if not bool(repair_result.get("success", False)):
+                continue
+            config.subtasks = trial.subtasks
+            config.next_subtask_id = trial.next_subtask_id
+            config.rebuild_indices()
+            repaired = True
+        if bool(repaired):
+            config.rebuild_indices()
+
+    def _bootstrap_x_route_ordered_chunks(self, config: ResourceConfig) -> None:
+        if str(getattr(self.cfg, "resource_operator_profile", "") or "").strip().lower() != "z_cover_focus":
+            return
+        order_ids = sorted({int(row.order_id) for row in config.subtasks.values()})
+        changed = False
+        for order_id in order_ids:
+            rows = [row for row in config.subtasks.values() if int(row.order_id) == int(order_id)]
+            if len(rows) <= 1:
+                continue
+            trial = config.clone()
+            destroy_ctx = _build_repartition_context(trial, int(order_id))
+            if not bool(destroy_ctx.get("success", False)):
+                continue
+            repair_result = x_repair_route_ordered_sku_cluster(self.opt, trial, destroy_ctx, self.rng)
+            if not bool(repair_result.get("success", False)):
+                continue
+            config.subtasks = trial.subtasks
+            config.next_subtask_id = trial.next_subtask_id
+            config.rebuild_indices()
+            changed = True
+        if bool(changed):
+            config.rebuild_indices()
+
+    def _bootstrap_z_coverage(self, config: ResourceConfig) -> None:
+        repaired = False
+        for subtask_id in sorted(config.subtasks.keys()):
+            subtask = config.subtasks.get(int(subtask_id))
+            if subtask is None:
+                continue
+            ok, reason, _ = validate_z_assignment_detail(
+                self.opt,
+                config,
+                subtask,
+                list(subtask.z_tasks or []),
+                external_used_totes=global_used_totes(config, exclude_subtask_ids={int(subtask_id)}),
+            )
+            if bool(ok):
+                continue
+            saved_topk = getattr(self.cfg, "resource_z_candidate_stack_topk", 0)
+            saved_plan_topk = getattr(self.cfg, "resource_z_plan_target_stack_topk", 0)
+            try:
+                self.cfg.resource_z_candidate_stack_topk = 0
+                self.cfg.resource_z_plan_target_stack_topk = 999
+                success, assignment, _ = build_full_z_assignment(
+                    opt=self.opt,
+                    config=config,
+                    subtask_id=int(subtask_id),
+                    preferred_stack_ids=[int(item.stack_id) for item in (subtask.z_tasks or []) if int(item.stack_id) >= 0],
+                    strategy="z_repair_greedy_fallback",
+                    allow_fallback=True,
+                    external_used_totes=global_used_totes(config, exclude_subtask_ids={int(subtask_id)}),
+                    rng=self.rng,
+                )
+            finally:
+                self.cfg.resource_z_candidate_stack_topk = saved_topk
+                self.cfg.resource_z_plan_target_stack_topk = saved_plan_topk
+            if bool(success):
+                subtask.z_tasks = list(assignment)
+                repaired = True
+        if bool(repaired):
+            config.rebuild_indices()
+
+    def _bootstrap_z_stacked_sort(self, config: ResourceConfig) -> None:
+        if str(getattr(self.cfg, "resource_operator_profile", "") or "").strip().lower() != "z_cover_focus":
+            return
+        changed = False
+        for subtask_id in sorted(config.subtasks.keys()):
+            subtask = config.subtasks.get(int(subtask_id))
+            if subtask is None:
+                continue
+            preferred_stack_ids = [
+                int(task.stack_id)
+                for task in (subtask.z_tasks or [])
+                if int(getattr(task, "stack_id", -1)) >= 0
+            ]
+            if not preferred_stack_ids:
+                continue
+            saved_topk = getattr(self.cfg, "resource_z_candidate_stack_topk", 0)
+            saved_plan_topk = getattr(self.cfg, "resource_z_plan_target_stack_topk", 0)
+            try:
+                self.cfg.resource_z_candidate_stack_topk = 0
+                self.cfg.resource_z_plan_target_stack_topk = 999
+                success, assignment, _meta = build_full_z_assignment(
+                    opt=self.opt,
+                    config=config,
+                    subtask_id=int(subtask_id),
+                    preferred_stack_ids=preferred_stack_ids,
+                    strategy="z_repair_gurobi_like_sort",
+                    allow_fallback=False,
+                    external_used_totes=global_used_totes(config, exclude_subtask_ids={int(subtask_id)}),
+                    rng=self.rng,
+                )
+            finally:
+                self.cfg.resource_z_candidate_stack_topk = saved_topk
+                self.cfg.resource_z_plan_target_stack_topk = saved_plan_topk
+            if not bool(success):
+                continue
+            ok, _reason, _detail = validate_z_assignment_detail(
+                self.opt,
+                config,
+                subtask,
+                list(assignment),
+                external_used_totes=global_used_totes(config, exclude_subtask_ids={int(subtask_id)}),
+            )
+            if bool(ok):
+                subtask.z_tasks = list(assignment)
+                changed = True
+        if bool(changed):
+            config.rebuild_indices()
+
+    def _bootstrap_z_order_colocation(self, config: ResourceConfig) -> None:
+        if str(getattr(self.cfg, "resource_operator_profile", "") or "").strip().lower() != "z_cover_focus":
+            return
+        changed = False
+        order_ids = sorted({int(row.order_id) for row in config.subtasks.values()})
+        for order_id in order_ids:
+            rows = [row for row in config.subtasks.values() if int(row.order_id) == int(order_id)]
+            if len(rows) <= 1:
+                continue
+            candidate_stacks = sorted({
+                int(task.stack_id)
+                for row in rows
+                for task in (row.z_tasks or [])
+                if int(getattr(task, "stack_id", -1)) >= 0
+            })
+            if not candidate_stacks:
+                continue
+            best_trial = None
+            best_score = None
+            for anchor_stack in candidate_stacks:
+                trial = config.clone()
+                order_subtask_ids = {int(row.subtask_id) for row in rows}
+                for row in rows:
+                    trial_row = trial.subtasks.get(int(row.subtask_id))
+                    if trial_row is not None:
+                        trial_row.z_tasks = []
+                trial.rebuild_indices()
+                applied_count = 0
+                covered_units = 0
+                saved_topk = getattr(self.cfg, "resource_z_candidate_stack_topk", 0)
+                saved_plan_topk = getattr(self.cfg, "resource_z_plan_target_stack_topk", 0)
+                try:
+                    self.cfg.resource_z_candidate_stack_topk = 0
+                    self.cfg.resource_z_plan_target_stack_topk = 999
+                    for row in sorted(rows, key=lambda item: (-len(item.work_unit_ids or ()), int(item.subtask_id))):
+                        trial_row = trial.subtasks.get(int(row.subtask_id))
+                        if trial_row is None:
+                            continue
+                        success, assignment, _meta = build_full_z_assignment(
+                            opt=self.opt,
+                            config=trial,
+                            subtask_id=int(row.subtask_id),
+                            preferred_stack_ids=[int(anchor_stack)],
+                            strategy="z_repair_gurobi_like_sort",
+                            allow_fallback=True,
+                            external_used_totes=global_used_totes(trial, exclude_subtask_ids=order_subtask_ids),
+                            rng=self.rng,
+                        )
+                        if not bool(success):
+                            continue
+                        if not any(int(task.stack_id) == int(anchor_stack) for task in assignment):
+                            continue
+                        ok, _reason, _detail = validate_z_assignment_detail(
+                            self.opt,
+                            trial,
+                            trial_row,
+                            list(assignment),
+                            external_used_totes=global_used_totes(trial, exclude_subtask_ids=order_subtask_ids),
+                        )
+                        if not bool(ok):
+                            continue
+                        trial_row.z_tasks = list(assignment)
+                        trial.rebuild_indices()
+                        applied_count += 1
+                        covered_units += int(len(row.work_unit_ids or ()))
+                finally:
+                    self.cfg.resource_z_candidate_stack_topk = saved_topk
+                    self.cfg.resource_z_plan_target_stack_topk = saved_plan_topk
+                if applied_count < 2:
+                    continue
+                stack_count = len({
+                    int(task.stack_id)
+                    for row in trial.subtasks.values()
+                    if int(row.order_id) == int(order_id)
+                    for task in (row.z_tasks or [])
+                    if int(getattr(task, "stack_id", -1)) >= 0
+                })
+                score = (-int(applied_count), -int(covered_units), int(stack_count), int(anchor_stack))
+                if best_score is None or score < best_score:
+                    best_score = score
+                    best_trial = trial
+            if best_trial is None:
+                continue
+            before_sig = tuple(
+                (int(row.subtask_id), tuple((int(task.stack_id), tuple(task.target_tote_ids or ())) for task in (row.z_tasks or ())))
+                for row in sorted(rows, key=lambda item: int(item.subtask_id))
+            )
+            after_rows = [row for row in best_trial.subtasks.values() if int(row.order_id) == int(order_id)]
+            after_sig = tuple(
+                (int(row.subtask_id), tuple((int(task.stack_id), tuple(task.target_tote_ids or ())) for task in (row.z_tasks or ())))
+                for row in sorted(after_rows, key=lambda item: int(item.subtask_id))
+            )
+            if before_sig == after_sig:
+                continue
+            config.subtasks = best_trial.subtasks
+            config.next_task_id = best_trial.next_task_id
+            config.rebuild_indices()
+            changed = True
+        if bool(changed):
+            config.rebuild_indices()
     def _evaluate_config(
         self,
         config: ResourceConfig,
@@ -543,9 +790,11 @@ class ResourceTimeALNSEngine:
             arms["X"]["repair"].pop("x_repair_partition_dp", None)
             arms["X"]["repair"].pop("x_repair_station_balanced_partition", None)
             arms["X"]["repair"].pop("x_repair_sku_cluster_beam", None)
+            arms["X"]["repair"].pop("x_repair_tote_cluster_beam", None)
         if not bool(getattr(self.cfg, "resource_enable_critical_path_xyz", False)):
             arms["X"]["destroy"].pop("x_destroy_critical_order_cluster", None)
             arms["X"]["repair"].pop("x_repair_sku_cluster_beam", None)
+            arms["X"]["repair"].pop("x_repair_tote_cluster_beam", None)
             arms["Y"]["destroy"].pop("y_destroy_critical_path_block", None)
             arms["Y"]["repair"].pop("y_repair_ejection_chain_balance", None)
             arms["Z"]["destroy"].pop("z_destroy_critical_path_window", None)
@@ -609,6 +858,10 @@ class ResourceTimeALNSEngine:
             arms["X"]["destroy"]["x_destroy_critical_order_cluster"].weight = 3.5
         if "x_repair_sku_cluster_beam" in arms["X"]["repair"]:
             arms["X"]["repair"]["x_repair_sku_cluster_beam"].weight = 3.0
+        if "x_repair_tote_cluster_beam" in arms["X"]["repair"]:
+            arms["X"]["repair"]["x_repair_tote_cluster_beam"].weight = 4.0
+        if "x_repair_route_ordered_sku_cluster" in arms["X"]["repair"]:
+            arms["X"]["repair"]["x_repair_route_ordered_sku_cluster"].weight = 4.0
         if "y_destroy_critical_path_block" in arms["Y"]["destroy"]:
             arms["Y"]["destroy"]["y_destroy_critical_path_block"].weight = 3.0
         if "y_repair_ejection_chain_balance" in arms["Y"]["repair"]:
@@ -889,8 +1142,29 @@ class ResourceTimeALNSEngine:
         return int(max(base, dynamic))
 
     def _sample_operator_pair(self, layer: str) -> Tuple[str, str]:
+        profile = str(getattr(self.cfg, "resource_operator_profile", "") or "").strip().lower()
+        if str(layer).upper() == "X":
+            if (
+                profile == "z_cover_focus"
+                and "x_destroy_critical_order_cluster" in self.operator_arms["X"]["destroy"]
+            ):
+                conflict_orders = [
+                    int(order_id)
+                    for order_id in sorted({int(row.order_id) for row in self.current_config.subtasks.values()})
+                    if _order_tote_conflict_score(self.opt, self.current_config, int(order_id)) > 0
+                ]
+                if conflict_orders and "x_repair_tote_cluster_beam" in self.operator_arms["X"]["repair"]:
+                    return "x_destroy_critical_order_cluster", "x_repair_tote_cluster_beam"
+                if "x_repair_route_ordered_sku_cluster" in self.operator_arms["X"]["repair"]:
+                    return "x_destroy_critical_order_cluster", "x_repair_route_ordered_sku_cluster"
         if str(layer).upper() == "Y":
-            profile = str(getattr(self.cfg, "resource_operator_profile", "") or "").strip().lower()
+            if (
+                profile == "z_cover_focus"
+                and "y_destroy_global_station_release" in self.operator_arms["Y"]["destroy"]
+                and "y_repair_global_route_balance" in self.operator_arms["Y"]["repair"]
+                and int(getattr(self, "layer_exec_since_update", {}).get("Y", 0)) % 3 == 0
+            ):
+                return "y_destroy_global_station_release", "y_repair_global_route_balance"
             if (
                 profile == "no_split_y_focus"
                 and "y_destroy_global_station_release" in self.operator_arms["Y"]["destroy"]
@@ -1038,6 +1312,7 @@ class ResourceTimeALNSEngine:
             affected_subtask_ids=sorted(affected_ids),
             iter_id=int(iter_id),
             rng=self.rng,
+            preserve_candidate_y=bool(repair_result.get("repartition_mode", False)),
         )
         fallback_used = bool(fallback_used or projection_meta.get("fallback_used", False))
         return {
@@ -1196,7 +1471,7 @@ class ResourceTimeALNSEngine:
                 x_repair = "x_repair_affinity_pack" if "x_repair_affinity_pack" in self.operator_arms["X"]["repair"] else self._sample_operator_pair("X")[1]
             else:
                 x_destroy = "x_destroy_critical_order_cluster" if "x_destroy_critical_order_cluster" in self.operator_arms["X"]["destroy"] else self._sample_operator_pair("X")[0]
-                x_repair = "x_repair_sku_cluster_beam" if "x_repair_sku_cluster_beam" in self.operator_arms["X"]["repair"] else self._sample_operator_pair("X")[1]
+                x_repair = self._sample_operator_pair("X")[1]
             y_destroy = "y_destroy_critical_path_block" if "y_destroy_critical_path_block" in self.operator_arms["Y"]["destroy"] else "y_destroy_max_tardiness_blocker"
             y_repair = "y_repair_ejection_chain_balance" if "y_repair_ejection_chain_balance" in self.operator_arms["Y"]["repair"] else "y_repair_arrival_aware_rank"
             z_destroy = "z_destroy_critical_path_window" if "z_destroy_critical_path_window" in self.operator_arms["Z"]["destroy"] else "z_destroy_shared_stack_window"
@@ -2528,7 +2803,18 @@ class ResourceTimeALNSEngine:
         exact_fail_reasons: Dict[str, int] = {}
         exact_trial_limit = max(1, int(getattr(self.cfg, "resource_exact_candidate_trial_limit", target)))
         exact_valid_rows: List[Dict[str, object]] = []
-        for rough_row in rough_ranked[:exact_trial_limit]:
+        exact_rough_rows: List[Dict[str, object]] = list(rough_ranked[:exact_trial_limit])
+        if str(layer).upper() == "Z" and str(getattr(self.cfg, "resource_operator_profile", "") or "").strip().lower() == "z_cover_focus":
+            seen_exact_actions = {str(row.get("action_signature", "")) for row in exact_rough_rows}
+            for rough_row in rough_ranked:
+                if str(rough_row.get("repair_operator", "")) != "z_repair_cross_subtask_shared_stack":
+                    continue
+                action_text = str(rough_row.get("action_signature", ""))
+                if action_text in seen_exact_actions:
+                    continue
+                exact_rough_rows.append(rough_row)
+                seen_exact_actions.add(action_text)
+        for rough_row in exact_rough_rows:
             exact_payload = exact_applier(self.opt, self.current_config, rough_row["plan"], self.rng)
             if not bool(exact_payload.get("success", False)):
                 exact_fail_count += 1
@@ -3250,6 +3536,10 @@ class ResourceTimeALNSEngine:
         cooling = float(getattr(self.cfg, "resource_sa_cooling", 0.95))
         reheat = float(getattr(self.cfg, "resource_sa_reheat_factor", 1.25))
         for iter_id in range(1, max_iters + 1):
+            wall_limit = float(getattr(self.cfg, "resource_wall_time_limit_sec", 0.0) or 0.0)
+            if wall_limit > 0.0 and float(self.opt._runtime_elapsed_sec()) >= float(wall_limit):
+                self.opt.stop_reason = f"wall_time_limit_{wall_limit:.3f}s"
+                break
             t_iter0 = time.perf_counter()
             best_z_before_iter = float(self.best_validated.makespan)
             layer, force_rotate_used = self._select_layer(iter_id)
@@ -3784,3 +4074,4 @@ class ResourceTimeALNSEngine:
             self.opt.work_z = float(self.best_validated.makespan)
         self.opt._write_logs()
         return float(self.best_validated.makespan)
+

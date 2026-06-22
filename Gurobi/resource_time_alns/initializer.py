@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 from .state import ResourceConfig, ResourceSubtask, WorkUnitInfo, ZTaskDescriptor
 
@@ -35,10 +35,16 @@ def build_resource_config_from_problem(opt, problem=None) -> ResourceConfig:
         capacity_limits[order_id] = int(max(1, getattr(opt.sp1, "order_capacity_limits", {}).get(order_id, 0) or 0))
 
     subtasks: Dict[int, ResourceSubtask] = {}
+    route_rows_by_robot: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+    local_slot_index_by_subtask: Dict[int, int] = {}
+    local_slot_count_by_order: Dict[int, int] = defaultdict(int)
     next_task_id = 1
     for st in sorted(getattr(problem, "subtask_list", []) or [], key=lambda row: int(getattr(row, "id", -1))):
         subtask_id = int(getattr(st, "id", -1))
         order_id = int(getattr(getattr(st, "parent_order", None), "order_id", -1))
+        local_slot_index = int(local_slot_count_by_order[int(order_id)])
+        local_slot_count_by_order[int(order_id)] += 1
+        local_slot_index_by_subtask[int(subtask_id)] = int(local_slot_index)
         work_unit_ids: List[str] = []
         for sku in getattr(st, "sku_list", []) or []:
             sku_id = int(getattr(sku, "id", -1))
@@ -62,6 +68,21 @@ def build_resource_config_from_problem(opt, problem=None) -> ResourceConfig:
         for task in sorted(getattr(st, "execution_tasks", []) or [], key=lambda row: int(getattr(row, "task_id", -1))):
             task_id = int(getattr(task, "task_id", next_task_id))
             next_task_id = max(next_task_id, task_id + 1)
+            robot_id = int(getattr(task, "robot_id", -1))
+            if robot_id >= 0:
+                route_rows_by_robot[int(robot_id)].append(
+                    {
+                        "subtask_id": int(subtask_id),
+                        "order_id": int(order_id),
+                        "local_slot_index": int(local_slot_index_by_subtask.get(int(subtask_id), local_slot_index)),
+                        "task_id": int(task_id),
+                        "stack_id": int(getattr(task, "target_stack_id", -1)),
+                        "station_id": int(getattr(st, "assigned_station_id", -1)),
+                        "trip_id": int(getattr(task, "trip_id", 0) or 0),
+                        "arrival_stack": float(getattr(task, "arrival_time_at_stack", 0.0) or 0.0),
+                        "arrival_station": float(getattr(task, "arrival_time_at_station", 0.0) or 0.0),
+                    }
+                )
             sort_range = getattr(task, "sort_layer_range", None)
             descriptors.append(
                 ZTaskDescriptor(
@@ -97,13 +118,59 @@ def build_resource_config_from_problem(opt, problem=None) -> ResourceConfig:
             count = len([st for st in subtasks.values() if int(st.order_id) == int(order_id)])
             capacity_limits[int(order_id)] = int(max(1, round(total_units / max(1, count))))
 
-    return ResourceConfig(
+    config = ResourceConfig(
         work_units=work_units,
         subtasks=subtasks,
         capacity_limits=capacity_limits,
         next_subtask_id=next_subtask_id,
         next_task_id=next_task_id,
     ).rebuild_indices()
+    config.metadata["tote_list"] = list(getattr(problem, "tote_list", []) or [])
+    if route_rows_by_robot:
+        config.metadata["fixed_route_task_sequence_by_robot"] = {
+            int(robot_id): sorted(
+                rows,
+                key=lambda row: (
+                    int(row.get("trip_id", 0) or 0),
+                    float(row.get("arrival_stack", 0.0) or 0.0),
+                    int(row.get("task_id", 0) or 0),
+                ),
+            )
+            for robot_id, rows in sorted(route_rows_by_robot.items())
+            if rows
+        }
+        config.metadata["fixed_route_node_sequence_by_robot"] = {
+            int(robot_id): [
+                {
+                    "kind": str(kind),
+                    "subtask_id": int(row.get("subtask_id", -1)),
+                    "order_id": int(row.get("order_id", -1)),
+                    "local_slot_index": int(row.get("local_slot_index", -1)),
+                    "task_id": int(row.get("task_id", -1)),
+                    "stack_id": int(row.get("stack_id", -1)),
+                    "station_id": int(row.get("station_id", -1)),
+                    "time": float(time_value),
+                }
+                for time_value, kind, row in sorted(
+                    [
+                        (float(row.get("arrival_stack", 0.0) or 0.0), "pickup", row)
+                        for row in rows
+                    ]
+                    + [
+                        (float(row.get("arrival_station", 0.0) or 0.0), "delivery", row)
+                        for row in rows
+                    ],
+                    key=lambda item: (
+                        float(item[0]),
+                        0 if str(item[1]) == "pickup" else 1,
+                        int(item[2].get("task_id", 0) or 0),
+                    ),
+                )
+            ]
+            for robot_id, rows in sorted(route_rows_by_robot.items())
+            if rows
+        }
+    return config
 
 
 def build_initial_resource_config(opt) -> ResourceConfig:

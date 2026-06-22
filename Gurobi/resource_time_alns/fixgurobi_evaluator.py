@@ -1,7 +1,10 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import copy
+import json
 import math
+import os
+import tempfile
 import time
 from collections import OrderedDict, defaultdict
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
@@ -26,6 +29,16 @@ class FixGurobiEvaluator:
         self.compiled_cache_miss_count = 0
         self.current_best_value = float("inf")
 
+    def _remaining_wall_budget_sec(self) -> float:
+        wall_limit = float(getattr(self.cfg, "resource_wall_time_limit_sec", 0.0) or 0.0)
+        if wall_limit <= 0.0:
+            return float("inf")
+        elapsed = 0.0
+        try:
+            elapsed = float(self.opt._runtime_elapsed_sec())
+        except Exception:
+            elapsed = 0.0
+        return float(wall_limit - elapsed)
     def _cache_size(self) -> int:
         return max(1, int(getattr(self.cfg, "fixgurobi_cache_size", 128) or 128))
 
@@ -134,16 +147,6 @@ class FixGurobiEvaluator:
                 unit_keys.append((int(work_unit.order_id), int(work_unit.sku_id)))
             return tuple(sorted(unit_keys))
 
-        def y_sig(order_rows: List[ResourceSubtask]) -> Tuple[Any, ...]:
-            by_station: Dict[int, List[Tuple[int, int]]] = defaultdict(list)
-            for local_idx, row in enumerate(order_rows):
-                by_station[int(row.station_id)].append((int(row.station_rank), int(local_idx)))
-            out = []
-            for station_id, rank_rows in sorted(by_station.items()):
-                ordered = [local_idx for _rank, local_idx in sorted(rank_rows)]
-                out.append((int(station_id), tuple(int(v) for v in ordered)))
-            return tuple(out)
-
         def z_task_sig(task) -> Tuple[Any, ...]:
             sort_range = getattr(task, "sort_layer_range", None)
             return (
@@ -160,30 +163,40 @@ class FixGurobiEvaluator:
 
         rows = []
         for order_id, order_rows in sorted(rows_by_order.items()):
-            order_rows = sorted(order_rows, key=lambda row: (int(row.station_rank), int(row.subtask_id)))
-            parts: List[Any] = [int(order_id)]
-            fixed_rows = [row for row in order_rows if int(row.subtask_id) not in release_ids]
-            x_rows = fixed_rows if scope_name in {"LOCALXYZ"} else order_rows
-            y_rows = fixed_rows if scope_name in {"LOCALXYZ", "LOCALYZ"} else order_rows
-            z_rows = fixed_rows if scope_name in {"LOCALXYZ", "LOCALYZ"} else order_rows
-            if "X" in scope_name:
-                parts.append(("X", tuple(sorted(x_sig(row) for row in x_rows))))
-            if "Y" in scope_name:
-                parts.append(("Y", y_sig(y_rows)))
-            if "Z" in scope_name:
-                parts.append(("Z", tuple(sorted(z_sig(row) for row in z_rows))))
-            if len(parts) == 1:
-                parts.extend(
-                    [
-                        ("X", tuple(sorted(x_sig(row) for row in order_rows))),
-                        ("Y", y_sig(order_rows)),
-                        ("Z", tuple(sorted(z_sig(row) for row in order_rows))),
-                    ]
+            order_rows = sorted(
+                order_rows,
+                key=lambda row: (
+                    -int(len(getattr(row, "work_unit_ids", []) or [])),
+                    int(row.station_id if row.station_id >= 0 else 10**9),
+                    int(row.station_rank if row.station_rank >= 0 else 10**9),
+                    int(row.subtask_id),
                 )
+            )
+            slot_parts: List[Any] = []
+            for row in order_rows:
+                released = int(row.subtask_id) in release_ids
+                row_parts: List[Any] = [int(row.subtask_id)]
+                if "X" in scope_name and not (released and scope_name in {"LOCALXYZ"}):
+                    row_parts.append(("X", x_sig(row)))
+                if "Y" in scope_name and not (released and scope_name in {"LOCALXYZ", "LOCALYZ"}):
+                    row_parts.append(("Y", int(row.station_id), int(row.station_rank)))
+                if "Z" in scope_name and not (released and scope_name in {"LOCALXYZ", "LOCALYZ"}):
+                    row_parts.append(("Z", z_sig(row)))
+                if len(row_parts) == 1:
+                    row_parts.extend(
+                        [
+                            ("X", x_sig(row)),
+                            ("Y", int(row.station_id), int(row.station_rank)),
+                            ("Z", z_sig(row)),
+                        ]
+                    )
+                slot_parts.append(tuple(row_parts))
+            parts: List[Any] = [int(order_id), ("SLOTS", tuple(slot_parts))]
             rows.append(tuple(parts))
         route_sig = ()
         if scope_name in {"U", "XYZU"}:
             route_rows = dict((getattr(config, "metadata", {}) or {}).get("fixed_route_task_sequence_by_robot", {}) or {})
+            route_nodes = dict((getattr(config, "metadata", {}) or {}).get("fixed_route_node_sequence_by_robot", {}) or {})
             route_sig = tuple(
                 (
                     int(robot_id),
@@ -198,6 +211,21 @@ class FixGurobiEvaluator:
                     ),
                 )
                 for robot_id, rows in sorted(route_rows.items(), key=lambda item: int(item[0]))
+            ) + tuple(
+                (
+                    int(robot_id),
+                    tuple(
+                        (
+                            str(row.get("kind", "")),
+                            int(row.get("order_id", -1)),
+                            int(row.get("local_slot_index", -1)),
+                            int(row.get("stack_id", -1)),
+                            int(row.get("station_id", -1)),
+                        )
+                        for row in (rows or [])
+                    ),
+                )
+                for robot_id, rows in sorted(route_nodes.items(), key=lambda item: int(item[0]))
             )
         if scope_name in {"LOCALXYZ", "LOCALYZ"}:
             rows.append(("RELEASE", tuple(sorted(int(x) for x in release_ids))))
@@ -282,7 +310,14 @@ class FixGurobiEvaluator:
         for row in config.subtasks.values():
             rows_by_order[int(row.order_id)].append(row)
         for rows in rows_by_order.values():
-            rows.sort(key=lambda row: (int(row.station_rank if row.station_rank >= 0 else 10**9), int(row.subtask_id)))
+            rows.sort(
+                key=lambda row: (
+                    -int(len(getattr(row, "work_unit_ids", []) or [])),
+                    int(row.station_id if row.station_id >= 0 else 10**9),
+                    int(row.station_rank if row.station_rank >= 0 else 10**9),
+                    int(row.subtask_id),
+                )
+            )
         return rows_by_order
 
     def _fixed_payload(self, config: ResourceConfig, scope: str, release_subtask_ids: Optional[Iterable[int]] = None) -> Dict[str, Any]:
@@ -349,6 +384,18 @@ class FixGurobiEvaluator:
             if self._include_fixed_used_stacks(scope)
             else None
         )
+        route_task_sequence = (
+            dict((getattr(config, "metadata", {}) or {}).get("fixed_route_task_sequence_by_robot", {}) or {})
+            if self._fixes_u(scope)
+            else None
+        )
+        route_node_sequence = (
+            dict((getattr(config, "metadata", {}) or {}).get("fixed_route_node_sequence_by_robot", {}) or {})
+            if self._fixes_u(scope)
+            else None
+        )
+        if route_node_sequence:
+            route_task_sequence = None
         return {
             "fixed_slot_count_by_order": fixed_slot_count_by_order,
             "fixed_work_units_by_order_slot": fixed_work_units_by_order_slot or None,
@@ -356,11 +403,8 @@ class FixGurobiEvaluator:
             "fixed_z_descriptors_by_order_slot": fixed_z_descriptors_by_order_slot or None,
             "forced_candidate_stacks_by_order": forced_candidate_stacks_by_order or None,
             "fixed_used_stack_ids_by_order": fixed_used_stack_ids_by_order,
-            "fixed_route_task_sequence_by_robot": (
-                dict((getattr(config, "metadata", {}) or {}).get("fixed_route_task_sequence_by_robot", {}) or {})
-                if self._fixes_u(scope)
-                else None
-            ),
+            "fixed_route_task_sequence_by_robot": route_task_sequence,
+            "fixed_route_node_sequence_by_robot": route_node_sequence,
             "invalid_reasons": invalid_reasons,
         }
 
@@ -372,15 +416,16 @@ class FixGurobiEvaluator:
             max_candidate_stacks_per_order=int(getattr(self.cfg, "fixgurobi_max_candidate_stacks_per_order", 0) or 0),
             enable_warm_candidate_stack_prune=bool(getattr(self.cfg, "fixgurobi_enable_warm_candidate_stack_prune", False)),
             candidate_station_topk_per_stack=int(getattr(self.cfg, "fixgurobi_candidate_station_topk_per_stack", 999) or 999),
+            warm_start_sp4_time_limit_sec=0,
             warm_start_subtask_ordering=str(getattr(self.cfg, "fixgurobi_warm_start_subtask_ordering", "default") or "default"),
             route_pickup_neighbor_limit=int(getattr(self.cfg, "fixgurobi_route_pickup_neighbor_limit", 0) or 0),
             enable_scale_adaptive_candidate_prune=bool(getattr(self.cfg, "fixgurobi_enable_scale_adaptive_candidate_prune", False)),
             gurobi_output=bool(getattr(self.cfg, "fixgurobi_output", False)),
-            enable_warm_start=bool(getattr(self.cfg, "fixgurobi_use_warm_bound", True)),
-            warm_start_use_sp4=bool(getattr(self.cfg, "fixgurobi_use_warm_bound", True)),
+            enable_warm_start=bool(getattr(self.cfg, "enable_warm_start", False) or getattr(self.cfg, "fixgurobi_use_warm_bound", True)),
+            warm_start_use_sp4=bool(getattr(self.cfg, "enable_warm_start", False) or getattr(self.cfg, "fixgurobi_use_warm_bound", True)),
             integrate_u_route=True,
             route_arc_prune=bool(getattr(self.cfg, "fixgurobi_route_arc_prune", True)),
-            enable_route_time_window_arc_prune=False,
+            enable_route_time_window_arc_prune=bool(getattr(self.cfg, "fixgurobi_route_time_window_arc_prune", True)),
             enable_route_load_interval_arc_prune=bool(getattr(self.cfg, "fixgurobi_route_load_interval_arc_prune", True)),
             enable_resource_lex_symmetry=bool(getattr(self.cfg, "fixgurobi_enable_symmetry", True)),
             enable_slot_lex_symmetry=bool(getattr(self.cfg, "fixgurobi_enable_symmetry", True)),
@@ -388,6 +433,9 @@ class FixGurobiEvaluator:
             enable_station_global_lex_symmetry=bool(getattr(self.cfg, "fixgurobi_enable_symmetry", True)),
             enable_robot_finish_lex_symmetry=bool(getattr(self.cfg, "fixgurobi_enable_symmetry", True)),
             enable_selected_workload_lbs=True,
+            enable_order_time_windows=bool(getattr(self.cfg, "fixgurobi_enable_order_time_windows", True)),
+            kitting_span_penalty_weight=float(getattr(self.cfg, "kitting_span_penalty_weight", 5.0) or 5.0),
+            deadline_penalty_weight=float(getattr(self.cfg, "deadline_penalty_weight", 1000.0) or 1000.0),
             fixed_slot_count_by_order=fixed_payload.get("fixed_slot_count_by_order"),
             fixed_work_units_by_order_slot=fixed_payload.get("fixed_work_units_by_order_slot"),
             fixed_station_rank_by_order_slot=fixed_payload.get("fixed_station_rank_by_order_slot"),
@@ -396,11 +444,20 @@ class FixGurobiEvaluator:
             forced_candidate_stacks_by_order=fixed_payload.get("forced_candidate_stacks_by_order"),
             fixed_route_arcs_by_robot=None,
             fixed_route_task_sequence_by_robot=fixed_payload.get("fixed_route_task_sequence_by_robot"),
+            fixed_route_node_sequence_by_robot=fixed_payload.get("fixed_route_node_sequence_by_robot"),
             fixed_route_arc_fix_nonselected=not bool(getattr(self.cfg, "resource_revolving_mode", False)),
-            fixgurobi_no_warm_start=True,
+            fixgurobi_relax_sort_tote_fix=bool(getattr(self.cfg, "fixgurobi_relax_sort_tote_fix", False)),
+            fixgurobi_no_warm_start=not bool(getattr(self.cfg, "enable_warm_start", False)),
             fixgurobi_allow_warm_start_fallback=bool(getattr(self.cfg, "fixgurobi_allow_warm_start_fallback", False)),
-            fixgurobi_warm_bound_only=bool(getattr(self.cfg, "fixgurobi_use_warm_bound", True)),
+            fixgurobi_warm_bound_only=bool((not bool(getattr(self.cfg, "enable_warm_start", False))) and getattr(self.cfg, "fixgurobi_use_warm_bound", True)),
         )
+        cfg.route_big_m_time = max(
+            float(getattr(cfg, "big_m_time", 2000.0) or 2000.0),
+            float(getattr(cfg, "route_big_m_time", 0.0) or 0.0),
+        )
+        remaining_budget = float(self._remaining_wall_budget_sec())
+        if math.isfinite(remaining_budget):
+            cfg.time_limit_sec = max(0.05, min(float(cfg.time_limit_sec), float(remaining_budget)))
         target = float(getattr(self.cfg, "resource_target_cmax", float("nan")))
         if bool(getattr(self.cfg, "fixgurobi_enable_best_obj_stop", False)) and math.isfinite(target):
             slack = float(getattr(self.cfg, "fixgurobi_best_obj_stop_slack", 0.999) or 0.999)
@@ -415,6 +472,7 @@ class FixGurobiEvaluator:
             "fixed_z_descriptors_by_order_slot",
             "fixed_used_stack_ids_by_order",
             "fixed_route_task_sequence_by_robot",
+            "fixed_route_node_sequence_by_robot",
         ):
             base_payload[key] = None
         return self._build_global_cfg(base_payload)
@@ -492,14 +550,92 @@ class FixGurobiEvaluator:
             except Exception as exc:
                 compiled_meta["fixgurobi_compiled_fallback_used"] = True
                 compiled_meta["fixgurobi_compiled_fallback_reason"] = str(exc)
+        root = str(getattr(self.opt.problem, "runtime_result_dir", "") or "").strip()
+        if (
+            root
+            and str(stage).lower() in {"full", "refine"}
+            and bool(getattr(self.cfg, "fixgurobi_debug_iis", False))
+        ):
+            try:
+                out_dir = os.path.join(tempfile.gettempdir(), "deepnco_fixgurobi_iis")
+                os.makedirs(out_dir, exist_ok=True)
+                idx = int(getattr(self, "_iis_dump_count", 0) or 0)
+                if idx < 5:
+                    setattr(global_cfg, "debug_iis_path", os.path.join(out_dir, f"iis_{idx:03d}.ilp"))
+                    setattr(self, "_iis_dump_count", idx + 1)
+            except Exception:
+                pass
         result = GlobalXYZUSolver().solve(copy.deepcopy(self.opt.problem), global_cfg)
         diag = dict(getattr(result, "diagnostics", {}) or {})
         diag.update(compiled_meta)
         diag.setdefault("fixgurobi_compile_cache_hit", False)
         diag.setdefault("fixgurobi_compile_time", 0.0)
         diag["fixgurobi_stage"] = str(stage)
+        if str(getattr(result, "status", "")).upper() not in {"OPTIMAL", "TIME_LIMIT"}:
+            self._dump_failed_payload(fixed_payload, global_cfg, scope, stage, diag)
         result.diagnostics = diag
         return result
+
+    def _dump_failed_payload(
+        self,
+        fixed_payload: Dict[str, Any],
+        global_cfg: GlobalXYZUConfig,
+        scope: str,
+        stage: str,
+        diagnostics: Dict[str, Any],
+    ) -> None:
+        try:
+            root = str(getattr(self.opt.problem, "runtime_result_dir", "") or "").strip()
+            if not root:
+                return
+            out_dir = os.path.join(root, "fixgurobi_failed_payloads")
+            os.makedirs(out_dir, exist_ok=True)
+            idx = len([name for name in os.listdir(out_dir) if name.endswith(".json")])
+            if idx >= 20:
+                return
+            diag_keys = (
+                "stage",
+                "u_fallback_reason",
+                "model_status_code",
+                "model_best_bound",
+                "model_cmax",
+                "gurobi_solve_time_sec",
+                "u_arc_count",
+                "u_active_task_count",
+                "route_big_m",
+                "route_big_m_source",
+                "slot_count",
+                "work_unit_count",
+                "warm_start_makespan",
+                "route_time_window_prune_warm_model_cmax",
+                "u_time_window_latest_source",
+                "debug_iis_path",
+                "debug_iis_error",
+            )
+            payload = {
+                "scope": str(scope),
+                "stage": str(stage),
+                "diagnostics": {key: diagnostics.get(key) for key in diag_keys if key in diagnostics},
+                "cfg": {
+                    "candidate_stack_topk": int(getattr(global_cfg, "candidate_stack_topk", 0)),
+                    "max_candidate_stacks_per_order": int(getattr(global_cfg, "max_candidate_stacks_per_order", 0)),
+                    "candidate_station_topk_per_stack": int(getattr(global_cfg, "candidate_station_topk_per_stack", 0)),
+                    "route_pickup_neighbor_limit": int(getattr(global_cfg, "route_pickup_neighbor_limit", 0)),
+                    "route_arc_prune": bool(getattr(global_cfg, "route_arc_prune", False)),
+                    "enable_route_time_window_arc_prune": bool(getattr(global_cfg, "enable_route_time_window_arc_prune", False)),
+                    "enable_route_load_interval_arc_prune": bool(getattr(global_cfg, "enable_route_load_interval_arc_prune", False)),
+                    "enable_order_time_windows": bool(getattr(global_cfg, "enable_order_time_windows", False)),
+                    "enable_selected_workload_lbs": bool(getattr(global_cfg, "enable_selected_workload_lbs", False)),
+                    "fixgurobi_no_warm_start": bool(getattr(global_cfg, "fixgurobi_no_warm_start", False)),
+                    "fixgurobi_warm_bound_only": bool(getattr(global_cfg, "fixgurobi_warm_bound_only", False)),
+                },
+                "fixed_payload": fixed_payload,
+            }
+            path = os.path.join(out_dir, f"failed_payload_{idx:03d}.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2, default=str)
+        except Exception:
+            return
 
     def _solve_fixgurobi(self, fixed_payload: Dict[str, Any], global_cfg: GlobalXYZUConfig, scope: str):
         best = float(getattr(self, "current_best_value", float("inf")) or float("inf"))
@@ -534,7 +670,10 @@ class FixGurobiEvaluator:
             if not (math.isfinite(coarse_value) and coarse_value + 1e-9 < best):
                 status_code = int(coarse_diag.get("model_status_code", -1) or -1)
                 bound = float(coarse_diag.get("model_best_bound", float("nan")))
-                proven_no_improve = status_code in {3, 4, 6}
+                # A short coarse solve may report infeasible under aggressive pruning/cutoff
+                # before the full fixed model has been tested.  Only CUTOFF or a valid bound
+                # can safely prove that the candidate cannot improve the incumbent.
+                proven_no_improve = status_code in {6}
                 if cutoff is not None and math.isfinite(bound) and bound >= float(cutoff) - 1e-9:
                     proven_no_improve = True
                 if math.isfinite(coarse_value) or proven_no_improve:
@@ -578,6 +717,16 @@ class FixGurobiEvaluator:
     @staticmethod
     def _objective_from_result(result) -> float:
         diag = dict(getattr(result, "diagnostics", {}) or {})
+        status = str(getattr(result, "status", "") or "").upper()
+        if status == "WARM_START_FALLBACK":
+            for key in ("warm_start_model_cmax", "model_cmax", "validated_global_makespan", "true_global_makespan"):
+                value = diag.get(key, None)
+                if isinstance(value, (int, float)) and math.isfinite(float(value)):
+                    return float(value)
+        span_overrun = float(diag.get("total_span_overrun", 0.0) or 0.0)
+        deadline_overrun = float(diag.get("total_deadline_overrun", 0.0) or 0.0)
+        if span_overrun > 1e-9 or deadline_overrun > 1e-9:
+            return float("inf")
         for key in ("model_cmax", "validated_global_makespan", "true_global_makespan"):
             value = diag.get(key, None)
             if isinstance(value, (int, float)) and math.isfinite(float(value)):
@@ -652,6 +801,21 @@ class FixGurobiEvaluator:
             return cached
 
         self.cache_miss_count += 1
+        remaining_budget = float(self._remaining_wall_budget_sec())
+        if math.isfinite(remaining_budget) and remaining_budget <= 0.0:
+            metadata = {
+                "eval_backend": "fixgurobi_prefix",
+                "fixgurobi_status": "WALL_TIME_LIMIT",
+                "fixgurobi_obj": float("inf"),
+                "fixgurobi_bound": float("nan"),
+                "fixgurobi_gap": float("nan"),
+                "fixgurobi_solve_time": 0.0,
+                "fixgurobi_wall_time": 0.0,
+                "fixgurobi_fixed_scope": str(scope),
+                "fixgurobi_infeasible_reason": "wall_time_limit_exhausted",
+                "fixgurobi_cache_hit": False,
+            }
+            return self._result_from_base(base_eval, value=float("inf"), metadata=metadata)
         if bool(getattr(self.cfg, "fixgurobi_cheap_gate", True)) and not bool(bypass_cache):
             cheap_reasons: List[str] = []
             if base_eval is not None:
@@ -693,6 +857,12 @@ class FixGurobiEvaluator:
             gap = float(getattr(result, "gap", float("nan")))
             bound = float(diagnostics.get("model_best_bound", float("nan")))
             infeasible_reason = "" if math.isfinite(value) else str(diagnostics.get("fallback_reason", status))
+            target_cmax = float(getattr(self.cfg, "resource_target_cmax", float("nan")))
+            if math.isfinite(float(value)) and math.isfinite(target_cmax) and float(value) < float(target_cmax) - 1e-9:
+                diagnostics["fixgurobi_below_target_rejected"] = True
+                diagnostics["fixgurobi_rejected_below_target_cmax"] = float(value)
+                infeasible_reason = "below_target_cmax_rejected"
+                value = float("inf")
         except Exception as exc:
             value = float("inf")
             status = "EXCEPTION"
@@ -748,6 +918,11 @@ class FixGurobiEvaluator:
             "compiled_model_copy_time_sec",
             "gurobi_solve_time_sec",
             "gurobi_runtime_sec",
+            "model_objective",
+            "objective_value",
+            "total_span_overrun",
+            "total_deadline_overrun",
+            "order_time_windows",
         ):
             if key in diagnostics:
                 metadata[key] = diagnostics.get(key)
@@ -862,6 +1037,11 @@ class FixGurobiEvaluator:
                     "compiled_model_copy_time_sec",
                     "gurobi_solve_time_sec",
                     "gurobi_runtime_sec",
+            "model_objective",
+            "objective_value",
+            "total_span_overrun",
+            "total_deadline_overrun",
+            "order_time_windows",
                 ):
                     if key in fallback_diagnostics:
                         fallback_metadata[key] = fallback_diagnostics.get(key)
@@ -899,3 +1079,7 @@ class FixGurobiEvaluator:
         if not bool(bypass_cache):
             self._cache_put(cache_key, out)
         return out
+
+
+
+

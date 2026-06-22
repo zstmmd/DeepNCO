@@ -42,6 +42,47 @@ CURRENT_TRA_BASELINE_CMAX = {
 }
 
 
+
+def _install_runtime_configs(path: str) -> None:
+    if not str(path or "").strip():
+        return
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"runtime config json not found: {path}")
+    with open(path, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+    configs = payload.get("configs", payload) if isinstance(payload, dict) else {}
+    if not isinstance(configs, dict):
+        return
+    CreateOFSProblem.RUNTIME_SCALE_CONFIGS = dict(getattr(CreateOFSProblem, "RUNTIME_SCALE_CONFIGS", {}) or {})
+    for name, cfg in configs.items():
+        if isinstance(cfg, dict):
+            CreateOFSProblem.RUNTIME_SCALE_CONFIGS[str(name).upper()] = dict(cfg)
+def _cmd_int(command: str, flag: str, default: int) -> int:
+    parts = str(command or "").split()
+    for idx, token in enumerate(parts[:-1]):
+        if token == flag:
+            try:
+                return int(parts[idx + 1])
+            except Exception:
+                return int(default)
+    return int(default)
+
+
+def _case_run_params(path: str, case_name: str) -> Dict[str, Any]:
+    path = str(path or "").strip()
+    if not path or not os.path.exists(path):
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+    configs = payload.get("configs", payload) if isinstance(payload, dict) else {}
+    if not isinstance(configs, dict):
+        return {}
+    case_key = str(case_name or "").upper()
+    for key, value in configs.items():
+        if str(key).upper() == case_key and isinstance(value, dict):
+            return dict(value)
+    return {}
+
 def _ensure_dir(path: str) -> str:
     os.makedirs(path, exist_ok=True)
     return path
@@ -82,6 +123,7 @@ def parse_gurobi_export(export_dir: str) -> Dict[str, Any]:
     tasks: Dict[int, Dict[str, Any]] = {}
     route_rows: List[Dict[str, Any]] = []
     route_order_by_robot: Dict[int, Dict[int, int]] = {}
+    route_node_sequence_by_robot: Dict[int, List[Dict[str, Any]]] = {}
     section = ""
     with open(dump_path, "r", encoding="utf-8") as f:
         for raw_line in f:
@@ -172,6 +214,29 @@ def parse_gurobi_export(export_dir: str) -> Dict[str, Any]:
                     robot_id = int(m.group(1))
                     for pos, task_id in enumerate(_parse_int_list(m.group(3))):
                         route_order_by_robot.setdefault(robot_id, {})[int(task_id)] = int(pos)
+            elif section == "SP4 Full Node Sequence By Robot":
+                m = re.search(r"robot_id=(-?\d+), sequence=(.*)", line)
+                if m:
+                    robot_id = int(m.group(1))
+                    nodes: List[Dict[str, Any]] = []
+                    for token in str(m.group(2)).split(" -> "):
+                        text = token.strip()
+                        if text.startswith("start("):
+                            nodes.append({"kind": "start"})
+                            continue
+                        if text.startswith("end("):
+                            nodes.append({"kind": "end"})
+                            continue
+                        nm = re.search(r"(pickup|delivery)\(task=(-?\d+),(?:stack|station)=(-?\d+),t=([0-9.\-]+)\)", text)
+                        if nm:
+                            nodes.append({
+                                "kind": str(nm.group(1)),
+                                "task_id": int(nm.group(2)),
+                                "location_id": int(nm.group(3)),
+                                "time": float(nm.group(4)),
+                            })
+                    if nodes:
+                        route_node_sequence_by_robot[robot_id] = nodes
     for task in tasks.values():
         subtask_id = int(task["subtask_id"])
         subtasks.setdefault(subtask_id, {"subtask_id": subtask_id})
@@ -188,6 +253,7 @@ def parse_gurobi_export(export_dir: str) -> Dict[str, Any]:
         "subtasks": subtasks,
         "tasks": tasks,
         "routes": route_rows,
+        "route_node_sequence_by_robot": route_node_sequence_by_robot,
     }
 
 
@@ -263,6 +329,47 @@ def build_fixed_payload(parsed: Dict[str, Any]) -> Dict[str, Any]:
                 "arrival_station": float(route.get("arrival_station", 0.0)),
             }
         )
+    route_node_sequence_by_robot: Dict[int, List[Dict[str, Any]]] = {}
+    task_lookup = {int(task_id): dict(task) for task_id, task in dict(parsed.get("tasks", {}) or {}).items()}
+    parsed_node_sequences = dict(parsed.get("route_node_sequence_by_robot", {}) or {})
+    if not parsed_node_sequences:
+        rebuilt: Dict[int, List[Dict[str, Any]]] = {}
+        by_robot: Dict[int, List[Dict[str, Any]]] = {}
+        for route in parsed.get("routes", []) or []:
+            by_robot.setdefault(int(route.get("robot_id", -1)), []).append(dict(route))
+        for robot_id, rows in by_robot.items():
+            events: List[Dict[str, Any]] = [{"kind": "start", "time": 0.0, "_rank": -1, "task_id": -1}]
+            for row in rows:
+                task_id = int(row.get("task_id", -1))
+                events.append({"kind": "pickup", "task_id": task_id, "time": float(row.get("arrival_stack", 0.0)), "_rank": 0})
+                events.append({"kind": "delivery", "task_id": task_id, "time": float(row.get("arrival_station", 0.0)), "_rank": 1})
+            events.sort(key=lambda item: (float(item.get("time", 0.0)), int(item.get("_rank", 0)), int(item.get("task_id", -1))))
+            events.append({"kind": "end", "time": max([float(v.get("time", 0.0)) for v in events] + [0.0]), "_rank": 2, "task_id": 10**9})
+            rebuilt[int(robot_id)] = events
+        parsed_node_sequences = rebuilt
+    for robot_id, nodes in parsed_node_sequences.items():
+        out_nodes: List[Dict[str, Any]] = []
+        for node in nodes or []:
+            kind = str(node.get("kind", "")).lower()
+            if kind in {"start", "end"}:
+                out_nodes.append({"kind": kind})
+                continue
+            task_id = int(node.get("task_id", -1))
+            task = task_lookup.get(task_id, {})
+            subtask_id = int(task.get("subtask_id", -1))
+            order_id, local_idx = subtask_to_order_local.get(subtask_id, (-1, -1))
+            out_nodes.append({
+                "kind": kind,
+                "task_id": task_id,
+                "order_id": int(order_id),
+                "local_slot_index": int(local_idx),
+                "subtask_id": int(subtask_id),
+                "stack_id": int(task.get("stack_id", -1)),
+                "station_id": int(task.get("station_id", -1)),
+                "time": float(node.get("time", 0.0)),
+            })
+        if out_nodes:
+            route_node_sequence_by_robot[int(robot_id)] = out_nodes
     return {
         "fixed_slot_count_by_order": fixed_slot_count_by_order,
         "fixed_work_units_by_order_slot": fixed_work_units_by_order_slot,
@@ -271,25 +378,37 @@ def build_fixed_payload(parsed: Dict[str, Any]) -> Dict[str, Any]:
         "fixed_used_stack_ids_by_order": used_stack_ids_by_order,
         "forced_candidate_stacks_by_order": used_stack_ids_by_order,
         "fixed_route_task_sequence_by_robot": route_sequence_by_robot,
+        "fixed_route_node_sequence_by_robot": route_node_sequence_by_robot,
     }
 
 
-def _cfg_for_phase(args, phase: str, payload: Dict[str, Any]) -> GlobalXYZUConfig:
+def _cfg_for_phase(args, phase: str, payload: Dict[str, Any], case_name: str = "") -> GlobalXYZUConfig:
     phase = str(phase).upper()
+    case_run = _case_run_params(str(getattr(args, "runtime_config_json", "") or ""), str(case_name).upper())
+    use_case_prune = bool(getattr(args, "use_case_run_prune", False))
+    disable_all_prune = bool(case_run.get("disable_all_prune", False)) if use_case_prune else False
+    command_text = str(case_run.get("command", "") or "")
+    candidate_stack_topk = int(case_run.get("candidate_stack_topk", _cmd_int(command_text, "--candidate-stack-topk", 999)) or 999) if use_case_prune else 999
+    candidate_station_topk = int(case_run.get("gurobi_station_topk", 999) or 999) if use_case_prune else 999
+    route_neighbor = int(case_run.get("route_pickup_neighbor_limit", _cmd_int(command_text, "--route-pickup-neighbor-limit", 0)) or 0) if use_case_prune else 0
+    max_candidate = 0 if (not use_case_prune or disable_all_prune) else int(getattr(args, "case_run_max_candidate_stacks_per_order", 8) or 8)
     cfg = GlobalXYZUConfig(
         time_limit_sec=float(args.time_limit),
         mip_gap=float(args.mip_gap),
-        candidate_stack_topk=999,
-        max_candidate_stacks_per_order=0,
+        candidate_stack_topk=int(candidate_stack_topk),
+        max_candidate_stacks_per_order=int(max_candidate),
         enable_warm_candidate_stack_prune=False,
-        candidate_station_topk_per_stack=999,
-        route_pickup_neighbor_limit=0,
+        candidate_station_topk_per_stack=int(candidate_station_topk),
+        route_pickup_neighbor_limit=int(route_neighbor),
         enable_scale_adaptive_candidate_prune=False,
         enable_warm_start=False,
         warm_start_use_sp4=False,
         fixgurobi_no_warm_start=True,
         fixgurobi_allow_warm_start_fallback=False,
         integrate_u_route=True,
+        route_arc_prune=not bool(disable_all_prune),
+        enable_route_time_window_arc_prune=not bool(disable_all_prune),
+        enable_route_load_interval_arc_prune=not bool(disable_all_prune),
         gurobi_output=bool(args.gurobi_output),
         forced_candidate_stacks_by_order=payload.get("forced_candidate_stacks_by_order"),
         fixed_slot_count_by_order=payload.get("fixed_slot_count_by_order"),
@@ -302,7 +421,9 @@ def _cfg_for_phase(args, phase: str, payload: Dict[str, Any]) -> GlobalXYZUConfi
     if phase in {"XYZ_USED_STACK", "XYZ_USED_STACK_ROUTE"}:
         cfg.fixed_used_stack_ids_by_order = payload.get("fixed_used_stack_ids_by_order")
     if phase == "XYZ_USED_STACK_ROUTE":
-        cfg.fixed_route_task_sequence_by_robot = payload.get("fixed_route_task_sequence_by_robot")
+        node_sequence = payload.get("fixed_route_node_sequence_by_robot")
+        cfg.fixed_route_node_sequence_by_robot = node_sequence
+        cfg.fixed_route_task_sequence_by_robot = None if node_sequence else payload.get("fixed_route_task_sequence_by_robot")
     return cfg
 
 
@@ -340,7 +461,7 @@ def run_case(args, case_name: str, out_dir: str) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     for phase in phases:
         problem = CreateOFSProblem.generate_problem_by_scale(case_name, seed=int(args.seed))
-        cfg = _cfg_for_phase(args, phase, payload)
+        cfg = _cfg_for_phase(args, phase, payload, case_name=case_name)
         if case_name == "GUROBI-S7":
             cfg.route_arc_prune = False
             cfg.enable_route_time_window_arc_prune = False
@@ -403,7 +524,11 @@ def main() -> None:
     parser.add_argument("--export-dir", type=str, default="", help="Single-case override for gurobi_solution_export dir")
     parser.add_argument("--output-dir", type=str, default="")
     parser.add_argument("--gurobi-output", action="store_true", default=False)
+    parser.add_argument("--runtime-config-json", type=str, default="")
+    parser.add_argument("--use-case-run-prune", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--case-run-max-candidate-stacks-per-order", type=int, default=8)
     args = parser.parse_args()
+    _install_runtime_configs(str(args.runtime_config_json or ""))
 
     out_dir = _ensure_dir(args.output_dir or os.path.join(ROOT_DIR, "result", f"fixgurobi_replay_{datetime.now().strftime('%Y%m%d_%H%M%S')}"))
     all_rows: List[Dict[str, Any]] = []
@@ -426,3 +551,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+
+
