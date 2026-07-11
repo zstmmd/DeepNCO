@@ -1,0 +1,13 @@
+{
+  "exports": {
+    "STACKS-S1": "D:/研究生/毕设代码/DeepNCO/result/stacks_s1_s9_user_repro_20260620/s1/STACKS-S1/gurobi_solution_export",
+    "STACKS-S2": "D:/研究生/毕设代码/DeepNCO/result/stacks_s1_s9_user_repro_20260620/s2/STACKS-S2/gurobi_solution_export",
+    "STACKS-S3": "D:/研究生/毕设代码/DeepNCO/result/stacks_s1_s9_user_repro_20260620/s3_pruned_focus2/STACKS-S3/gurobi_solution_export",
+    "STACKS-S4": "D:/研究生/毕设代码/DeepNCO/result/stacks_s1_s9_user_repro_20260620/s4/STACKS-S4/gurobi_solution_export",
+    "STACKS-S5": "D:/研究生/毕设代码/DeepNCO/result/stacks_s1_s9_user_repro_20260620/s5/STACKS-S5/gurobi_solution_export",
+    "STACKS-S6": "D:/研究生/毕设代码/DeepNCO/result/stacks_s1_s9_user_repro_20260620/s6_stack1111_no_prune_r0/STACKS-S6/gurobi_solution_export",
+    "STACKS-S7": "D:/研究生/毕设代码/DeepNCO/result/stacks_s1_s9_user_repro_20260620/s7_focus2_t300/STACKS-S7/gurobi_solution_export",
+    "STACKS-S8": "D:/研究生/毕设代码/DeepNCO/result/stacks_s1_s9_user_repro_20260620/s8_stack2111_copy1/STACKS-S8/gurobi_solution_export",
+    "STACKS-S9": "D:/研究生/毕设代码/DeepNCO/result/stacks_s1_s9_gurobi_reexport_fullroute_20260620/s9_suite_focus3/STACKS-S9/gurobi_solution_export"
+  }
+}

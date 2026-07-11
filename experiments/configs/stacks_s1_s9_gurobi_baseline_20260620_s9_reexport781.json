@@ -1,0 +1,58 @@
+{
+  "details": [
+    {
+      "case": "STACKS-S1",
+      "model_cmax": 103,
+      "runtime_sec": 15.374338,
+      "model_gap": 0.000229
+    },
+    {
+      "case": "STACKS-S2",
+      "model_cmax": 158,
+      "runtime_sec": 55.259785,
+      "model_gap": 0
+    },
+    {
+      "case": "STACKS-S3",
+      "model_cmax": 239,
+      "runtime_sec": 73.404869,
+      "model_gap": 0.000184
+    },
+    {
+      "case": "STACKS-S4",
+      "model_cmax": 258,
+      "runtime_sec": 88.192418,
+      "model_gap": 0
+    },
+    {
+      "case": "STACKS-S5",
+      "model_cmax": 269,
+      "runtime_sec": 129.644596,
+      "model_gap": 0.009613
+    },
+    {
+      "case": "STACKS-S6",
+      "model_cmax": 386,
+      "runtime_sec": 130.675291,
+      "model_gap": 0.006762
+    },
+    {
+      "case": "STACKS-S7",
+      "model_cmax": 524,
+      "runtime_sec": 159.061904,
+      "model_gap": 0.007803
+    },
+    {
+      "case": "STACKS-S8",
+      "model_cmax": 660,
+      "runtime_sec": 101.668494,
+      "model_gap": 0.00999
+    },
+    {
+      "case": "STACKS-S9",
+      "model_cmax": 780.999961,
+      "runtime_sec": 300.409732,
+      "model_gap": 0.011617
+    }
+  ]
+}
