@@ -291,8 +291,13 @@ def _scale_bigger(row: Dict[str, Any], prev: Dict[str, Any]) -> bool:
     )
 
 
+def _calibration_status_ok(row: Dict[str, Any]) -> bool:
+    # Gurobi may stop on TIME_LIMIT after already reaching the configured gap.
+    return str(row.get("status", "")).upper() in {"OPTIMAL", "USER_OBJ_LIMIT", "TIME_LIMIT"}
+
+
 def _row_accepts_stage(args: argparse.Namespace, stage: int, row: Dict[str, Any], prev: Dict[str, Any]) -> Tuple[bool, str]:
-    if str(row.get("status", "")).upper() not in {"OPTIMAL", "USER_OBJ_LIMIT"}:
+    if not _calibration_status_ok(row):
         return False, "status"
     if _finite_float(row.get("model_gap")) > float(args.mip_gap) + 1e-9:
         return False, "gap"
@@ -549,7 +554,7 @@ def _select_chain_from_rows(args: argparse.Namespace, rows: Sequence[Dict[str, A
     valid_rows = [
         dict(row)
         for row in rows
-        if str(row.get("status", "")).upper() in {"OPTIMAL", "USER_OBJ_LIMIT"}
+        if _calibration_status_ok(row)
         and _finite_float(row.get("model_gap"), float("inf")) <= float(args.mip_gap) + 1e-9
         and _finite_float(row.get("runtime_sec"), float("inf")) < float(args.time_limit_sec)
     ]

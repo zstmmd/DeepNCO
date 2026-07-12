@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import copy
 import json
@@ -11,7 +11,10 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from Gurobi.global_xyzu import GlobalXYZUConfig, GlobalXYZUSolver
 
+from config.ofs_config import OFSConfig
+
 from .state import ResourceConfig, ResourceSubtask, UpperEvalResult
+from .route_edge_audit import allowed_route_edges_from_global_payload, audit_fixed_route_edges
 
 
 class FixGurobiEvaluator:
@@ -23,10 +26,13 @@ class FixGurobiEvaluator:
         self.surrogate_scorer = surrogate_scorer
         self.cache: OrderedDict[Tuple[Any, ...], UpperEvalResult] = OrderedDict()
         self.compiled_cache: OrderedDict[Tuple[Any, ...], Any] = OrderedDict()
+        self.route_signature_cache: OrderedDict[Tuple[Any, ...], UpperEvalResult] = OrderedDict()
         self.cache_hit_count = 0
         self.cache_miss_count = 0
         self.compiled_cache_hit_count = 0
         self.compiled_cache_miss_count = 0
+        self.cheap_lb_gate_reject_count = 0
+        self.route_signature_cache_hit_count = 0
         self.current_best_value = float("inf")
 
     def _remaining_wall_budget_sec(self) -> float:
@@ -44,6 +50,104 @@ class FixGurobiEvaluator:
 
     def _compiled_cache_size(self) -> int:
         return max(1, int(getattr(self.cfg, "fixgurobi_compiled_cache_size", 8) or 8))
+
+    def _route_signature_cache_size(self) -> int:
+        return max(1, int(getattr(self.cfg, "fixgurobi_route_signature_cache_size", 256) or 256))
+
+    def _route_signature(self, config: ResourceConfig, scope: str) -> Optional[Tuple[Any, ...]]:
+        """Cheap signature of the fixed route sequence (only meaningful when U is fixed)."""
+        if not self._fixes_u(scope):
+            return None
+        metadata = getattr(config, "metadata", {}) or {}
+        route_nodes = dict(metadata.get("fixed_route_node_sequence_by_robot", {}) or {})
+        route_tasks = dict(metadata.get("fixed_route_task_sequence_by_robot", {}) or {})
+        if not route_nodes and not route_tasks:
+            return None
+        node_sig = tuple(
+            (
+                int(robot_id),
+                tuple(
+                    (
+                        str(row.get("kind", "")),
+                        int(row.get("subtask_id", row.get("local_slot_index", -1))),
+                        int(row.get("order_id", -1)),
+                        int(row.get("stack_id", -1)),
+                        int(row.get("station_id", -1)),
+                    )
+                    for row in (rows or [])
+                ),
+            )
+            for robot_id, rows in sorted(route_nodes.items(), key=lambda item: int(item[0]))
+        )
+        task_sig = tuple(
+            (
+                int(robot_id),
+                tuple(
+                    (
+                        int(row.get("subtask_id", -1)),
+                        int(row.get("order_id", -1)),
+                        int(row.get("stack_id", -1)),
+                        int(row.get("station_id", -1)),
+                    )
+                    for row in (rows or [])
+                ),
+            )
+            for robot_id, rows in sorted(route_tasks.items(), key=lambda item: int(item[0]))
+        )
+        return (node_sig, task_sig)
+
+    def _route_signature_cache_get(self, sig_key: Tuple[Any, ...]) -> Optional[UpperEvalResult]:
+        cached = self.route_signature_cache.get(sig_key)
+        if cached is None:
+            return None
+        cache_t0 = time.perf_counter()
+        self.route_signature_cache.move_to_end(sig_key)
+        self.route_signature_cache_hit_count += 1
+        out = copy.deepcopy(cached)
+        out.metadata["fixgurobi_route_signature_cache_hit"] = True
+        out.metadata["fixgurobi_solve_time"] = 0.0
+        out.metadata["fixgurobi_wall_time"] = float(time.perf_counter() - cache_t0)
+        out.metadata["fixgurobi_route_signature_cache_hit_count"] = int(self.route_signature_cache_hit_count)
+        return out
+
+    def _route_signature_cache_put(self, sig_key: Tuple[Any, ...], value: UpperEvalResult) -> None:
+        self.route_signature_cache[sig_key] = copy.deepcopy(value)
+        self.route_signature_cache.move_to_end(sig_key)
+        while len(self.route_signature_cache) > self._route_signature_cache_size():
+            self.route_signature_cache.popitem(last=False)
+
+    def _cheap_cmax_lower_bound(self, config: ResourceConfig, scope: str) -> float:
+        """Admissible (conservative) lower bound on Cmax for a fully X/Y/Z-fixed candidate.
+
+        The global model serialises all slots assigned to the same station (StationSeq
+        clocks) and sets each slot's processing time to
+        PICKING_TIME * sku_pick_count + station_service_time (FinishDef / FCFS replay).
+        Therefore the total processing load on any single station is a true lower bound on
+        Cmax. We deliberately do NOT use a per-order span bound: an order's slots may be
+        assigned to different stations and run in parallel, so summing per-order load would
+        not be admissible. Only valid when the scope fixes X, Y and Z (otherwise station
+        assignment is free) -> returns -inf to disable pruning in that case.
+        """
+        scope_name = str(scope or "").upper()
+        if scope_name in {"LOCALXYZ", "LOCALYZ"}:
+            return float("-inf")
+        if not (self._fixes_x(scope) and self._fixes_y(scope) and self._fixes_z(scope)):
+            return float("-inf")
+        pick_time = float(getattr(OFSConfig, "PICKING_TIME", 1.0) or 0.0)
+        load_by_station: Dict[int, float] = defaultdict(float)
+        for row in config.subtasks.values():
+            station_id = int(row.station_id)
+            if station_id < 0:
+                continue
+            row_load = 0.0
+            for task in row.z_tasks or []:
+                row_load += float(max(0, int(getattr(task, "sku_pick_count", 0) or 0))) * pick_time
+                if getattr(task, "noise_tote_ids", None):
+                    row_load += float(getattr(task, "station_service_time", 0.0) or 0.0)
+            load_by_station[station_id] += float(row_load)
+        if not load_by_station:
+            return float("-inf")
+        return float(max(load_by_station.values()))
 
     def _cache_get(self, cache_key: Tuple[Any, ...]) -> Optional[UpperEvalResult]:
         cached = self.cache.get(cache_key)
@@ -122,10 +226,12 @@ class FixGurobiEvaluator:
             and layer_name in {"Y", "Z"}
         ):
             return "XY"
-        if bool(getattr(self.cfg, "fixgurobi_force_xyz_scope", False)):
-            return "XYZ"
         if layer_name == "U":
             return "XYZU"
+        if layer_name == "XYZU":
+            return "XYZU"
+        if bool(getattr(self.cfg, "fixgurobi_force_xyz_scope", False)):
+            return "XYZ"
         if layer_name in {"X", "Y", "Z", "XYZ", "XYZU"}:
             return layer_name
         return "XYZ"
@@ -258,6 +364,82 @@ class FixGurobiEvaluator:
     def _include_fixed_used_stacks(self, scope: str) -> bool:
         return self._fixes_z(scope) and bool(getattr(self.cfg, "fixgurobi_fix_used_stack_ids", False))
 
+    @staticmethod
+    def _route_sequence_audit(route_task_sequence: Optional[Dict[Any, Any]], route_node_sequence: Optional[Dict[Any, Any]]) -> Dict[str, Any]:
+        task_rows = dict(route_task_sequence or {})
+        node_rows = dict(route_node_sequence or {})
+        if not task_rows and not node_rows:
+            return {"ok": True, "reason": "empty", "robot_count": 0, "checked_task_count": 0}
+        if node_rows and not task_rows:
+            return {"ok": True, "reason": "node_sequence_only", "robot_count": len(node_rows), "checked_task_count": 0}
+        if not task_rows or not node_rows:
+            return {"ok": False, "reason": "missing_task_or_node_sequence", "robot_count": len(task_rows or node_rows), "checked_task_count": 0}
+        task_robot_ids = {int(robot_id) for robot_id in task_rows.keys()}
+        node_robot_ids = {int(robot_id) for robot_id in node_rows.keys()}
+        if task_robot_ids != node_robot_ids:
+            return {
+                "ok": False,
+                "reason": "robot_set_mismatch",
+                "robot_count": len(task_robot_ids | node_robot_ids),
+                "checked_task_count": 0,
+            }
+        checked = 0
+        for robot_id, rows in sorted(task_rows.items(), key=lambda item: int(item[0])):
+            nodes = list(node_rows.get(robot_id, node_rows.get(str(robot_id), [])) or [])
+            task_list = [dict(row) for row in list(rows or []) if int(row.get("task_id", -1)) >= 0]
+            expected_events: List[Tuple[float, int, int]] = []
+            for row in task_list:
+                task_id = int(row.get("task_id", -1))
+                expected_events.append((float(row.get("arrival_stack", 0.0) or 0.0), 0, task_id))
+                expected_events.append((float(row.get("arrival_station", 0.0) or 0.0), 1, task_id))
+            expected_events.sort(key=lambda item: (float(item[0]), int(item[1]), int(item[2])))
+            expected_sequence = [("pickup" if int(kind_rank) == 0 else "delivery", int(task_id)) for _, kind_rank, task_id in expected_events]
+            actual_sequence: List[Tuple[str, int]] = []
+            pickup_by_task = {}
+            delivery_by_task = {}
+            for node in nodes:
+                task_id = int(node.get("task_id", -1))
+                if task_id < 0:
+                    continue
+                kind = str(node.get("kind", node.get("node_type", "")) or "").lower()
+                if kind == "pickup":
+                    pickup_by_task[task_id] = node
+                    actual_sequence.append(("pickup", int(task_id)))
+                elif kind in {"delivery", "station"}:
+                    delivery_by_task[task_id] = node
+                    actual_sequence.append(("delivery", int(task_id)))
+            if actual_sequence != expected_sequence:
+                return {
+                    "ok": False,
+                    "reason": f"node_sequence_order_mismatch:robot={robot_id}",
+                    "robot_count": len(task_rows),
+                    "checked_task_count": checked,
+                }
+            if len(pickup_by_task) != len(task_list) or len(delivery_by_task) != len(task_list):
+                return {
+                    "ok": False,
+                    "reason": f"node_sequence_count_mismatch:robot={robot_id}",
+                    "robot_count": len(task_rows),
+                    "checked_task_count": checked,
+                }
+            for row in task_list:
+                task_id = int(row.get("task_id", -1))
+                checked += 1
+                pickup = pickup_by_task.get(task_id)
+                delivery = delivery_by_task.get(task_id)
+                if pickup is None or delivery is None:
+                    return {"ok": False, "reason": f"missing_pickup_or_delivery:robot={robot_id}:task={task_id}", "robot_count": len(task_rows), "checked_task_count": checked}
+                for key in ("subtask_id", "order_id", "stack_id"):
+                    if key in row and key in pickup and int(row.get(key, -1)) != int(pickup.get(key, -1)):
+                        return {"ok": False, "reason": f"pickup_{key}_mismatch:robot={robot_id}:task={task_id}", "robot_count": len(task_rows), "checked_task_count": checked}
+                if "station_id" in row and "station_id" in delivery and int(row.get("station_id", -1)) != int(delivery.get("station_id", -1)):
+                    return {"ok": False, "reason": f"delivery_station_mismatch:robot={robot_id}:task={task_id}", "robot_count": len(task_rows), "checked_task_count": checked}
+                if "arrival_stack" in row and "time" in pickup and abs(float(row.get("arrival_stack", 0.0) or 0.0) - float(pickup.get("time", 0.0) or 0.0)) > 1e-6:
+                    return {"ok": False, "reason": f"pickup_time_mismatch:robot={robot_id}:task={task_id}", "robot_count": len(task_rows), "checked_task_count": checked}
+                if "arrival_station" in row and "time" in delivery and abs(float(row.get("arrival_station", 0.0) or 0.0) - float(delivery.get("time", 0.0) or 0.0)) > 1e-6:
+                    return {"ok": False, "reason": f"delivery_time_mismatch:robot={robot_id}:task={task_id}", "robot_count": len(task_rows), "checked_task_count": checked}
+        return {"ok": True, "reason": "", "robot_count": len(task_rows), "checked_task_count": int(checked)}
+
     def _scope_label(self, scope: str) -> str:
         scope_name = str(scope or "").upper()
         if scope_name in {"X", "Y", "Z", "XY", "XZ", "YZ", "XYZ", "LOCALXYZ", "LOCALYZ"}:
@@ -359,6 +541,7 @@ class FixGurobiEvaluator:
                         used_stack_ids.add(stack_id)
                     descriptors.append(
                         {
+                            "task_id": int(getattr(task, "task_id", -1)),
                             "stack_id": stack_id,
                             "mode": str(task.mode).upper(),
                             "target_tote_ids": [int(v) for v in (task.target_tote_ids or ())],
@@ -395,7 +578,19 @@ class FixGurobiEvaluator:
             else None
         )
         if route_node_sequence:
+            # Keep route fixing consistent with run_fixgurobi_replay.py: node sequence
+            # is the authoritative route seed, task sequence is only a fallback.
             route_task_sequence = None
+        seed_stacks = dict((getattr(config, "metadata", {}) or {}).get("structure_seed_stack_ids_by_order", {}) or {})
+        if self._include_forced_stacks(scope) and seed_stacks:
+            for order_id, stack_ids in seed_stacks.items():
+                merged = set(int(x) for x in forced_candidate_stacks_by_order.get(int(order_id), []) if int(x) >= 0)
+                merged.update(int(x) for x in (stack_ids or []) if int(x) >= 0)
+                if merged:
+                    forced_candidate_stacks_by_order[int(order_id)] = sorted(merged)
+        route_audit = self._route_sequence_audit(route_task_sequence, route_node_sequence) if self._fixes_u(scope) else {"ok": True}
+        if self._fixes_u(scope) and bool(getattr(self.cfg, "fixgurobi_route_sequence_exact_replay_gate", True)) and not bool(route_audit.get("ok", False)):
+            invalid_reasons.append(f"route_sequence_exact_replay:{route_audit.get('reason', '')}")
         return {
             "fixed_slot_count_by_order": fixed_slot_count_by_order,
             "fixed_work_units_by_order_slot": fixed_work_units_by_order_slot or None,
@@ -406,16 +601,25 @@ class FixGurobiEvaluator:
             "fixed_route_task_sequence_by_robot": route_task_sequence,
             "fixed_route_node_sequence_by_robot": route_node_sequence,
             "invalid_reasons": invalid_reasons,
+            "route_sequence_audit": route_audit,
         }
 
     def _build_global_cfg(self, fixed_payload: Dict[str, Any]) -> GlobalXYZUConfig:
+        has_fixed_route = bool(
+            fixed_payload.get("fixed_route_node_sequence_by_robot")
+            or fixed_payload.get("fixed_route_task_sequence_by_robot")
+        )
         cfg = GlobalXYZUConfig(
             time_limit_sec=float(getattr(self.cfg, "fixgurobi_time_limit_sec", 20.0) or 20.0),
             mip_gap=float(getattr(self.cfg, "fixgurobi_mip_gap", 0.01) or 0.01),
             candidate_stack_topk=int(getattr(self.cfg, "fixgurobi_candidate_stack_topk", 999) or 999),
             max_candidate_stacks_per_order=int(getattr(self.cfg, "fixgurobi_max_candidate_stacks_per_order", 0) or 0),
             enable_warm_candidate_stack_prune=bool(getattr(self.cfg, "fixgurobi_enable_warm_candidate_stack_prune", False)),
-            candidate_station_topk_per_stack=int(getattr(self.cfg, "fixgurobi_candidate_station_topk_per_stack", 999) or 999),
+            candidate_station_topk_per_stack=(
+                999
+                if has_fixed_route
+                else int(getattr(self.cfg, "fixgurobi_candidate_station_topk_per_stack", 999) or 999)
+            ),
             warm_start_sp4_time_limit_sec=0,
             warm_start_subtask_ordering=str(getattr(self.cfg, "fixgurobi_warm_start_subtask_ordering", "default") or "default"),
             route_pickup_neighbor_limit=int(getattr(self.cfg, "fixgurobi_route_pickup_neighbor_limit", 0) or 0),
@@ -445,6 +649,7 @@ class FixGurobiEvaluator:
             fixed_route_arcs_by_robot=None,
             fixed_route_task_sequence_by_robot=fixed_payload.get("fixed_route_task_sequence_by_robot"),
             fixed_route_node_sequence_by_robot=fixed_payload.get("fixed_route_node_sequence_by_robot"),
+            extra_protected_route_edges=list(getattr(self.cfg, "fixgurobi_extra_protected_route_edges", []) or []),
             fixed_route_arc_fix_nonselected=not bool(getattr(self.cfg, "resource_revolving_mode", False)),
             fixgurobi_relax_sort_tote_fix=bool(getattr(self.cfg, "fixgurobi_relax_sort_tote_fix", False)),
             fixgurobi_no_warm_start=not bool(getattr(self.cfg, "enable_warm_start", False)),
@@ -455,6 +660,9 @@ class FixGurobiEvaluator:
             float(getattr(cfg, "big_m_time", 2000.0) or 2000.0),
             float(getattr(cfg, "route_big_m_time", 0.0) or 0.0),
         )
+        if has_fixed_route:
+            cfg.enable_resource_lex_symmetry = False
+            cfg.enable_robot_finish_lex_symmetry = False
         remaining_budget = float(self._remaining_wall_budget_sec())
         if math.isfinite(remaining_budget):
             cfg.time_limit_sec = max(0.05, min(float(cfg.time_limit_sec), float(remaining_budget)))
@@ -471,8 +679,6 @@ class FixGurobiEvaluator:
             "fixed_station_rank_by_order_slot",
             "fixed_z_descriptors_by_order_slot",
             "fixed_used_stack_ids_by_order",
-            "fixed_route_task_sequence_by_robot",
-            "fixed_route_node_sequence_by_robot",
         ):
             base_payload[key] = None
         return self._build_global_cfg(base_payload)
@@ -490,6 +696,44 @@ class FixGurobiEvaluator:
             (int(order_id), tuple(sorted(int(v) for v in (stack_ids or ()))))
             for order_id, stack_ids in sorted(dict(forced or {}).items())
         )
+        route_nodes = dict(fixed_payload.get("fixed_route_node_sequence_by_robot") or {})
+        route_tasks = dict(fixed_payload.get("fixed_route_task_sequence_by_robot") or {})
+        route_key = tuple(
+            (
+                int(robot_id),
+                tuple(
+                    (
+                        str(row.get("kind", "")),
+                        int(row.get("subtask_id", -1)),
+                        int(row.get("stack_id", -1)),
+                        int(row.get("station_id", -1)),
+                    )
+                    for row in (rows or [])
+                ),
+            )
+            for robot_id, rows in sorted(route_nodes.items(), key=lambda item: int(item[0]))
+        ) or tuple(
+            (
+                int(robot_id),
+                tuple(
+                    (
+                        int(row.get("subtask_id", -1)),
+                        int(row.get("stack_id", -1)),
+                        int(row.get("station_id", -1)),
+                    )
+                    for row in (rows or [])
+                ),
+            )
+            for robot_id, rows in sorted(route_tasks.items(), key=lambda item: int(item[0]))
+        )
+        extra_edges_key = tuple(
+            (
+                tuple(edge.get("src", [])),
+                tuple(edge.get("dst", [])),
+            )
+            for edge in list(getattr(base_cfg, "extra_protected_route_edges", None) or [])
+            if isinstance(edge, dict)
+        )
         return (
             str(scale).upper(),
             int(seed),
@@ -503,6 +747,8 @@ class FixGurobiEvaluator:
             bool(getattr(base_cfg, "enable_route_load_interval_arc_prune", True)),
             bool(getattr(base_cfg, "enable_resource_lex_symmetry", True)),
             forced_key,
+            route_key,
+            extra_edges_key,
         )
 
     def _get_compiled_model(self, fixed_payload: Dict[str, Any], scope: str) -> Tuple[Optional[Any], Dict[str, Any], GlobalXYZUConfig]:
@@ -714,19 +960,49 @@ class FixGurobiEvaluator:
         result.diagnostics = diag
         return result
 
+    def _full_global_route_edge_audit(self, fixed_payload: Dict[str, Any], scope: str) -> Dict[str, Any]:
+        if not bool(getattr(self.cfg, "fixgurobi_full_global_route_edge_gate", True)):
+            return {"ok": True, "enabled": False, "reason": "disabled"}
+        if not self._fixes_u(scope):
+            return {"ok": True, "enabled": False, "reason": "scope_without_u"}
+        route_tasks = fixed_payload.get("fixed_route_task_sequence_by_robot")
+        route_nodes = fixed_payload.get("fixed_route_node_sequence_by_robot")
+        if not route_tasks and not route_nodes:
+            return {"ok": True, "enabled": True, "reason": "empty_route_sequence"}
+        base_cfg = self._compiled_base_cfg(fixed_payload)
+        compiled, compile_meta, _base_cfg = self._get_compiled_model(fixed_payload, scope)
+        payload = getattr(compiled, "vars_payload", {}) if compiled is not None else {}
+        allowed_edges = allowed_route_edges_from_global_payload(dict(payload or {}))
+        audit = audit_fixed_route_edges(
+            allowed_edges,
+            route_task_sequence=route_tasks,
+            route_node_sequence=route_nodes,
+        )
+        audit.update(
+            {
+                "enabled": True,
+                "source": "global_xyzu_compile_model",
+                "route_pickup_neighbor_limit": int(getattr(base_cfg, "route_pickup_neighbor_limit", 0) or 0),
+                "route_arc_prune": bool(getattr(base_cfg, "route_arc_prune", True)),
+                "route_edge_gate_compile_cache_hit": bool(compile_meta.get("fixgurobi_compile_cache_hit", False)),
+                "route_edge_gate_compile_time": float(compile_meta.get("fixgurobi_compile_time", 0.0) or 0.0),
+            }
+        )
+        return audit
+
     @staticmethod
     def _objective_from_result(result) -> float:
         diag = dict(getattr(result, "diagnostics", {}) or {})
         status = str(getattr(result, "status", "") or "").upper()
+        span_overrun = float(diag.get("total_span_overrun", diag.get("warm_start_total_span_overrun", 0.0)) or 0.0)
+        deadline_overrun = float(diag.get("total_deadline_overrun", diag.get("warm_start_total_deadline_overrun", 0.0)) or 0.0)
+        if span_overrun > 1e-9 or deadline_overrun > 1e-9:
+            return float("inf")
         if status == "WARM_START_FALLBACK":
             for key in ("warm_start_model_cmax", "model_cmax", "validated_global_makespan", "true_global_makespan"):
                 value = diag.get(key, None)
                 if isinstance(value, (int, float)) and math.isfinite(float(value)):
                     return float(value)
-        span_overrun = float(diag.get("total_span_overrun", 0.0) or 0.0)
-        deadline_overrun = float(diag.get("total_deadline_overrun", 0.0) or 0.0)
-        if span_overrun > 1e-9 or deadline_overrun > 1e-9:
-            return float("inf")
         for key in ("model_cmax", "validated_global_makespan", "true_global_makespan"):
             value = diag.get(key, None)
             if isinstance(value, (int, float)) and math.isfinite(float(value)):
@@ -843,8 +1119,91 @@ class FixGurobiEvaluator:
                     "fixgurobi_cheap_gate_reasons": ",".join(cheap_reasons),
                 }
                 return self._result_from_base(base_eval, value=float("inf"), metadata=metadata)
+        # (a) Cheap admissible lower-bound gate: pure pruning of provably non-improving
+        # candidates. Never accepts anything; only rejects with F_raw=inf when the cheap
+        # station-load lower bound already exceeds the validated-best Cmax.
+        if (
+            bool(getattr(self.cfg, "fixgurobi_enable_cheap_lb_gate", True))
+            and not bool(bypass_cache)
+        ):
+            lb_best = float(getattr(self, "current_best_value", float("inf")) or float("inf"))
+            lb_local_release_scope = str(scope or "").upper() in {"LOCALXYZ", "LOCALYZ"}
+            if bool(getattr(self.cfg, "resource_revolving_allow_nonimproving_exact", False)) and not bool(lb_local_release_scope):
+                lb_best = float("inf")
+            if math.isfinite(lb_best):
+                cheap_lb = float(self._cheap_cmax_lower_bound(normalized_config, scope))
+                if math.isfinite(cheap_lb) and cheap_lb > lb_best + 1e-9:
+                    self.cheap_lb_gate_reject_count += 1
+                    metadata = {
+                        "eval_backend": "fixgurobi_prefix",
+                        "fixgurobi_status": "CHEAP_LB_GATE_REJECT",
+                        "fixgurobi_obj": float("inf"),
+                        "fixgurobi_bound": float(cheap_lb),
+                        "fixgurobi_gap": float("nan"),
+                        "fixgurobi_solve_time": 0.0,
+                        "fixgurobi_wall_time": 0.0,
+                        "fixgurobi_fixed_scope": str(scope),
+                        "fixgurobi_infeasible_reason": "cheap_lb_exceeds_best",
+                        "fixgurobi_cache_hit": False,
+                        "fixgurobi_hard_gate_reject": True,
+                        "fixgurobi_cheap_lb_gate_reject": True,
+                        "fixgurobi_cheap_lb": float(cheap_lb),
+                        "fixgurobi_cheap_lb_best": float(lb_best),
+                        "fixgurobi_cheap_lb_gate_reject_count": int(self.cheap_lb_gate_reject_count),
+                    }
+                    return self._result_from_base(base_eval, value=float("inf"), metadata=metadata)
+        # (b) Duplicate route-signature cache: reuse a prior exact evaluation for an
+        # identical fixed problem (keyed on the full scope signature plus a cheap route
+        # signature and the solve context) without recompiling/resolving.
+        route_signature = self._route_signature(normalized_config, scope)
+        route_sig_key: Optional[Tuple[Any, ...]] = None
+        if (
+            route_signature is not None
+            and bool(getattr(self.cfg, "fixgurobi_enable_route_signature_cache", True))
+            and not bool(bypass_cache)
+        ):
+            route_sig_key = (cache_key, route_signature)
+            cached_route = self._route_signature_cache_get(route_sig_key)
+            if cached_route is not None:
+                return cached_route
         fixed_payload = self._fixed_payload(normalized_config, scope, release_ids)
         fixed_payload_diag = self._fixed_payload_diag(normalized_config, fixed_payload, release_ids)
+        invalid_reasons = [str(x) for x in (fixed_payload.get("invalid_reasons", []) or []) if str(x)]
+        route_edge_audit: Dict[str, Any] = {"ok": True, "enabled": False}
+        if not invalid_reasons:
+            try:
+                route_edge_audit = self._full_global_route_edge_audit(fixed_payload, scope)
+                if not bool(route_edge_audit.get("ok", True)):
+                    invalid_reasons.append(
+                        f"full_global_route_edge_missing:{int(route_edge_audit.get('missing_edge_count', 0) or 0)}"
+                    )
+            except Exception as exc:
+                if self._fixes_u(scope) and (
+                    fixed_payload.get("fixed_route_node_sequence_by_robot")
+                    or fixed_payload.get("fixed_route_task_sequence_by_robot")
+                ):
+                    route_edge_audit = {"ok": False, "enabled": True, "reason": "audit_exception", "error": str(exc)}
+                    invalid_reasons.append(f"full_global_route_edge_audit_exception:{exc}")
+        if invalid_reasons:
+            metadata = {
+                "eval_backend": "fixgurobi_prefix",
+                "fixgurobi_status": "HARD_GATE_REJECT",
+                "fixgurobi_obj": float("inf"),
+                "fixgurobi_bound": float("nan"),
+                "fixgurobi_gap": float("nan"),
+                "fixgurobi_solve_time": 0.0,
+                "fixgurobi_wall_time": 0.0,
+                "fixgurobi_fixed_scope": str(scope),
+                "fixgurobi_infeasible_reason": ",".join(invalid_reasons),
+                "fixgurobi_cache_hit": False,
+                "fixgurobi_hard_gate_reject": True,
+                "fixgurobi_route_sequence_audit": dict(fixed_payload.get("route_sequence_audit", {}) or {}),
+                "fixgurobi_full_global_route_edge_audit": dict(route_edge_audit or {}),
+            }
+            metadata.update(fixed_payload_diag)
+            out = self._result_from_base(base_eval, value=float("inf"), metadata=metadata)
+            self._cache_put(cache_key, out)
+            return out
         global_cfg = self._build_global_cfg(fixed_payload)
         problem = copy.deepcopy(self.opt.problem)
         t0 = time.perf_counter()
@@ -886,6 +1245,8 @@ class FixGurobiEvaluator:
             "fixgurobi_cache_hit_count": int(self.cache_hit_count),
             "fixgurobi_cache_miss_count": int(self.cache_miss_count),
             "fixgurobi_diagnostics": diagnostics,
+            "fixgurobi_route_sequence_audit": dict(fixed_payload.get("route_sequence_audit", {}) or {}),
+            "fixgurobi_full_global_route_edge_audit": dict(route_edge_audit or {}),
         }
         if materialized_problem is not None and math.isfinite(float(value)):
             metadata["fixgurobi_materialized_problem"] = copy.deepcopy(materialized_problem)
@@ -1074,12 +1435,12 @@ class FixGurobiEvaluator:
             fallback_metadata["fixgurobi_local_fallback_solve_time"] = float(fallback_runtime)
             value = float(fallback_value)
             metadata = fallback_metadata
+        metadata["fixgurobi_cheap_lb_gate_reject_count"] = int(self.cheap_lb_gate_reject_count)
+        metadata["fixgurobi_route_signature_cache_hit_count"] = int(self.route_signature_cache_hit_count)
         out = self._result_from_base(base_eval, value=float(value), metadata=metadata)
         out.affected_subtask_ids = frozenset(int(x) for x in (affected_subtask_ids or getattr(out, "affected_subtask_ids", frozenset()) or []))
         if not bool(bypass_cache):
             self._cache_put(cache_key, out)
+            if route_sig_key is not None:
+                self._route_signature_cache_put(route_sig_key, out)
         return out
-
-
-
-

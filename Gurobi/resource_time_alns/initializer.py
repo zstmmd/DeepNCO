@@ -36,6 +36,7 @@ def build_resource_config_from_problem(opt, problem=None) -> ResourceConfig:
 
     subtasks: Dict[int, ResourceSubtask] = {}
     route_rows_by_robot: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+    structure_seed_stack_ids_by_order: Dict[int, set] = defaultdict(set)
     local_slot_index_by_subtask: Dict[int, int] = {}
     local_slot_count_by_order: Dict[int, int] = defaultdict(int)
     next_task_id = 1
@@ -83,6 +84,9 @@ def build_resource_config_from_problem(opt, problem=None) -> ResourceConfig:
                         "arrival_station": float(getattr(task, "arrival_time_at_station", 0.0) or 0.0),
                     }
                 )
+            stack_id = int(getattr(task, "target_stack_id", -1))
+            if stack_id >= 0:
+                structure_seed_stack_ids_by_order[int(order_id)].add(int(stack_id))
             sort_range = getattr(task, "sort_layer_range", None)
             descriptors.append(
                 ZTaskDescriptor(
@@ -126,6 +130,11 @@ def build_resource_config_from_problem(opt, problem=None) -> ResourceConfig:
         next_task_id=next_task_id,
     ).rebuild_indices()
     config.metadata["tote_list"] = list(getattr(problem, "tote_list", []) or [])
+    if structure_seed_stack_ids_by_order:
+        config.metadata["structure_seed_stack_ids_by_order"] = {
+            int(order_id): sorted(int(stack_id) for stack_id in stack_ids)
+            for order_id, stack_ids in sorted(structure_seed_stack_ids_by_order.items())
+        }
     if route_rows_by_robot:
         config.metadata["fixed_route_task_sequence_by_robot"] = {
             int(robot_id): sorted(

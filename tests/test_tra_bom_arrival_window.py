@@ -21,6 +21,7 @@ if "ortools.constraint_solver" not in sys.modules:
     sys.modules["ortools.constraint_solver.pywrapcp"] = pywrapcp_mod
 
 from config.ofs_config import OFSConfig
+from Gurobi.resource_time_alns.fixgurobi_evaluator import FixGurobiEvaluator
 from Gurobi.resource_time_alns.validator import ResourceValidator
 from Gurobi.sp2 import SP2_Station_Assigner
 from Gurobi.tra import TRAOptimizer, TRARunConfig
@@ -294,6 +295,23 @@ class TRABomArrivalWindowTests(unittest.TestCase):
         result = validator.validate(FakeConfig(), iter_id=1)
         self.assertEqual(str(result["hard_reject_reason"]), "kitting_span_hard_reject")
         self.assertIsNone(result["snapshot"])
+
+    def test_validator_cache_cfg_defaults_do_not_require_cfg_fields(self):
+        validator = ResourceValidator(SimpleNamespace(cfg=SimpleNamespace()))
+        self.assertFalse(validator._validation_cache_enabled())
+        self.assertEqual(validator._validation_cache_size(), 1024)
+
+    def test_fixgurobi_warm_start_fallback_rejects_time_window_overrun_first(self):
+        result = SimpleNamespace(
+            status="WARM_START_FALLBACK",
+            objective=100.0,
+            diagnostics={
+                "warm_start_model_cmax": 100.0,
+                "warm_start_total_span_overrun": 2.0,
+                "warm_start_total_deadline_overrun": 0.0,
+            },
+        )
+        self.assertEqual(FixGurobiEvaluator._objective_from_result(result), float("inf"))
 
     def test_sp2_initial_heuristic_keeps_same_order_task_within_window(self):
         station0 = SimpleNamespace(id=0)

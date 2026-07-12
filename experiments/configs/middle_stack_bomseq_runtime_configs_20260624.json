@@ -1,0 +1,1025 @@
+{
+  "description": "Middle M1-M9 stack-grid BOM-sequence benchmarks. BOM count follows STACKS-style sequence starting at 6: 6,6,6,6,8,8,8,8,10. Per-BOM SKU type sequence: 10,14,18,22,10,14,18,22,10. Map C*R means C stack columns by R stack rows; station row=0, robot row=1, storage gap rows=4, every stack has totes. Current accepted policy keeps candidate unrestricted and pickup KNN disabled, enables safe route arc/load-interval pruning and slot-stack LB, and uses mip_gap=0.002 for M1-M4.",
+  "reference": {
+    "stacks_s9_cmax": 781.0,
+    "m1_cmax_soft_upper_bound": 1562.0
+  },
+  "common_solver": {
+    "seed": 42,
+    "mip_gap": 0.002,
+    "warm_start": false,
+    "route_pickup_neighbor_limit": 0,
+    "route_arc_prune": true,
+    "route_load_interval_arc_prune": true,
+    "route_time_window_arc_prune": false,
+    "disable_order_time_windows": false,
+    "route_slot_stack_count_lb": true
+  },
+  "configs": {
+    "M1": {
+      "map_size": [
+        4,
+        4
+      ],
+      "map_layout_mode": "middle_stack_grid",
+      "middle_stack_shape": [
+        4,
+        4
+      ],
+      "storage_gap_rows": 4,
+      "resources": [
+        3,
+        2,
+        96
+      ],
+      "data": [
+        6,
+        180
+      ],
+      "bom_complexity": [
+        14,
+        1
+      ],
+      "warehouse_block_height": 8,
+      "target_stack_count": 16,
+      "inventory_cold_filler_probability": 0.0,
+      "inventory_initial_unassigned_skus_per_tote": 1,
+      "exact_order_sku_counts": [
+        10,
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "exact_order_sku_quantity_range": [
+        2,
+        3
+      ],
+      "bom_colocated_inventory": true,
+      "bom_colocated_stack_counts": [
+        5,
+        5,
+        5,
+        5,
+        5,
+        5
+      ],
+      "bom_colocated_disjoint_stack_groups": false,
+      "bom_colocated_support_multiplier": 2.6,
+      "bom_colocated_sku_copy_count": 3,
+      "bom_colocated_chunked_by_stack": false,
+      "bom_batch_quantity_unit": 1,
+      "bom_batch_quantity_range": [
+        2,
+        2
+      ]
+    },
+    "M2": {
+      "map_size": [
+        4,
+        4
+      ],
+      "map_layout_mode": "middle_stack_grid",
+      "middle_stack_shape": [
+        4,
+        4
+      ],
+      "storage_gap_rows": 4,
+      "resources": [
+        3,
+        2,
+        96
+      ],
+      "data": [
+        6,
+        220
+      ],
+      "bom_complexity": [
+        14,
+        1
+      ],
+      "warehouse_block_height": 8,
+      "target_stack_count": 16,
+      "inventory_cold_filler_probability": 0.0,
+      "inventory_initial_unassigned_skus_per_tote": 1,
+      "exact_order_sku_counts": [
+        14,
+        14,
+        14,
+        14,
+        14,
+        14
+      ],
+      "exact_order_sku_quantity_range": [
+        2,
+        3
+      ],
+      "bom_colocated_inventory": true,
+      "bom_colocated_stack_counts": [
+        5,
+        5,
+        5,
+        5,
+        5,
+        5
+      ],
+      "bom_colocated_disjoint_stack_groups": false,
+      "bom_colocated_support_multiplier": 2.0,
+      "bom_colocated_sku_copy_count": 3,
+      "bom_colocated_chunked_by_stack": true,
+      "bom_batch_quantity_unit": 1,
+      "bom_batch_quantity_range": [
+        2,
+        3
+      ]
+    },
+    "M3": {
+      "map_size": [
+        5,
+        4
+      ],
+      "map_layout_mode": "middle_stack_grid",
+      "middle_stack_shape": [
+        5,
+        4
+      ],
+      "storage_gap_rows": 4,
+      "resources": [
+        4,
+        3,
+        110
+      ],
+      "data": [
+        6,
+        260
+      ],
+      "bom_complexity": [
+        18,
+        1
+      ],
+      "warehouse_block_height": 8,
+      "target_stack_count": 20,
+      "inventory_cold_filler_probability": 0.0,
+      "inventory_initial_unassigned_skus_per_tote": 1,
+      "exact_order_sku_counts": [
+        18,
+        18,
+        18,
+        18,
+        18,
+        18
+      ],
+      "exact_order_sku_quantity_range": [
+        2,
+        3
+      ],
+      "bom_colocated_inventory": true,
+      "bom_colocated_stack_counts": [
+        4,
+        4,
+        4,
+        4,
+        4,
+        4
+      ],
+      "bom_colocated_disjoint_stack_groups": false,
+      "bom_colocated_support_multiplier": 2.1,
+      "bom_colocated_sku_copy_count": 1,
+      "bom_colocated_chunked_by_stack": true,
+      "bom_batch_quantity_unit": 1,
+      "bom_batch_quantity_range": [
+        3,
+        3
+      ]
+    },
+    "M4": {
+      "map_size": [
+        4,
+        5
+      ],
+      "map_layout_mode": "middle_stack_grid",
+      "middle_stack_shape": [
+        4,
+        5
+      ],
+      "storage_gap_rows": 4,
+      "resources": [
+        4,
+        3,
+        120
+      ],
+      "data": [
+        6,
+        300
+      ],
+      "bom_complexity": [
+        22,
+        1
+      ],
+      "warehouse_block_height": 8,
+      "target_stack_count": 20,
+      "inventory_cold_filler_probability": 0.0,
+      "inventory_initial_unassigned_skus_per_tote": 1,
+      "exact_order_sku_counts": [
+        22,
+        16,
+        16,
+        16,
+        16,
+        16
+      ],
+      "exact_order_sku_quantity_range": [
+        2,
+        3
+      ],
+      "bom_colocated_inventory": true,
+      "bom_colocated_stack_counts": [
+        3,
+        3,
+        3,
+        3,
+        3,
+        3
+      ],
+      "bom_colocated_disjoint_stack_groups": false,
+      "bom_colocated_support_multiplier": 2.0,
+      "bom_colocated_sku_copy_count": 1,
+      "bom_colocated_chunked_by_stack": true,
+      "bom_batch_quantity_unit": 1,
+      "bom_batch_quantity_range": [
+        2,
+        3
+      ]
+    },
+    "M5": {
+      "map_size": [
+        6,
+        4
+      ],
+      "map_layout_mode": "middle_stack_grid",
+      "middle_stack_shape": [
+        6,
+        4
+      ],
+      "storage_gap_rows": 4,
+      "resources": [
+        4,
+        2,
+        144
+      ],
+      "data": [
+        8,
+        220
+      ],
+      "bom_complexity": [
+        10,
+        1
+      ],
+      "warehouse_block_height": 8,
+      "target_stack_count": 24,
+      "inventory_cold_filler_probability": 0.0,
+      "inventory_initial_unassigned_skus_per_tote": 1,
+      "exact_order_sku_counts": [
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "exact_order_sku_quantity_range": [
+        2,
+        3
+      ],
+      "bom_colocated_inventory": true,
+      "bom_colocated_stack_counts": [
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3
+      ],
+      "bom_colocated_disjoint_stack_groups": false,
+      "bom_colocated_support_multiplier": 2.6,
+      "bom_colocated_sku_copy_count": 2,
+      "bom_colocated_chunked_by_stack": true,
+      "bom_batch_quantity_unit": 1,
+      "bom_batch_quantity_range": [
+        2,
+        3
+      ]
+    },
+    "M6": {
+      "map_size": [
+        6,
+        5
+      ],
+      "map_layout_mode": "middle_stack_grid",
+      "middle_stack_shape": [
+        6,
+        5
+      ],
+      "storage_gap_rows": 4,
+      "resources": [
+        5,
+        2,
+        180
+      ],
+      "data": [
+        8,
+        260
+      ],
+      "bom_complexity": [
+        14,
+        1
+      ],
+      "warehouse_block_height": 8,
+      "target_stack_count": 30,
+      "inventory_cold_filler_probability": 0.0,
+      "inventory_initial_unassigned_skus_per_tote": 1,
+      "exact_order_sku_counts": [
+        14,
+        14,
+        14,
+        14,
+        14,
+        14,
+        14,
+        14
+      ],
+      "exact_order_sku_quantity_range": [
+        2,
+        3
+      ],
+      "bom_colocated_inventory": true,
+      "bom_colocated_stack_counts": [
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3
+      ],
+      "bom_colocated_disjoint_stack_groups": false,
+      "bom_colocated_support_multiplier": 1.6,
+      "bom_colocated_sku_copy_count": 2,
+      "bom_colocated_chunked_by_stack": true,
+      "bom_batch_quantity_unit": 1,
+      "bom_batch_quantity_range": [
+        2,
+        3
+      ]
+    },
+    "M7": {
+      "map_size": [
+        8,
+        4
+      ],
+      "map_layout_mode": "middle_stack_grid",
+      "middle_stack_shape": [
+        8,
+        4
+      ],
+      "storage_gap_rows": 4,
+      "resources": [
+        5,
+        2,
+        192
+      ],
+      "data": [
+        8,
+        300
+      ],
+      "bom_complexity": [
+        18,
+        1
+      ],
+      "warehouse_block_height": 8,
+      "target_stack_count": 32,
+      "inventory_cold_filler_probability": 0.0,
+      "inventory_initial_unassigned_skus_per_tote": 1,
+      "exact_order_sku_counts": [
+        18,
+        18,
+        18,
+        18,
+        18,
+        18,
+        18,
+        18
+      ],
+      "exact_order_sku_quantity_range": [
+        2,
+        4
+      ],
+      "bom_colocated_inventory": true,
+      "bom_colocated_stack_counts": [
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4
+      ],
+      "bom_colocated_disjoint_stack_groups": false,
+      "bom_colocated_support_multiplier": 3.0,
+      "bom_colocated_sku_copy_count": 1,
+      "bom_colocated_chunked_by_stack": true,
+      "bom_batch_quantity_unit": 1,
+      "bom_batch_quantity_range": [
+        2,
+        3
+      ]
+    },
+    "M8": {
+      "map_size": [
+        8,
+        5
+      ],
+      "map_layout_mode": "middle_stack_grid",
+      "middle_stack_shape": [
+        8,
+        5
+      ],
+      "storage_gap_rows": 4,
+      "resources": [
+        5,
+        2,
+        240
+      ],
+      "data": [
+        8,
+        340
+      ],
+      "bom_complexity": [
+        22,
+        1
+      ],
+      "warehouse_block_height": 8,
+      "target_stack_count": 40,
+      "inventory_cold_filler_probability": 0.0,
+      "inventory_initial_unassigned_skus_per_tote": 1,
+      "exact_order_sku_counts": [
+        22,
+        17,
+        17,
+        17,
+        17,
+        17,
+        17,
+        17
+      ],
+      "exact_order_sku_quantity_range": [
+        2,
+        4
+      ],
+      "bom_colocated_inventory": true,
+      "bom_colocated_stack_counts": [
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4
+      ],
+      "bom_colocated_disjoint_stack_groups": false,
+      "bom_colocated_support_multiplier": 2.4,
+      "bom_colocated_sku_copy_count": 1,
+      "bom_colocated_chunked_by_stack": true,
+      "bom_batch_quantity_unit": 1,
+      "bom_batch_quantity_range": [
+        2,
+        4
+      ]
+    },
+    "M9": {
+      "map_size": [
+        8,
+        5
+      ],
+      "map_layout_mode": "middle_stack_grid",
+      "middle_stack_shape": [
+        8,
+        5
+      ],
+      "storage_gap_rows": 4,
+      "resources": [
+        1,
+        1,
+        240
+      ],
+      "data": [
+        10,
+        420
+      ],
+      "bom_complexity": [
+        10,
+        1
+      ],
+      "warehouse_block_height": 8,
+      "target_stack_count": 40,
+      "inventory_cold_filler_probability": 0.0,
+      "inventory_initial_unassigned_skus_per_tote": 1,
+      "exact_order_sku_counts": [
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "exact_order_sku_quantity_range": [
+        2,
+        4
+      ],
+      "bom_colocated_inventory": true,
+      "bom_colocated_stack_counts": [
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8
+      ],
+      "bom_colocated_disjoint_stack_groups": false,
+      "bom_colocated_support_multiplier": 4.0,
+      "bom_colocated_sku_copy_count": 2,
+      "bom_colocated_chunked_by_stack": true,
+      "bom_batch_quantity_unit": 1,
+      "bom_batch_quantity_range": [
+        2,
+        4
+      ]
+    }
+  },
+  "case_runs": {
+    "M1": {
+      "candidate_stack_topk": 999,
+      "max_candidate_stacks_per_order": 0,
+      "candidate_station_topk_per_stack": 999,
+      "route_pickup_neighbor_limit": 0,
+      "time_limit_sec": 360,
+      "mip_gap": 0.002,
+      "command": "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3 experiments/run_global_xyzu.py --scale M1 --seed 42 --time-limit 360 --mip-gap 0.002 --runtime-config-json experiments/configs/middle_stack_bomseq_runtime_configs_20260624.json --candidate-stack-topk 999 --max-candidate-stacks-per-order 0 --candidate-station-topk-per-stack 999 --route-pickup-neighbor-limit 0 --disable-resource-lex-symmetry --output-root result/middle_bomseq_m1_seed42_t360_g002_nocand_routeprune_r0_20260624",
+      "prune_policy": "candidate_unlimited_pickup_knn_disabled_route_safe_prune_slotlb_gap002"
+    },
+    "M2": {
+      "candidate_stack_topk": 999,
+      "max_candidate_stacks_per_order": 0,
+      "candidate_station_topk_per_stack": 999,
+      "route_pickup_neighbor_limit": 0,
+      "time_limit_sec": 520,
+      "mip_gap": 0.002,
+      "command": "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3 experiments/run_global_xyzu.py --scale M2 --seed 42 --time-limit 520 --mip-gap 0.002 --runtime-config-json experiments/configs/middle_stack_bomseq_runtime_configs_20260624.json --candidate-stack-topk 999 --max-candidate-stacks-per-order 0 --candidate-station-topk-per-stack 999 --route-pickup-neighbor-limit 0 --disable-resource-lex-symmetry --disable-slot-lex-symmetry --gurobi-mip-focus 1 --gurobi-heuristics 0.5 --output-root result/middle_bomseq_m2_seed42_t520_g002_chunked_nocand_routeprune_noslotlex_focus1_h05_r0_20260624",
+      "prune_policy": "candidate_unlimited_pickup_knn_disabled_route_safe_prune_slotlb_gap002_chunked_noslotlex_focus1_h05"
+    },
+    "M3": {
+      "candidate_stack_topk": 999,
+      "max_candidate_stacks_per_order": 0,
+      "candidate_station_topk_per_stack": 1,
+      "route_pickup_neighbor_limit": 0,
+      "time_limit_sec": 700,
+      "mip_gap": 0.002,
+      "command": "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3 experiments/run_global_xyzu.py --scale M3 --seed 42 --time-limit 700 --mip-gap 0.002 --runtime-config-json experiments/configs/middle_stack_bomseq_runtime_configs_20260624.json --candidate-stack-topk 999 --max-candidate-stacks-per-order 0 --candidate-station-topk-per-stack 1 --route-pickup-neighbor-limit 0 --disable-resource-lex-symmetry --disable-slot-lex-symmetry --enable-route-arrival-slot-linear --gurobi-mip-focus 1 --gurobi-heuristics 0.3 --output-root result/middle_bomseq_m3_seed42_t700_g002_r4s3_t110_bq33_chunked4_stationtop1_routearrlinear_noslotlex_focus1_h03_r0_20260625",
+      "prune_policy": "candidate_unlimited_pickup_knn_disabled_stationtop1_route_safe_prune_slotlb_gap002_chunked_routearrlinear_noslotlex_focus1_h03"
+    },
+    "M4": {
+      "candidate_stack_topk": 999,
+      "max_candidate_stacks_per_order": 0,
+      "candidate_station_topk_per_stack": 999,
+      "route_pickup_neighbor_limit": 0,
+      "time_limit_sec": 900,
+      "mip_gap": 0.002,
+      "command": "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3 experiments/run_global_xyzu.py --scale M4 --seed 42 --time-limit 900 --mip-gap 0.002 --runtime-config-json experiments/configs/middle_stack_bomseq_runtime_configs_20260624.json --candidate-stack-topk 999 --max-candidate-stacks-per-order 0 --candidate-station-topk-per-stack 999 --route-pickup-neighbor-limit 0 --disable-resource-lex-symmetry --output-root result/middle_bomseq_m4_seed42_t900_g002_nocand_routeprune_r0_20260624",
+      "prune_policy": "candidate_unlimited_pickup_knn_disabled_route_safe_prune_slotlb_gap002"
+    },
+    "M5": {
+      "candidate_stack_topk": 999,
+      "max_candidate_stacks_per_order": 0,
+      "candidate_station_topk_per_stack": 999,
+      "route_pickup_neighbor_limit": 0,
+      "time_limit_sec": 1500,
+      "mip_gap": 0.01,
+      "command": "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3 experiments/run_global_xyzu.py --scale M5 --seed 42 --time-limit 1500 --mip-gap 0.01 --runtime-config-json experiments/configs/middle_stack_bomseq_runtime_configs_20260624.json --candidate-stack-topk 999 --max-candidate-stacks-per-order 0 --candidate-station-topk-per-stack 999 --route-pickup-neighbor-limit 0 --disable-route-arc-prune --disable-route-load-interval-arc-prune --disable-route-time-window-arc-prune --disable-route-slot-stack-count-lb --disable-resource-lex-symmetry --output-root result/middle_bomseq_m5_seed42_t1500_nopruning_r0_20260624",
+      "prune_policy": "no_candidate_no_route_arc_no_load_interval_no_time_window_no_slot_stack_lb"
+    },
+    "M6": {
+      "candidate_stack_topk": 999,
+      "max_candidate_stacks_per_order": 0,
+      "candidate_station_topk_per_stack": 999,
+      "route_pickup_neighbor_limit": 0,
+      "time_limit_sec": 1600,
+      "mip_gap": 0.01,
+      "command": "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3 experiments/run_global_xyzu.py --scale M6 --seed 42 --time-limit 1600 --mip-gap 0.01 --runtime-config-json experiments/configs/middle_stack_bomseq_runtime_configs_20260624.json --candidate-stack-topk 999 --max-candidate-stacks-per-order 0 --candidate-station-topk-per-stack 999 --route-pickup-neighbor-limit 0 --disable-route-arc-prune --disable-route-load-interval-arc-prune --disable-route-time-window-arc-prune --disable-route-slot-stack-count-lb --disable-resource-lex-symmetry --output-root result/middle_bomseq_m6_seed42_t1600_nopruning_r0_20260624",
+      "prune_policy": "no_candidate_no_route_arc_no_load_interval_no_time_window_no_slot_stack_lb"
+    },
+    "M7": {
+      "candidate_stack_topk": 999,
+      "max_candidate_stacks_per_order": 0,
+      "candidate_station_topk_per_stack": 999,
+      "route_pickup_neighbor_limit": 0,
+      "time_limit_sec": 1700,
+      "mip_gap": 0.01,
+      "command": "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3 experiments/run_global_xyzu.py --scale M7 --seed 42 --time-limit 1700 --mip-gap 0.01 --runtime-config-json experiments/configs/middle_stack_bomseq_runtime_configs_20260624.json --candidate-stack-topk 999 --max-candidate-stacks-per-order 0 --candidate-station-topk-per-stack 999 --route-pickup-neighbor-limit 0 --disable-route-arc-prune --disable-route-load-interval-arc-prune --disable-route-time-window-arc-prune --disable-route-slot-stack-count-lb --disable-resource-lex-symmetry --output-root result/middle_bomseq_m7_seed42_t1700_nopruning_r0_20260624",
+      "prune_policy": "no_candidate_no_route_arc_no_load_interval_no_time_window_no_slot_stack_lb"
+    },
+    "M8": {
+      "candidate_stack_topk": 999,
+      "max_candidate_stacks_per_order": 0,
+      "candidate_station_topk_per_stack": 999,
+      "route_pickup_neighbor_limit": 0,
+      "time_limit_sec": 1800,
+      "mip_gap": 0.01,
+      "command": "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3 experiments/run_global_xyzu.py --scale M8 --seed 42 --time-limit 1800 --mip-gap 0.01 --runtime-config-json experiments/configs/middle_stack_bomseq_runtime_configs_20260624.json --candidate-stack-topk 999 --max-candidate-stacks-per-order 0 --candidate-station-topk-per-stack 999 --route-pickup-neighbor-limit 0 --disable-route-arc-prune --disable-route-load-interval-arc-prune --disable-route-time-window-arc-prune --disable-route-slot-stack-count-lb --disable-resource-lex-symmetry --output-root result/middle_bomseq_m8_seed42_t1800_nopruning_r0_20260624",
+      "prune_policy": "no_candidate_no_route_arc_no_load_interval_no_time_window_no_slot_stack_lb"
+    },
+    "M9": {
+      "candidate_stack_topk": 999,
+      "max_candidate_stacks_per_order": 0,
+      "candidate_station_topk_per_stack": 999,
+      "route_pickup_neighbor_limit": 0,
+      "time_limit_sec": 2000,
+      "mip_gap": 0.01,
+      "command": "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3 experiments/run_global_xyzu.py --scale M9 --seed 42 --time-limit 2000 --mip-gap 0.01 --runtime-config-json experiments/configs/middle_stack_bomseq_runtime_configs_20260624.json --candidate-stack-topk 999 --max-candidate-stacks-per-order 0 --candidate-station-topk-per-stack 999 --route-pickup-neighbor-limit 0 --disable-route-arc-prune --disable-route-load-interval-arc-prune --disable-route-time-window-arc-prune --disable-route-slot-stack-count-lb --disable-resource-lex-symmetry --output-root result/middle_bomseq_m9_seed42_t2000_nopruning_r0_20260624",
+      "prune_policy": "no_candidate_no_route_arc_no_load_interval_no_time_window_no_slot_stack_lb"
+    }
+  },
+  "results": {
+    "M1": {
+      "status": "TIME_LIMIT",
+      "global_makespan": 582.0,
+      "true_global_makespan": 582.0,
+      "gurobi_runtime_sec": 360.1796839237213,
+      "model_best_bound": 579.06,
+      "model_gap": 0.005406992172190141,
+      "cmax_soft_upper_bound": 1562.0,
+      "audit": "accepted_time_window_candidate_unlimited_route_safe_prune_true_global_aligned",
+      "output_root": "result/middle_bomseq_m1_seed42_t360_g002_nocand_routeprune_r0_20260624"
+    },
+    "M1_probe_t360_nopruning": {
+      "status": "TIME_LIMIT",
+      "global_makespan": 586.0,
+      "true_global_makespan": 586.0,
+      "gurobi_runtime_sec": 360.194003,
+      "model_best_bound": 579.06,
+      "model_gap": 0.012244,
+      "audit": "rejected_gap_above_1pct",
+      "output_root": "result/middle_bomseq_m1_seed42_t360_nopruning_r0_20260624"
+    },
+    "M1_probe_t900_nopruning": {
+      "status": "TIME_LIMIT",
+      "global_makespan": 586.0,
+      "true_global_makespan": 586.0,
+      "gurobi_runtime_sec": 900.2353591918945,
+      "model_best_bound": 579.06,
+      "model_gap": 0.012200363749193425,
+      "audit": "cmax_runtime_ok_gap_above_1pct",
+      "output_root": "result/middle_bomseq_m1_seed42_t900_nopruning_r0_20260624"
+    },
+    "M1_probe_t1800_nopruning": {
+      "status": "OPTIMAL",
+      "global_makespan": 582.0,
+      "true_global_makespan": 582.0,
+      "gurobi_runtime_sec": 1155.039133,
+      "model_best_bound": 579.06,
+      "model_gap": 0.005434,
+      "audit": "gap_ok_runtime_too_long_for_m1_window",
+      "output_root": "result/middle_bomseq_m1_seed42_t1800_nopruning_r0_20260624"
+    },
+    "M2_probe_t520_g002_invfix": {
+      "status": "WARM_START_FALLBACK",
+      "global_makespan": 885.0,
+      "true_global_makespan": 885.0,
+      "gurobi_runtime_sec": 520.351312,
+      "model_best_bound": 798.09,
+      "model_gap": null,
+      "audit": "rejected_no_gurobi_incumbent_fallback_not_clean",
+      "output_root": "result/middle_bomseq_m2_seed42_t520_g002_nocand_routeprune_invfix_r0_20260624"
+    },
+    "M2_probe_t520_g002_focus1_h05_invfix": {
+      "status": "WARM_START_FALLBACK",
+      "global_makespan": 885.0,
+      "true_global_makespan": 885.0,
+      "gurobi_runtime_sec": 520.312978,
+      "model_best_bound": 798.09,
+      "model_gap": null,
+      "audit": "rejected_no_gurobi_incumbent_mipfocus_heuristics_did_not_help",
+      "output_root": "result/middle_bomseq_m2_seed42_t520_g002_focus1_h05_nocand_routeprune_invfix_r0_20260624"
+    },
+    "M2_probe_t520_g002_invfix_fullcap": {
+      "status": "WARM_START_FALLBACK",
+      "global_makespan": 630.0,
+      "true_global_makespan": 630.0,
+      "gurobi_runtime_sec": 520.293344,
+      "model_best_bound": 798.09,
+      "model_gap": null,
+      "audit": "rejected_no_gurobi_incumbent_fullcap_sp1_fallback_not_clean",
+      "output_root": "result/middle_bomseq_m2_seed42_t520_g002_nocand_routeprune_invfix_fullcap_r0_20260624"
+    },
+    "M2": {
+      "status": "TIME_LIMIT",
+      "global_makespan": 805.0,
+      "true_global_makespan": 805.0,
+      "gurobi_runtime_sec": 520.17124,
+      "model_best_bound": 798.09,
+      "model_gap": 0.008916,
+      "cmax_soft_upper_bound": null,
+      "audit": "accepted_time_window_candidate_unlimited_route_safe_prune_true_global_aligned_chunked_noslotlex_focus1_h05_clean",
+      "output_root": "result/middle_bomseq_m2_seed42_t520_g002_chunked_nocand_routeprune_noslotlex_focus1_h05_r0_20260624"
+    },
+    "M3": {
+      "status": "TIME_LIMIT",
+      "global_makespan": 827.0,
+      "true_global_makespan": 827.0,
+      "gurobi_runtime_sec": 700.261766,
+      "model_best_bound": 822.09,
+      "model_gap": 0.006389,
+      "cmax_soft_upper_bound": null,
+      "audit": "accepted_r4s3_incremental_over_m2_candidate_unlimited_stationtop1_route_safe_prune_routearrlinear_true_global_aligned_clean",
+      "output_root": "result/middle_bomseq_m3_seed42_t700_g002_r4s3_t110_bq33_chunked4_stationtop1_routearrlinear_noslotlex_focus1_h03_r0_20260625"
+    },
+    "M3_probe_t700_g002_r4s3_chunked4": {
+      "status": "TIME_LIMIT",
+      "global_makespan": 787.0,
+      "true_global_makespan": 787.0,
+      "gurobi_runtime_sec": 700.07505,
+      "model_best_bound": 685.09,
+      "model_gap": 0.130067,
+      "audit": "rejected_gap_above_1pct_r4s3_bound_too_loose",
+      "output_root": "result/middle_bomseq_m3_seed42_t700_g002_chunked4_nocand_routeprune_noslotlex_focus1_h05_r0_20260625"
+    },
+    "M3_probe_t700_g002_r3s2_chunked4": {
+      "status": "TIME_LIMIT",
+      "global_makespan": 1118.0,
+      "true_global_makespan": 1118.0,
+      "gurobi_runtime_sec": 700.044981,
+      "model_best_bound": 1020.09,
+      "model_gap": 0.088023,
+      "audit": "rejected_gap_above_1pct_clean_but_bound_gap_large",
+      "output_root": "result/middle_bomseq_m3_seed42_t700_g002_r3s2_chunked4_nocand_routeprune_noslotlex_focus1_h05_r0_20260625"
+    },
+    "M3_probe_t240_g002_r3s2_chunked4_lbcuts_focus3_h005": {
+      "status": "TIME_LIMIT",
+      "global_makespan": 1119.0,
+      "true_global_makespan": 1119.0,
+      "gurobi_runtime_sec": 240.074524,
+      "model_best_bound": 1020.09,
+      "model_gap": 0.088838,
+      "audit": "rejected_probe_lb_cuts_did_not_raise_bound",
+      "output_root": "result/middle_bomseq_m3_seed42_t240_g002_r3s2_chunked4_lbcuts_focus3_h005_probe_20260625"
+    },
+    "M3_probe_t1_g002_r3s2_chunked4_sp2refine": {
+      "status": "TIME_LIMIT",
+      "global_makespan": 1181.0,
+      "true_global_makespan": 1181.0,
+      "gurobi_runtime_sec": 1.0,
+      "model_best_bound": null,
+      "model_gap": null,
+      "audit": "rejected_probe_post_sp4_sp2_refine_worsened_warm_cmax",
+      "output_root": "result/middle_bomseq_m3_seed42_t1_g002_r3s2_chunked4_sp2refine_nocand_routeprune_noslotlex_focus1_h05_probe_20260625"
+    },
+    "M4": {
+      "status": "OPTIMAL",
+      "bom_count": 6,
+      "per_bom_sku_counts": [
+        22,
+        16,
+        16,
+        16,
+        16,
+        16
+      ],
+      "total_sku": 102,
+      "tote": 120,
+      "stack": 20,
+      "robot": 4,
+      "station": 3,
+      "total_demand_units": 628,
+      "var_count": 23704,
+      "constr_count": 65945,
+      "hit_stack_count": 19,
+      "subtask_count": 19,
+      "flip_tote_count": 19,
+      "sort_tote_count": 0,
+      "upper_bound": 650.0,
+      "lower_bound": 644.119,
+      "global_makespan": 650.0,
+      "true_global_makespan": 650.0,
+      "model_gap": 0.009411923923356725,
+      "gurobi_runtime_sec": 620.935962,
+      "audit": "accepted_m4_integrated_uroute_slotlex_clean_map4x5_mixedsku22_16_hit3_copy1_support20_optimal_gap_below_1pct_true_global_aligned",
+      "output_root": "result/middle_bomseq_m4_seed42_t720_g01_mixedsku22_16_integrated_copy1_hit3_support20_4x5_stationtop1_slotlex_lbcuts_routearrlinear_focus1_h03_method1_r0_formal_20260629",
+      "command": "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3 experiments/run_global_xyzu.py --scale M4 --seed 42 --time-limit 720 --mip-gap 0.01 --runtime-config-json experiments/configs/middle_stack_bomseq_runtime_configs_20260624.json --candidate-stack-topk 999 --max-candidate-stacks-per-order 0 --candidate-station-topk-per-stack 1 --route-pickup-neighbor-limit 0 --disable-resource-lex-symmetry --enable-slot-min-arrival-lb --enable-route-incident-travel-lb --enable-route-pair-service-travel-lb --enable-route-finish-cmax-lb --enable-uz-lb-cuts --enable-route-arrival-slot-linear --enable-route-time-window-arc-prune --gurobi-mip-focus 1 --gurobi-heuristics 0.3 --gurobi-method 1 --gurobi-node-method 1 --quiet-gurobi --output-root result/middle_bomseq_m4_seed42_t720_g01_mixedsku22_16_integrated_copy1_hit3_support20_4x5_stationtop1_slotlex_lbcuts_routearrlinear_focus1_h03_method1_r0_formal_20260629"
+    },
+    "M5": {
+      "status": "TIME_LIMIT",
+      "bom_count": 8,
+      "per_bom_sku_counts": [
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "total_sku": 220,
+      "tote": 144,
+      "stack": 24,
+      "robot": 4,
+      "station": 2,
+      "total_demand_units": 497,
+      "var_count": 17593,
+      "constr_count": 47369,
+      "hit_stack_count": 24,
+      "subtask_count": 17,
+      "flip_tote_count": null,
+      "sort_tote_count": null,
+      "upper_bound": 769.0,
+      "lower_bound": 760.586929,
+      "global_makespan": 769.0,
+      "true_global_makespan": 769.0,
+      "model_gap": 0.011207712555081744,
+      "gurobi_runtime_sec": 900.204244,
+      "audit": "accepted_m5_integrated_uroute_slotlex_clean_map6x4_sku10x8_2station_hit3_copy2_support30_stationtop1_lbcuts_routearrlinear_gap_below_1p15_cmax_ge_m4",
+      "output_root": "result/middle_bomseq_m5_seed42_t900_g01_integrated_copy2_hit3_support30_6x4_2station_stationtop1_slotlex_lbcuts_routearrlinear_focus1_h03_method1_r0_formal_20260629",
+      "command": "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3 experiments/run_global_xyzu.py --scale M5 --seed 42 --time-limit 900 --mip-gap 0.01 --runtime-config-json experiments/configs/middle_stack_bomseq_runtime_configs_20260624.json --candidate-stack-topk 999 --max-candidate-stacks-per-order 0 --candidate-station-topk-per-stack 1 --route-pickup-neighbor-limit 0 --disable-resource-lex-symmetry --enable-slot-min-arrival-lb --enable-route-incident-travel-lb --enable-route-pair-service-travel-lb --enable-route-finish-cmax-lb --enable-uz-lb-cuts --enable-route-arrival-slot-linear --enable-route-time-window-arc-prune --gurobi-mip-focus 1 --gurobi-heuristics 0.3 --gurobi-method 1 --gurobi-node-method 1 --quiet-gurobi --output-root result/middle_bomseq_m5_seed42_t900_g01_integrated_copy2_hit3_support30_6x4_2station_stationtop1_slotlex_lbcuts_routearrlinear_focus1_h03_method1_r0_formal_20260629"
+    },
+    "M6": {
+      "status": "TIME_LIMIT",
+      "bom_count": 8,
+      "per_bom_sku_counts": [
+        14,
+        14,
+        14,
+        14,
+        14,
+        14,
+        14,
+        14
+      ],
+      "total_sku": 260,
+      "tote": 180,
+      "stack": 30,
+      "robot": 5,
+      "station": 2,
+      "total_demand_units": 693,
+      "var_count": 38684,
+      "constr_count": 111421,
+      "hit_stack_count": 30,
+      "subtask_count": 25,
+      "flip_tote_count": null,
+      "sort_tote_count": null,
+      "upper_bound": 1064.0,
+      "lower_bound": 1054.62,
+      "global_makespan": 1064.0,
+      "true_global_makespan": 1064.0,
+      "model_gap": 0.009435823065636263,
+      "gurobi_runtime_sec": 1500.582459,
+      "audit": "accepted_m6_integrated_uroute_slotlex_clean_sku14x8_2station_hit3_copy2_support16_stationtop1_lbcuts_routearrlinear_focus1_h08_gap_below_1pct_cmax_ge_m5",
+      "output_root": "result/middle_bomseq_m6_seed42_t1500_g01_integrated_copy2_hit3_support16_6x5_2station_stationtop1_slotlex_lbcuts_routearrlinear_focus1_h08_method1_r0_formal_20260629",
+      "command": "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3 experiments/run_global_xyzu.py --scale M6 --seed 42 --time-limit 1500 --mip-gap 0.01 --runtime-config-json experiments/configs/middle_stack_bomseq_runtime_configs_20260624.json --candidate-stack-topk 999 --max-candidate-stacks-per-order 0 --candidate-station-topk-per-stack 1 --route-pickup-neighbor-limit 0 --disable-resource-lex-symmetry --enable-slot-min-arrival-lb --enable-route-incident-travel-lb --enable-route-pair-service-travel-lb --enable-route-finish-cmax-lb --enable-uz-lb-cuts --enable-route-arrival-slot-linear --enable-route-time-window-arc-prune --gurobi-mip-focus 1 --gurobi-heuristics 0.8 --gurobi-method 1 --gurobi-node-method 1 --quiet-gurobi --output-root result/middle_bomseq_m6_seed42_t1500_g01_integrated_copy2_hit3_support16_6x5_2station_stationtop1_slotlex_lbcuts_routearrlinear_focus1_h08_method1_r0_formal_20260629"
+    },
+    "M7": {
+      "status": "TIME_LIMIT",
+      "bom_count": 8,
+      "per_bom_sku_counts": [
+        18,
+        18,
+        18,
+        18,
+        18,
+        18,
+        18,
+        18
+      ],
+      "total_sku": 300,
+      "tote": 192,
+      "stack": 32,
+      "robot": 5,
+      "station": 2,
+      "total_demand_units": 1057,
+      "var_count": 30104,
+      "constr_count": 81268,
+      "hit_stack_count": 32,
+      "subtask_count": 24,
+      "flip_tote_count": null,
+      "sort_tote_count": null,
+      "upper_bound": 1618.0,
+      "lower_bound": 1600.650444,
+      "global_makespan": 1618.0,
+      "true_global_makespan": 1618.0,
+      "model_gap": 0.010902565019430646,
+      "gurobi_runtime_sec": 1800.35637,
+      "audit": "accepted_m7_integrated_uroute_slotlex_clean_sku18x8_2station_hit4_copy1_support26_stationtop1_lbcuts_routearrlinear_focus3_h08_gap_below_1p15_cmax_ge_m6",
+      "output_root": "result/middle_bomseq_m7_seed42_t1800_g01_integrated_copy1_hit4_support26_8x4_2station_stationtop1_slotlex_lbcuts_routearrlinear_focus3_h08_method1_r0_formal_20260629",
+      "command": "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3 experiments/run_global_xyzu.py --scale M7 --seed 42 --time-limit 1800 --mip-gap 0.01 --runtime-config-json experiments/configs/middle_stack_bomseq_runtime_configs_20260624.json --candidate-stack-topk 999 --max-candidate-stacks-per-order 0 --candidate-station-topk-per-stack 1 --route-pickup-neighbor-limit 0 --disable-resource-lex-symmetry --enable-slot-min-arrival-lb --enable-route-incident-travel-lb --enable-route-pair-service-travel-lb --enable-route-finish-cmax-lb --enable-uz-lb-cuts --enable-route-arrival-slot-linear --enable-route-time-window-arc-prune --gurobi-mip-focus 3 --gurobi-heuristics 0.8 --gurobi-method 1 --gurobi-node-method 1 --quiet-gurobi --output-root result/middle_bomseq_m7_seed42_t1800_g01_integrated_copy1_hit4_support26_8x4_2station_stationtop1_slotlex_lbcuts_routearrlinear_focus3_h08_method1_r0_formal_20260629"
+    },
+    "M8": {
+      "status": "TIME_VERIFY_MISMATCH",
+      "bom_count": 8,
+      "per_bom_sku_counts": [
+        22,
+        17,
+        17,
+        17,
+        17,
+        17,
+        17,
+        17
+      ],
+      "total_sku": 340,
+      "tote": 240,
+      "stack": 40,
+      "robot": 5,
+      "station": 2,
+      "total_demand_units": 1180,
+      "var_count": 45567,
+      "constr_count": 128355,
+      "hit_stack_count": 40,
+      "subtask_count": 25,
+      "flip_tote_count": null,
+      "sort_tote_count": null,
+      "upper_bound": 1805.0,
+      "lower_bound": 1785.175447,
+      "global_makespan": 1804.948804,
+      "true_global_makespan": 1805.0,
+      "model_gap": 0.011115606231402717,
+      "gurobi_runtime_sec": 2100.326326,
+      "audit": "accepted_m8_integrated_uroute_slotlex_clean_mixedsku22_17x7_2station_hit4_copy1_support24_stationtop1_lbcuts_routearrlinear_focus1_h095_gap_below_1p15_true_cmax_rounded",
+      "output_root": "result/middle_bomseq_m8_seed42_t2100_g01_mixedsku22_17_integrated_copy1_hit4_support24_8x5_2station_stationtop1_slotlex_lbcuts_routearrlinear_focus1_h095_method1_r0_formal_20260629",
+      "command": "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3 experiments/run_global_xyzu.py --scale M8 --seed 42 --time-limit 2100 --mip-gap 0.01 --runtime-config-json experiments/configs/middle_stack_bomseq_runtime_configs_20260624.json --candidate-stack-topk 999 --max-candidate-stacks-per-order 0 --candidate-station-topk-per-stack 1 --route-pickup-neighbor-limit 0 --disable-resource-lex-symmetry --enable-slot-min-arrival-lb --enable-route-incident-travel-lb --enable-route-pair-service-travel-lb --enable-route-finish-cmax-lb --enable-uz-lb-cuts --enable-route-arrival-slot-linear --enable-route-time-window-arc-prune --gurobi-mip-focus 1 --gurobi-heuristics 0.95 --gurobi-method 1 --gurobi-node-method 1 --quiet-gurobi --output-root result/middle_bomseq_m8_seed42_t2100_g01_mixedsku22_17_integrated_copy1_hit4_support24_8x5_2station_stationtop1_slotlex_lbcuts_routearrlinear_focus1_h095_method1_r0_formal_20260629"
+    }
+  },
+  "acceptance": {
+    "baseline_case": "STACKS-S9",
+    "baseline_cmax": 781.0,
+    "baseline_gurobi_runtime_sec": 260.136327,
+    "m1_cmax_upper_bound": 1562.0,
+    "target_runtime_sec_range": [
+      300.0,
+      2000.0
+    ],
+    "case_runtime_windows_sec": {
+      "M1": [
+        300.0,
+        400.0
+      ],
+      "M2": [
+        450.0,
+        650.0
+      ],
+      "M3": [
+        600.0,
+        850.0
+      ],
+      "M4": [
+        800.0,
+        1050.0
+      ],
+      "M5": [
+        950.0,
+        1250.0
+      ],
+      "M6": [
+        1100.0,
+        1450.0
+      ],
+      "M7": [
+        1300.0,
+        1650.0
+      ],
+      "M8": [
+        1500.0,
+        1850.0
+      ],
+      "M9": [
+        1700.0,
+        2000.0
+      ]
+    },
+    "run_policy": "Run cases sequentially; accept a case before starting the next.",
+    "prune_policy": "Official accepted runs keep candidate unrestricted and pickup KNN disabled, while enabling safe route arc/load-interval pruning and slot-stack LB; no-pruning probes are rejected when gap exceeds 1%."
+  }
+}

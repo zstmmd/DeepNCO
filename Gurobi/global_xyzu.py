@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 import copy
@@ -8,7 +8,7 @@ import os
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
-from typing import Any, Deque, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Deque, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 import gurobipy as gp
 from gurobipy import GRB
@@ -85,6 +85,7 @@ class GlobalXYZUConfig:
     enable_warm_start: bool = True
     write_lp: bool = False
     gurobi_output: bool = True
+    integer_cmax: bool = False
 
     # 规模控制
     slot_slack_per_order: int = 1
@@ -94,6 +95,9 @@ class GlobalXYZUConfig:
     candidate_station_topk_per_stack: int = 999
     warm_start_sp4_time_limit_sec: int = 15
     warm_start_subtask_ordering: str = "default"
+    warm_start_use_sp2_mip_initial: bool = False
+    warm_start_sp2_mip_time_limit_sec: float = 30.0
+    warm_start_refine_sp2_after_sp4: bool = False
     u_route_use_mip: bool = True
     big_m_time: float =2000.0
 
@@ -113,7 +117,9 @@ class GlobalXYZUConfig:
     release_time_hard: bool = True
     gurobi_method: Optional[int] = None
     gurobi_node_method: Optional[int] = None
+    gurobi_crossover: Optional[int] = None
     gurobi_mip_focus: Optional[int] = None
+    gurobi_start_node_limit: Optional[int] = None
     gurobi_mem_limit_gb: Optional[float] = None
     gurobi_nodefile_start_gb: Optional[float] = None
     gurobi_threads: Optional[int] = None
@@ -141,10 +147,15 @@ class GlobalXYZUConfig:
     enable_anchor_first_order_robot: bool = False
     enable_selected_workload_lbs: bool = True
     enable_route_arrival_slot_linear: bool = False
+    enable_station_clock_linear: bool = False
     enable_warm_prune_bound_repair: bool = False
     enable_warm_start_route_repair: bool = True
     enable_scale_adaptive_candidate_prune: bool = False
+    sort_hit_tote_threshold: int = 3
     route_pickup_neighbor_limit: int = 0
+    audit_warm_start_fixed_iis: bool = False
+    audit_warm_start_iis_path: str = ""
+    audit_warm_start_time_limit_sec: float = 120.0
     forced_candidate_stacks_by_order: Optional[Dict[int, List[int]]] = None
     fixed_slot_count_by_order: Optional[Dict[int, int]] = None
     fixed_work_units_by_order_slot: Optional[Dict[int, List[List[str]]]] = None
@@ -154,6 +165,7 @@ class GlobalXYZUConfig:
     fixed_route_arcs_by_robot: Optional[Dict[int, List[Tuple[int, int]]]] = None
     fixed_route_task_sequence_by_robot: Optional[Dict[int, List[Dict[str, Any]]]] = None
     fixed_route_node_sequence_by_robot: Optional[Dict[int, List[Dict[str, Any]]]] = None
+    extra_protected_route_edges: Optional[List[Dict[str, Any]]] = None
     fixed_route_arc_fix_nonselected: bool = True
     fixgurobi_relax_sort_tote_fix: bool = False
     fixgurobi_no_warm_start: bool = False
@@ -346,8 +358,12 @@ class GlobalXYZUSolver:
             model.Params.Method = int(getattr(cfg, "gurobi_method"))
         if getattr(cfg, "gurobi_node_method", None) is not None:
             model.Params.NodeMethod = int(getattr(cfg, "gurobi_node_method"))
+        if getattr(cfg, "gurobi_crossover", None) is not None:
+            model.Params.Crossover = int(getattr(cfg, "gurobi_crossover"))
         if getattr(cfg, "gurobi_mip_focus", None) is not None:
             model.Params.MIPFocus = int(getattr(cfg, "gurobi_mip_focus"))
+        if getattr(cfg, "gurobi_start_node_limit", None) is not None:
+            model.Params.StartNodeLimit = int(getattr(cfg, "gurobi_start_node_limit"))
         if getattr(cfg, "gurobi_mem_limit_gb", None) is not None:
             model.Params.MemLimit = float(getattr(cfg, "gurobi_mem_limit_gb"))
         if getattr(cfg, "gurobi_nodefile_start_gb", None) is not None:
@@ -404,6 +420,130 @@ class GlobalXYZUSolver:
             return value
 
         return {key: remap(value) for key, value in dict(payload or {}).items()}
+
+    @staticmethod
+    def _iis_constraint_category(name: str) -> str:
+        raw = str(name or "")
+        if raw.startswith("WarmStartFix_"):
+            return "WarmStartFix"
+        token = raw.split("[", 1)[0].split("(", 1)[0]
+        parts = token.split("_")
+        if len(parts) >= 4 and parts[0] in {"Route", "Warm", "Sort"}:
+            return "_".join(parts[:4])
+        if len(parts) >= 3 and parts[0] in {"Route", "Station", "Order", "Slot", "Robot", "Sort", "Demand", "Sku"}:
+            return "_".join(parts[:3])
+        if len(parts) >= 2:
+            return "_".join(parts[:2])
+        return token or "UNKNOWN"
+
+    def _audit_warm_start_fixed_iis(
+        self,
+        model: gp.Model,
+        cfg: GlobalXYZUConfig,
+    ) -> Dict[str, Any]:
+        diagnostics: Dict[str, Any] = {
+            "warm_start_fixed_iis_enabled": True,
+            "warm_start_fixed_iis_status": "",
+            "warm_start_fixed_iis_fixed_int_count": 0,
+            "warm_start_fixed_iis_path": "",
+            "warm_start_fixed_iis_summary_path": "",
+            "warm_start_fixed_iis_categories": {},
+        }
+        model.update()
+        start_values: Dict[str, float] = {}
+        for var in model.getVars():
+            try:
+                start_val = float(var.Start)
+            except Exception:
+                continue
+            if not math.isfinite(start_val) or abs(start_val) >= 1e90:
+                continue
+            if var.VType not in {GRB.BINARY, GRB.INTEGER}:
+                continue
+            start_values[str(var.VarName)] = float(round(start_val))
+        diagnostics["warm_start_fixed_iis_fixed_int_count"] = int(len(start_values))
+        if not start_values:
+            diagnostics["warm_start_fixed_iis_status"] = "NO_INTEGER_STARTS"
+            return diagnostics
+
+        audit_model = model.copy()
+        audit_model.Params.OutputFlag = 1 if bool(getattr(cfg, "gurobi_output", True)) else 0
+        audit_model.Params.TimeLimit = float(max(1.0, getattr(cfg, "audit_warm_start_time_limit_sec", 120.0) or 120.0))
+        audit_model.Params.MIPGap = 0.0
+        audit_model.Params.LazyConstraints = 1 if bool(getattr(cfg, "route_lazy_constraint", True)) else 0
+        for name, value in start_values.items():
+            var = audit_model.getVarByName(name)
+            if var is not None:
+                audit_model.addConstr(var == float(value), name=f"WarmStartFix_{name}")
+        audit_model.update()
+        audit_model.optimize()
+        diagnostics["warm_start_fixed_iis_status_code"] = int(audit_model.Status)
+        diagnostics["warm_start_fixed_iis_sol_count"] = int(audit_model.SolCount)
+        if int(audit_model.Status) != GRB.INFEASIBLE:
+            diagnostics["warm_start_fixed_iis_status"] = {
+                GRB.OPTIMAL: "FEASIBLE_OPTIMAL",
+                GRB.TIME_LIMIT: "NOT_PROVEN_INFEASIBLE_TIME_LIMIT",
+                GRB.SUBOPTIMAL: "FEASIBLE_SUBOPTIMAL",
+            }.get(int(audit_model.Status), f"STATUS_{int(audit_model.Status)}")
+            return diagnostics
+
+        diagnostics["warm_start_fixed_iis_status"] = "INFEASIBLE"
+        iis_path = str(getattr(cfg, "audit_warm_start_iis_path", "") or "").strip()
+        if not iis_path:
+            iis_path = os.path.abspath("warm_start_fixed_iis.ilp")
+        os.makedirs(os.path.dirname(iis_path) or ".", exist_ok=True)
+        audit_model.computeIIS()
+        audit_model.write(iis_path)
+        categories: Dict[str, int] = defaultdict(int)
+        iis_rows: List[Dict[str, Any]] = []
+        for constr in audit_model.getConstrs():
+            try:
+                if not int(constr.IISConstr):
+                    continue
+            except Exception:
+                continue
+            cname = str(constr.ConstrName)
+            category = self._iis_constraint_category(cname)
+            categories[category] += 1
+            if len(iis_rows) < 500:
+                iis_rows.append({"name": cname, "category": category})
+        for gen_constr in audit_model.getGenConstrs():
+            try:
+                if not int(gen_constr.IISGenConstr):
+                    continue
+            except Exception:
+                continue
+            gname = str(gen_constr.GenConstrName)
+            category = self._iis_constraint_category(gname)
+            categories[category] += 1
+            if len(iis_rows) < 500:
+                iis_rows.append({"name": gname, "category": category, "type": "gen"})
+        for var in audit_model.getVars():
+            try:
+                if int(var.IISLB):
+                    categories["IISLB"] += 1
+                    if len(iis_rows) < 500:
+                        iis_rows.append({"name": str(var.VarName), "category": "IISLB"})
+                if int(var.IISUB):
+                    categories["IISUB"] += 1
+                    if len(iis_rows) < 500:
+                        iis_rows.append({"name": str(var.VarName), "category": "IISUB"})
+            except Exception:
+                continue
+        summary_path = os.path.splitext(iis_path)[0] + ".summary.json"
+        summary_payload = {
+            "status": diagnostics["warm_start_fixed_iis_status"],
+            "fixed_int_count": int(len(start_values)),
+            "iis_path": iis_path,
+            "categories": dict(sorted(categories.items(), key=lambda kv: (-kv[1], kv[0]))),
+            "sample_rows": iis_rows,
+        }
+        with open(summary_path, "w", encoding="utf-8") as f:
+            json.dump(summary_payload, f, ensure_ascii=False, indent=2)
+        diagnostics["warm_start_fixed_iis_path"] = iis_path
+        diagnostics["warm_start_fixed_iis_summary_path"] = summary_path
+        diagnostics["warm_start_fixed_iis_categories"] = summary_payload["categories"]
+        return diagnostics
 
     def compile_model(self, problem: OFSProblemDTO, cfg: Optional[GlobalXYZUConfig] = None) -> CompiledGlobalXYZUModel:
         cfg = cfg or GlobalXYZUConfig()
@@ -747,6 +887,8 @@ class GlobalXYZUSolver:
                         raise RuntimeError("FixGurobi attempted to apply a global_xyzu warm start.")
                 else:
                     diagnostics.update(self._apply_warm_start(vars_payload, prepared, warm))
+                    if bool(getattr(cfg, "audit_warm_start_fixed_iis", False)):
+                        diagnostics.update(self._audit_warm_start_fixed_iis(model, cfg))
                     diagnostics["fixgurobi_warm_start_applied"] = False
             # DEBUG_WARM_START = True
             # model.update()
@@ -1477,10 +1619,23 @@ class GlobalXYZUSolver:
         problem.subtask_num = len(sub_tasks)
 
         sp2 = SP2_Station_Assigner(problem)
-        sp2.solve_initial_heuristic()
-        sp2_mode = f"heuristic_{ordering}"
+        if bool(getattr(cfg, "warm_start_use_sp2_mip_initial", False)):
+            sp2.solve_mip_with_feedback(
+                tasks=problem.subtask_list,
+                sp4_robot_arrival_times={},
+                sp3_tote_selection=None,
+                sp3_sorting_costs=None,
+                time_limit_sec=float(getattr(cfg, "warm_start_sp2_mip_time_limit_sec", 30.0) or 30.0),
+            )
+            sp2_mode = f"mip_initial_{ordering}"
+        else:
+            sp2.solve_initial_heuristic()
+            sp2_mode = f"heuristic_{ordering}"
 
-        sp3 = SP3_Bin_Hitter(problem)
+        sp3 = SP3_Bin_Hitter(
+            problem,
+            sort_hit_tote_threshold=int(getattr(cfg, "sort_hit_tote_threshold", 3) or 3),
+        )
         try:
             physical_tasks, tote_selection, sorting_costs = sp3.solve(sub_tasks, beta_congestion=1.0, sp4_routing_costs=None)
         except Exception:
@@ -1493,19 +1648,20 @@ class GlobalXYZUSolver:
         sp4_mode = "greedy"
         sp4_error = ""
         sp4_runtime_sec = 0.0
+        warm_arrival_times: Dict[int, float] = {}
         if bool(getattr(cfg, "warm_start_use_sp4", False)):
             sp4_clock = time.perf_counter()
             try:
                 warm_sp4_limit = int(getattr(cfg, "warm_start_sp4_time_limit_sec", 15) or 0)
                 if warm_sp4_limit <= 0:
-                    self._greedy_route_assign(problem)
+                    warm_arrival_times = self._greedy_route_assign(problem) or {}
                     sp4_mode = "greedy"
                 else:
                     # warm start uses SP4 only when an explicit positive budget is configured.
                     from Gurobi.sp4 import SP4_Robot_Router
 
                     sp4 = SP4_Robot_Router(problem)
-                    sp4.solve(
+                    warm_arrival_times, _ = sp4.solve(
                         problem.subtask_list,
                         use_mip=False,
                         lkh_time_limit_seconds=warm_sp4_limit,
@@ -1515,11 +1671,43 @@ class GlobalXYZUSolver:
             except Exception as exc:
                 sp4_mode = "greedy_fallback"
                 sp4_error = str(exc)
-                self._greedy_route_assign(problem)
+                warm_arrival_times = self._greedy_route_assign(problem) or {}
             finally:
                 sp4_runtime_sec = float(time.perf_counter() - sp4_clock)
         else:
-            self._greedy_route_assign(problem)
+            warm_arrival_times = self._greedy_route_assign(problem) or {}
+
+        if bool(getattr(cfg, "warm_start_refine_sp2_after_sp4", False)) and warm_arrival_times:
+            refine_clock = time.perf_counter()
+            try:
+                sp2.solve_mip_with_feedback(
+                    tasks=problem.subtask_list,
+                    sp4_robot_arrival_times=warm_arrival_times,
+                    sp3_tote_selection=tote_selection,
+                    sp3_sorting_costs=sorting_costs,
+                    time_limit_sec=10.0,
+                )
+                for st in problem.subtask_list:
+                    station_id = int(getattr(st, "assigned_station_id", -1))
+                    rank = int(getattr(st, "station_sequence_rank", -1))
+                    for task in getattr(st, "execution_tasks", []) or []:
+                        task.target_station_id = int(station_id)
+                        task.station_sequence_rank = int(rank)
+                from Gurobi.sp4 import SP4_Robot_Router
+
+                sp4 = SP4_Robot_Router(problem)
+                warm_arrival_times, _ = sp4.solve(
+                    problem.subtask_list,
+                    use_mip=False,
+                    lkh_time_limit_seconds=int(getattr(cfg, "warm_start_sp4_time_limit_sec", 15) or 15),
+                    enable_greedy_fallback=True,
+                )
+                sp2_mode = f"{sp2_mode}_postsp4mip"
+                sp4_mode = f"{sp4_mode}_reroute"
+                sp4_runtime_sec += float(time.perf_counter() - refine_clock)
+            except Exception as exc:
+                sp2_mode = f"{sp2_mode}_postsp4mip_failed"
+                sp4_error = f"{sp4_error};sp2_refine={exc}" if sp4_error else f"sp2_refine={exc}"
 
         makespan = float(RankAwareGlobalTimeCalculator(problem).calculate())
 
@@ -2757,13 +2945,28 @@ class GlobalXYZUSolver:
                     special_predecessors_by_pickup[int(j)].append((travel, int(i)))
                 continue
 
-            # 2. 前往 Delivery 或 End 的弧天然稀疏 (已被 Slot/订单等业务规则限制)，无条件保留
-            if str(src.kind) == "start" or str(dst.kind) in {"delivery", "end"}:
+            # 2. Depot/Delivery transitions are part of the route skeleton.
+            # Only pickup->pickup arcs are KNN-pruned; delivery->pickup arcs
+            # must stay available for warm-start route reconstruction.
+            if str(src.kind) in {"start", "delivery"} or str(dst.kind) in {"delivery", "end"}:
+                kept.add((int(i), int(j)))
+                if str(dst.kind) == "pickup" and str(src.kind) in {"start", "delivery"}:
+                    travel = float(route_tau.get((int(i), int(j)), float("inf")))
+                    special_predecessors_by_pickup[int(j)].append((travel, int(i)))
+                continue
+
+            # 3. Same-slot pickup chains are used by the warm-start route
+            # reconstruction when one slot needs multiple stack visits. Keep
+            # them outside KNN; cross-slot pickup->pickup arcs remain prunable.
+            if (
+                str(src.kind) == "pickup"
+                and str(dst.kind) == "pickup"
+                and int(getattr(src, "slot_id", -1)) == int(getattr(dst, "slot_id", -2))
+            ):
                 kept.add((int(i), int(j)))
                 continue
 
-            # 3. 前往 Pickup 的弧（包括 Start->Pickup, Delivery->Pickup, Pickup->Pickup）
-            # 统统进入 KNN 邻居池进行截断过滤！避免拓扑爆炸！
+            # 4. Cross-slot Pickup->Pickup arcs enter the KNN pool to avoid topology explosion.
             if str(dst.kind) == "pickup":
                 travel = float(route_tau.get((int(i), int(j)), float("inf")))
                 pickup_successors_by_src[int(i)].append((travel, int(j)))
@@ -2882,24 +3085,35 @@ class GlobalXYZUSolver:
         remapped_rows: List[Dict[str, Any]] = [dict(row) for row in selected_route_rows]
         normalized_robot_ids = sorted(int(robot_id) for robot_id in (robot_ids or []))
         robot_duration: Dict[int, float] = {int(robot_id): 0.0 for robot_id in normalized_robot_ids}
+        robot_task_count: Dict[int, int] = {int(robot_id): 0 for robot_id in normalized_robot_ids}
         for row in remapped_rows:
             robot_id = int(row.get("robot_id", -1))
             if robot_id not in robot_duration:
                 robot_duration[robot_id] = 0.0
+                robot_task_count[robot_id] = 0
+            robot_task_count[robot_id] = int(robot_task_count.get(robot_id, 0)) + 1
             robot_duration[robot_id] = max(
                 float(robot_duration.get(robot_id, 0.0) or 0.0),
-                float(row.get("warm_station_arrival", row.get("warm_stack_arrival", 0.0)) or 0.0),
+                float(row.get("warm_station_arrival", row.get("warm_stack_arrival", 0.0)) or 0.0)
+                + float(row.get("service_time", 0.0) or 0.0),
             )
 
-        robot_id_map: Dict[int, int] = {int(robot_id): int(robot_id) for robot_id in robot_duration}
-        swapped = False
-        if len(normalized_robot_ids) >= 2:
-            robot1_id = int(normalized_robot_ids[0])
-            robot2_id = int(normalized_robot_ids[1])
-            if float(robot_duration.get(robot1_id, 0.0) or 0.0) < float(robot_duration.get(robot2_id, 0.0) or 0.0):
-                robot_id_map[robot1_id] = robot2_id
-                robot_id_map[robot2_id] = robot1_id
-                swapped = True
+        # Match RobotTaskCountLex first, then RobotFinishLex for equal task
+        # counts.  The previous implementation swapped only robot 0/1 and
+        # could still leave any later adjacent pair in the opposite order.
+        source_order = sorted(
+            normalized_robot_ids,
+            key=lambda robot_id: (
+                -int(robot_task_count.get(int(robot_id), 0)),
+                -float(robot_duration.get(int(robot_id), 0.0) or 0.0),
+                int(robot_id),
+            ),
+        )
+        robot_id_map: Dict[int, int] = {
+            int(source_id): int(target_id)
+            for source_id, target_id in zip(source_order, normalized_robot_ids)
+        }
+        swapped = any(int(source_id) != int(target_id) for source_id, target_id in robot_id_map.items())
 
         if swapped:
             for row in remapped_rows:
@@ -3385,14 +3599,18 @@ class GlobalXYZUSolver:
                     if arc in route_tau:
                         envelope_arcs.add(arc)
             for prev_spec in task_specs:
+                prev_pickup = int(prev_spec.pickup_node)
                 prev_delivery = int(prev_spec.delivery_node)
                 for next_spec in task_specs:
                     next_pickup = int(next_spec.pickup_node)
-                    if int(prev_delivery) == int(next_pickup):
-                        continue
-                    arc = (int(prev_delivery), int(next_pickup))
-                    if arc in route_tau:
-                        envelope_arcs.add(arc)
+                    next_delivery = int(next_spec.delivery_node)
+                    for arc in [
+                        (int(prev_pickup), int(next_pickup)),
+                        (int(prev_delivery), int(next_delivery)),
+                        (int(prev_delivery), int(next_pickup)),
+                    ]:
+                        if int(arc[0]) != int(arc[1]) and arc in route_tau:
+                            envelope_arcs.add(arc)
         protected_arcs.update(envelope_arcs)
         diagnostics["warm_protected_route_arc_count_envelope"] = int(len(envelope_arcs))
         # Protect every warm-start arc that could be reconstructed, even when a
@@ -3401,6 +3619,319 @@ class GlobalXYZUSolver:
         # misleading first missing arc such as start->pickup.
         diagnostics["warm_protected_route_arc_count_total"] = int(len(protected_arcs))
         return protected_arcs, diagnostics
+
+    @staticmethod
+    def _warm_subtask_arrival_lower(st: Any) -> float:
+        return float(
+            max(
+                [float(getattr(task, "arrival_time_at_station", 0.0) or 0.0) for task in getattr(st, "execution_tasks", []) or []]
+                + [0.0]
+            )
+        )
+
+    @staticmethod
+    def _warm_subtask_hit_sku_ids(st: Any, tote_sku_qty: Dict[Tuple[int, int], int]) -> Set[int]:
+        warm_totes: Set[int] = set()
+        for task in getattr(st, "execution_tasks", []) or []:
+            for tote_id in (
+                list(getattr(task, "target_tote_ids", []) or [])
+                + list(getattr(task, "hit_tote_ids", []) or [])
+            ):
+                warm_totes.add(int(tote_id))
+        if not warm_totes:
+            return set()
+        return {
+            int(sku_id)
+            for (tote_id, sku_id), qty in dict(tote_sku_qty or {}).items()
+            if int(tote_id) in warm_totes and int(qty) > 0
+        }
+
+    @classmethod
+    def _canonical_warm_slot_profiles(
+        cls,
+        *,
+        order_id: int,
+        warm_rows: Sequence[Any],
+        slot_ids: Sequence[int],
+        units_by_order_sku: Dict[Tuple[int, int], List[str]],
+        tote_sku_qty: Dict[Tuple[int, int], int],
+    ) -> List[Dict[str, Any]]:
+        profiles: List[Dict[str, Any]] = []
+        for st in list(warm_rows or []):
+            station_id = int(getattr(st, "assigned_station_id", -1))
+            rank = int(getattr(st, "station_sequence_rank", -1))
+            hit_skus = cls._warm_subtask_hit_sku_ids(st, tote_sku_qty)
+            start_skus: Set[int] = set()
+            seen_skus: Set[int] = set()
+            for sku in getattr(st, "sku_list", []) or []:
+                sku_id = int(getattr(sku, "id", -1))
+                if sku_id < 0 or sku_id in seen_skus:
+                    continue
+                seen_skus.add(int(sku_id))
+                if sku_id not in hit_skus:
+                    continue
+                if not units_by_order_sku.get((int(order_id), int(sku_id)), []):
+                    continue
+                start_skus.add(int(sku_id))
+            profiles.append(
+                {
+                    "subtask": st,
+                    "subtask_id": int(getattr(st, "id", -1)),
+                    "order_id": int(order_id),
+                    "station_id": int(station_id),
+                    "rank": int(rank),
+                    "arrival_lower": float(cls._warm_subtask_arrival_lower(st)),
+                    "start_load": int(len(start_skus)),
+                    "start_sku_ids": sorted(int(sku_id) for sku_id in start_skus),
+                    "hit_sku_ids": sorted(int(sku_id) for sku_id in hit_skus),
+                }
+            )
+        station_inf = 10**9
+        profiles.sort(
+            key=lambda row: (
+                -int(row.get("start_load", 0) or 0),
+                int(row.get("station_id", -1)) if int(row.get("station_id", -1)) >= 0 else station_inf,
+                int(row.get("rank", -1)) if int(row.get("rank", -1)) >= 0 else station_inf,
+                float(row.get("arrival_lower", 0.0) or 0.0),
+                int(row.get("subtask_id", -1)),
+            )
+        )
+        mapped: List[Dict[str, Any]] = []
+        for local_idx, (slot_id, profile) in enumerate(zip([int(s) for s in slot_ids], profiles)):
+            row = dict(profile)
+            row["slot_id"] = int(slot_id)
+            row["local_idx"] = int(local_idx)
+            mapped.append(row)
+        return mapped
+
+    @staticmethod
+    def _repair_nonempty_warm_slot_profiles(
+        *,
+        order_id: int,
+        profiles: Sequence[Dict[str, Any]],
+        units_by_order_sku: Dict[Tuple[int, int], List[str]],
+        demand_hit_totes_by_order: Dict[int, List[int]],
+        tote_to_stack: Dict[int, int],
+        tote_sku_qty: Dict[Tuple[int, int], int],
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        repaired = [dict(row) for row in list(profiles or [])]
+        used_skus: Set[int] = set()
+        for row in repaired:
+            cleaned: List[int] = []
+            for sku_id in list(row.get("start_sku_ids", []) or []):
+                sku_id = int(sku_id)
+                if sku_id in used_skus:
+                    continue
+                if not units_by_order_sku.get((int(order_id), int(sku_id)), []):
+                    continue
+                cleaned.append(int(sku_id))
+                used_skus.add(int(sku_id))
+            row["start_sku_ids"] = sorted(cleaned)
+            row["start_load"] = int(len(cleaned))
+
+        repaired_empty_count = 0
+        donor_move_count = 0
+        unrepaired_empty_slots: List[int] = []
+        for row in repaired:
+            if int(row.get("start_load", 0) or 0) > 0:
+                continue
+            hit_skus = [
+                int(sku_id)
+                for sku_id in list(row.get("hit_sku_ids", []) or [])
+                if units_by_order_sku.get((int(order_id), int(sku_id)), [])
+            ]
+            chosen: Optional[int] = None
+            for sku_id in hit_skus:
+                if int(sku_id) not in used_skus:
+                    chosen = int(sku_id)
+                    break
+            if chosen is None:
+                for donor in repaired:
+                    donor_skus = [int(sku_id) for sku_id in list(donor.get("start_sku_ids", []) or [])]
+                    if len(donor_skus) <= 1:
+                        continue
+                    movable = [int(sku_id) for sku_id in donor_skus if int(sku_id) in set(hit_skus)]
+                    if not movable:
+                        continue
+                    chosen = int(movable[-1])
+                    donor["start_sku_ids"] = [int(sku_id) for sku_id in donor_skus if int(sku_id) != int(chosen)]
+                    donor["start_load"] = int(len(donor["start_sku_ids"]))
+                    donor_move_count += 1
+                    break
+            if chosen is not None:
+                row["start_sku_ids"] = [int(chosen)]
+                row["start_load"] = 1
+                used_skus.add(int(chosen))
+                repaired_empty_count += 1
+            else:
+                repair_seed = None
+                for tote_id in list(demand_hit_totes_by_order.get(int(order_id), []) or []):
+                    tote_id = int(tote_id)
+                    stack_id = int(tote_to_stack.get(int(tote_id), -1))
+                    if stack_id < 0:
+                        continue
+                    sku_candidates = sorted(
+                        int(sku_id)
+                        for (candidate_tote_id, sku_id), qty in dict(tote_sku_qty or {}).items()
+                        if int(candidate_tote_id) == tote_id
+                        and int(qty) > 0
+                        and int(sku_id) not in used_skus
+                        and units_by_order_sku.get((int(order_id), int(sku_id)), [])
+                    )
+                    if not sku_candidates:
+                        continue
+                    repair_seed = {
+                        "sku_id": int(sku_candidates[0]),
+                        "tote_id": int(tote_id),
+                        "stack_id": int(stack_id),
+                    }
+                    break
+                if repair_seed is not None:
+                    chosen = int(repair_seed["sku_id"])
+                    row["start_sku_ids"] = [int(chosen)]
+                    row["start_load"] = 1
+                    row["repair_seed"] = dict(repair_seed)
+                    used_skus.add(int(chosen))
+                    repaired_empty_count += 1
+                else:
+                    unrepaired_empty_slots.append(int(row.get("slot_id", -1)))
+        return repaired, {
+            "warm_start_profile_repaired_empty_count": int(repaired_empty_count),
+            "warm_start_profile_donor_move_count": int(donor_move_count),
+            "warm_start_profile_unrepaired_empty_slots": list(unrepaired_empty_slots),
+        }
+
+    @staticmethod
+    def _lex_aware_station_rank_rows(
+        *,
+        active_slot_rows: Sequence[Tuple[int, int, int]],
+        slot_ids_by_order: Dict[int, List[int]],
+        slot_start_load_by_slot: Dict[int, int],
+        slot_arrival_lower: Dict[int, float],
+    ) -> List[Tuple[int, int, int]]:
+        order_by_slot: Dict[int, int] = {}
+        local_idx_by_slot: Dict[int, int] = {}
+        for order_id, slot_ids in dict(slot_ids_by_order or {}).items():
+            for local_idx, slot_id in enumerate(list(slot_ids or [])):
+                order_by_slot[int(slot_id)] = int(order_id)
+                local_idx_by_slot[int(slot_id)] = int(local_idx)
+
+        slots_by_station: Dict[int, List[int]] = defaultdict(list)
+        for slot_id, station_id, _rank in list(active_slot_rows or []):
+            slots_by_station[int(station_id)].append(int(slot_id))
+
+        reranked: List[Tuple[int, int, int]] = []
+        inf = 10**9
+        for station_id, station_slot_ids in sorted(slots_by_station.items()):
+            ordered_slot_ids = sorted(
+                (int(slot_id) for slot_id in station_slot_ids),
+                key=lambda sid: (
+                    int(order_by_slot.get(int(sid), inf)),
+                    int(local_idx_by_slot.get(int(sid), inf)),
+                    -int(slot_start_load_by_slot.get(int(sid), 0) or 0),
+                    float(slot_arrival_lower.get(int(sid), 0.0) or 0.0),
+                    int(sid),
+                ),
+            )
+            for rank, slot_id in enumerate(ordered_slot_ids):
+                reranked.append((int(slot_id), int(station_id), int(rank)))
+        return sorted(reranked, key=lambda row: (int(row[1]), int(row[2]), int(row[0])))
+
+    @staticmethod
+    def _safe_start_value(var: Any) -> float:
+        try:
+            value = float(var.Start)
+        except Exception:
+            return 0.0
+        if not math.isfinite(value) or abs(value) >= 1e90:
+            return 0.0
+        return float(value)
+
+    @classmethod
+    def _validate_slot_lex_starts(
+        cls,
+        *,
+        a: Any,
+        sku_use: Any,
+        y: Any,
+        slot_ids_by_order: Dict[int, List[int]],
+        unique_skus_by_order: Dict[int, List[int]],
+        station_ids: Sequence[int],
+        max_rank: int,
+    ) -> Dict[str, Any]:
+        load_violations: List[Dict[str, Any]] = []
+        station_violations: List[Dict[str, Any]] = []
+        rows: List[Dict[str, Any]] = []
+        station_rank_weight = max(1, int(max_rank) + 1)
+
+        def _slot_load(order_id: int, slot_id: int) -> int:
+            return int(
+                round(
+                    sum(
+                        cls._safe_start_value(sku_use[int(order_id), int(sku_id), int(slot_id)])
+                        for sku_id in list(unique_skus_by_order.get(int(order_id), []) or [])
+                        if (int(order_id), int(sku_id), int(slot_id)) in sku_use
+                    )
+                )
+            )
+
+        def _station_rank_code(slot_id: int) -> int:
+            code = 0
+            for station_id in station_ids:
+                for rank in range(max(0, int(max_rank))):
+                    if (int(slot_id), int(station_id), int(rank)) in y and cls._safe_start_value(y[int(slot_id), int(station_id), int(rank)]) > 0.5:
+                        code = int(station_id) * int(station_rank_weight) + int(rank)
+                        return int(code)
+            return int(code)
+
+        for order_id, slot_ids_raw in dict(slot_ids_by_order or {}).items():
+            slot_ids = [int(slot_id) for slot_id in list(slot_ids_raw or [])]
+            slot_rows: List[Dict[str, Any]] = []
+            for slot_id in slot_ids:
+                active = int(round(cls._safe_start_value(a[int(slot_id)]))) if int(slot_id) in a else 0
+                load = _slot_load(int(order_id), int(slot_id))
+                code = _station_rank_code(int(slot_id))
+                row = {
+                    "order_id": int(order_id),
+                    "slot_id": int(slot_id),
+                    "active": int(active),
+                    "load": int(load),
+                    "station_rank_code": int(code),
+                }
+                slot_rows.append(row)
+                rows.append(row)
+            for idx in range(len(slot_rows) - 1):
+                left = slot_rows[idx]
+                right = slot_rows[idx + 1]
+                if int(left["load"]) < int(right["load"]):
+                    load_violations.append(
+                        {
+                            "order_id": int(order_id),
+                            "left_slot_id": int(left["slot_id"]),
+                            "right_slot_id": int(right["slot_id"]),
+                            "left_load": int(left["load"]),
+                            "right_load": int(right["load"]),
+                        }
+                    )
+                if int(left["load"]) == int(right["load"]) and int(left["station_rank_code"]) > int(right["station_rank_code"]):
+                    station_violations.append(
+                        {
+                            "order_id": int(order_id),
+                            "left_slot_id": int(left["slot_id"]),
+                            "right_slot_id": int(right["slot_id"]),
+                            "load": int(left["load"]),
+                            "left_station_rank_code": int(left["station_rank_code"]),
+                            "right_station_rank_code": int(right["station_rank_code"]),
+                        }
+                    )
+        return {
+            "warm_start_slot_lex_checked": True,
+            "warm_start_slot_load_lex_violation_count": int(len(load_violations)),
+            "warm_start_slot_station_lex_violation_count": int(len(station_violations)),
+            "warm_start_slot_load_lex_violations": load_violations[:50],
+            "warm_start_slot_station_lex_violations": station_violations[:50],
+            "warm_start_slot_lex_rows": rows[:200],
+        }
 
     def _estimate_warm_model_cmax_for_route_prune(
         self,
@@ -3421,11 +3952,13 @@ class GlobalXYZUSolver:
         slot_ids_by_order: Dict[int, List[int]] = prepared.get("slot_ids_by_order", {})
         units_by_order_sku: Dict[Tuple[int, int], List[str]] = prepared.get("units_by_order_sku", {})
         demand_qty_by_order_sku: Dict[Tuple[int, int], int] = prepared.get("demand_qty_by_order_sku", {})
+        tote_sku_qty: Dict[Tuple[int, int], int] = prepared.get("tote_sku_qty", {})
         robot_capacity = int(getattr(OFSConfig, "ROBOT_CAPACITY", 8))
 
         selected_route_rows: List[Dict[str, Any]] = []
         selected_route_keys: Set[int] = set()
         active_slot_rows: List[Tuple[int, int, int]] = []
+        slot_start_load_by_slot: Dict[int, int] = defaultdict(int)
         slot_unit_count: Dict[int, int] = defaultdict(int)
         slot_noise_count: Dict[int, int] = defaultdict(int)
         slot_arrival_lower: Dict[int, float] = defaultdict(float)
@@ -3440,14 +3973,20 @@ class GlobalXYZUSolver:
 
         move_extra_tote_time = max(1e-9, float(getattr(OFSConfig, "MOVE_EXTRA_TOTE_TIME", 1.0)))
         for order_id, slot_ids in slot_ids_by_order.items():
-            rows = list(warm.subtask_by_order.get(int(order_id), []))
-            rows.sort(key=lambda row: int(getattr(row, "id", -1)))
-            for idx, st in enumerate(rows):
-                if idx >= len(slot_ids):
-                    break
-                slot_id = int(slot_ids[idx])
-                station_id = int(getattr(st, "assigned_station_id", -1))
-                rank = int(getattr(st, "station_sequence_rank", -1))
+            profiles = self._canonical_warm_slot_profiles(
+                order_id=int(order_id),
+                warm_rows=list(warm.subtask_by_order.get(int(order_id), [])),
+                slot_ids=list(slot_ids or []),
+                units_by_order_sku=units_by_order_sku,
+                tote_sku_qty=tote_sku_qty,
+            )
+            for profile in profiles:
+                st = profile["subtask"]
+                slot_id = int(profile["slot_id"])
+                station_id = int(profile.get("station_id", -1))
+                rank = int(profile.get("rank", -1))
+                start_sku_ids = set(int(sku_id) for sku_id in (profile.get("start_sku_ids", []) or []))
+                slot_start_load_by_slot[int(slot_id)] = int(profile.get("start_load", 0) or 0)
                 if station_id >= 0 and rank >= 0:
                     active_slot_rows.append((int(slot_id), int(station_id), int(rank)))
 
@@ -3457,6 +3996,8 @@ class GlobalXYZUSolver:
                     if sku_id in seen_slot_skus:
                         continue
                     seen_slot_skus.add(int(sku_id))
+                    if sku_id not in start_sku_ids:
+                        continue
                     key = (int(order_id), int(sku_id))
                     if available_units.get(key):
                         available_units[key].popleft()
@@ -3544,6 +4085,12 @@ class GlobalXYZUSolver:
             }
 
         slot_arrival_lower.update({int(k): float(v) for k, v in (route_rebuild.get("slot_arrival_lower", {}) or {}).items()})
+        active_slot_rows = self._lex_aware_station_rank_rows(
+            active_slot_rows=active_slot_rows,
+            slot_ids_by_order=slot_ids_by_order,
+            slot_start_load_by_slot=slot_start_load_by_slot,
+            slot_arrival_lower=slot_arrival_lower,
+        )
         slot_rebuild = self._rebuild_warm_slot_continuous_start(
             active_slot_rows=active_slot_rows,
             slot_arrival_lower=slot_arrival_lower,
@@ -3599,17 +4146,15 @@ class GlobalXYZUSolver:
                         station_id = int(row.get("station_id", -1))
                         if slot_id >= 0 and station_id >= 0:
                             station_by_slot.setdefault(slot_id, station_id)
-                    repaired_active_slot_rows: List[Tuple[int, int, int]] = []
-                    slots_by_station: Dict[int, List[int]] = defaultdict(list)
-                    for slot_id, station_id in station_by_slot.items():
-                        slots_by_station[int(station_id)].append(int(slot_id))
-                    for station_id, station_slot_ids in slots_by_station.items():
-                        ordered_slot_ids = sorted(
-                            (int(slot_id) for slot_id in station_slot_ids),
-                            key=lambda sid: (float(repaired_slot_arrival_lower.get(int(sid), 0.0) or 0.0), int(sid)),
-                        )
-                        for rank, slot_id in enumerate(ordered_slot_ids):
-                            repaired_active_slot_rows.append((int(slot_id), int(station_id), int(rank)))
+                    repaired_active_slot_rows = self._lex_aware_station_rank_rows(
+                        active_slot_rows=[
+                            (int(slot_id), int(station_id), 0)
+                            for slot_id, station_id in station_by_slot.items()
+                        ],
+                        slot_ids_by_order=slot_ids_by_order,
+                        slot_start_load_by_slot=slot_start_load_by_slot,
+                        slot_arrival_lower=repaired_slot_arrival_lower,
+                    )
                     repaired_slot_rebuild = self._rebuild_warm_slot_continuous_start(
                         active_slot_rows=repaired_active_slot_rows,
                         slot_arrival_lower=defaultdict(float, repaired_slot_arrival_lower),
@@ -3890,7 +4435,8 @@ class GlobalXYZUSolver:
         arrival = model.addVars([int(slot.slot_id) for slot in slots], lb=0.0, vtype=GRB.CONTINUOUS, name="arrival")
         start = model.addVars([int(slot.slot_id) for slot in slots], lb=0.0, vtype=GRB.CONTINUOUS, name="start")
         finish = model.addVars([int(slot.slot_id) for slot in slots], lb=0.0, vtype=GRB.CONTINUOUS, name="finish")
-        cmax = model.addVar(lb=0.0, vtype=GRB.CONTINUOUS, name="Cmax")
+        cmax_vtype = GRB.INTEGER if bool(getattr(cfg, "integer_cmax", False)) else GRB.CONTINUOUS
+        cmax = model.addVar(lb=0.0, vtype=cmax_vtype, name="Cmax")
         station_arrival_clock = None
         station_finish_clock = None
         order_arrival_lb = None
@@ -4130,28 +4676,112 @@ class GlobalXYZUSolver:
                     elif str(reason) == "pickup_pickup_capacity":
                         capacity_pruned_pickup_pickup_arc_count += 1
             legal_route_arcs = sorted(route_tau.keys())
-            protected_route_arcs, warm_protected_route_diag = self._collect_warm_protected_route_arcs(
-                prepared=prepared,
-                route_task_by_tuple=route_task_by_tuple,
-                route_tasks=route_tasks,
-                route_nodes=route_nodes,
-                route_tau=route_tau,
-                route_start_nodes=route_start_nodes,
-                route_end_nodes=route_end_nodes,
-                robot_ids=robot_ids,
-                route_arc_prune=bool(getattr(cfg, "route_arc_prune", True)),
+            slot_lookup_for_extra_edges: Dict[int, Tuple[int, int]] = {}
+            for order_id, slot_ids in slot_ids_by_order.items():
+                for local_index, slot_id in enumerate(slot_ids):
+                    slot_lookup_for_extra_edges[int(slot_id)] = (int(order_id), int(local_index))
+
+            def _semantic_route_node_key(node_id: int) -> Tuple[Any, ...]:
+                node = route_nodes[int(node_id)]
+                kind = str(getattr(node, "kind", "") or "")
+                if kind == "start":
+                    return ("start",)
+                if kind == "end":
+                    return ("end",)
+                task = route_tasks.get(int(getattr(node, "task_key", -1)))
+                if task is None:
+                    return ("missing", int(node_id), kind)
+                order_id, local_index = slot_lookup_for_extra_edges.get(
+                    int(getattr(task, "slot_id", -1)),
+                    (-1, int(getattr(task, "slot_id", -1))),
+                )
+                return (
+                    "node",
+                    kind,
+                    int(order_id),
+                    int(local_index),
+                    int(getattr(task, "stack_id", -1)),
+                    int(getattr(task, "station_id", -1)),
+                )
+
+            nodes_by_semantic_key: Dict[Tuple[Any, ...], List[int]] = defaultdict(list)
+            for node_id in route_node_ids:
+                nodes_by_semantic_key[_semantic_route_node_key(int(node_id))].append(int(node_id))
+
+            extra_protected_route_arcs: Set[Tuple[int, int]] = set()
+            extra_missing_semantic_edge_count = 0
+            for raw_edge in list(getattr(cfg, "extra_protected_route_edges", None) or []):
+                if not isinstance(raw_edge, dict):
+                    continue
+                try:
+                    src_key = tuple(raw_edge.get("src", []))
+                    dst_key = tuple(raw_edge.get("dst", []))
+                except Exception:
+                    continue
+                src_ids = nodes_by_semantic_key.get(src_key, [])
+                dst_ids = nodes_by_semantic_key.get(dst_key, [])
+                if not src_ids or not dst_ids:
+                    extra_missing_semantic_edge_count += 1
+                    continue
+                for src_id in src_ids:
+                    for dst_id in dst_ids:
+                        if int(src_id) == int(dst_id):
+                            continue
+                        src_node = route_nodes[int(src_id)]
+                        dst_node = route_nodes[int(dst_id)]
+                        if str(getattr(src_node, "kind", "") or "") == "end":
+                            continue
+                        if str(getattr(dst_node, "kind", "") or "") == "start":
+                            continue
+                        arc = (int(src_id), int(dst_id))
+                        route_tau[arc] = _route_travel_time(int(src_id), int(dst_id))
+                        extra_protected_route_arcs.add(arc)
+            if extra_protected_route_arcs:
+                legal_route_arcs = sorted(route_tau.keys())
+            time_big_m_diagnostics["extra_protected_route_edge_count"] = int(
+                len(list(getattr(cfg, "extra_protected_route_edges", None) or []))
             )
+            time_big_m_diagnostics["extra_protected_route_arc_count"] = int(len(extra_protected_route_arcs))
+            time_big_m_diagnostics["extra_protected_route_edge_missing_count"] = int(extra_missing_semantic_edge_count)
+            warm_bound_needed = bool(
+                getattr(cfg, "route_arc_prune", True)
+                or getattr(cfg, "enable_route_time_window_arc_prune", True)
+                or getattr(cfg, "enable_route_load_interval_arc_prune", True)
+            )
+            if bool(warm_bound_needed):
+                protected_route_arcs, warm_protected_route_diag = self._collect_warm_protected_route_arcs(
+                    prepared=prepared,
+                    route_task_by_tuple=route_task_by_tuple,
+                    route_tasks=route_tasks,
+                    route_nodes=route_nodes,
+                    route_tau=route_tau,
+                    route_start_nodes=route_start_nodes,
+                    route_end_nodes=route_end_nodes,
+                    robot_ids=robot_ids,
+                    route_arc_prune=bool(getattr(cfg, "route_arc_prune", True)),
+                )
+            else:
+                protected_route_arcs = set()
+                warm_protected_route_diag = {
+                    "warm_protected_route_arc_count": 0,
+                    "warm_protected_route_missing_count": 0,
+                    "warm_protected_route_reason": "skipped_no_route_prune",
+                }
             time_big_m_diagnostics.update(warm_protected_route_diag)
-            warm_prune_bound_diag = self._estimate_warm_model_cmax_for_route_prune(
-                prepared=prepared,
-                route_task_by_tuple=route_task_by_tuple,
-                route_tasks=route_tasks,
-                route_nodes=route_nodes,
-                route_tau=route_tau,
-                route_start_nodes=route_start_nodes,
-                route_end_nodes=route_end_nodes,
-                robot_ids=robot_ids,
-                route_arc_prune=bool(getattr(cfg, "route_arc_prune", True)),
+            warm_prune_bound_diag = (
+                self._estimate_warm_model_cmax_for_route_prune(
+                    prepared=prepared,
+                    route_task_by_tuple=route_task_by_tuple,
+                    route_tasks=route_tasks,
+                    route_nodes=route_nodes,
+                    route_tau=route_tau,
+                    route_start_nodes=route_start_nodes,
+                    route_end_nodes=route_end_nodes,
+                    robot_ids=robot_ids,
+                    route_arc_prune=bool(getattr(cfg, "route_arc_prune", True)),
+                )
+                if bool(warm_bound_needed)
+                else {"ok": False, "reason": "skipped_no_route_prune", "model_cmax": 0.0}
             )
             if bool(warm_prune_bound_diag.get("ok", False)) and float(warm_prune_bound_diag.get("model_cmax", 0.0) or 0.0) > 0.0:
                 route_prune_slot_time_ub = max(
@@ -4177,25 +4807,42 @@ class GlobalXYZUSolver:
             time_big_m_diagnostics.update(fixed_route_arc_diag)
             protected_route_arcs = set(protected_route_arcs) | required_route_arcs
             protected_route_arcs.update(fixed_route_arcs_from_sequence)
-            resource_route_arcs, resource_prune_diag = self._prune_route_arcs_by_resource_bounds(
-                route_nodes=route_nodes,
-                route_tasks=route_tasks,
-                route_arcs=legal_route_arcs,
-                route_tau=route_tau,
-                route_start_nodes=route_start_nodes,
-                route_end_nodes=route_end_nodes,
-                pickup_service_lb_by_node=pickup_service_lb_by_node,
-                pickup_service_ub_by_node=pickup_service_ub_by_node,
-                slot_time_ub=float(route_prune_slot_time_ub),
-                robot_capacity=int(robot_capacity),
-                enable_time_window=bool(getattr(cfg, "enable_route_time_window_arc_prune", True)),
-                enable_load_interval=bool(getattr(cfg, "enable_route_load_interval_arc_prune", True)),
-                protected_arcs=protected_route_arcs,
-                node_latest_ub_by_node={
-                    int(k): float(v)
-                    for k, v in dict(warm_prune_bound_diag.get("route_node_latest_ub_by_node", {}) or {}).items()
-                },
+            protected_route_arcs.update(extra_protected_route_arcs)
+            resource_prune_enabled = bool(
+                getattr(cfg, "enable_route_time_window_arc_prune", True)
+                or getattr(cfg, "enable_route_load_interval_arc_prune", True)
             )
+            if bool(resource_prune_enabled):
+                resource_route_arcs, resource_prune_diag = self._prune_route_arcs_by_resource_bounds(
+                    route_nodes=route_nodes,
+                    route_tasks=route_tasks,
+                    route_arcs=legal_route_arcs,
+                    route_tau=route_tau,
+                    route_start_nodes=route_start_nodes,
+                    route_end_nodes=route_end_nodes,
+                    pickup_service_lb_by_node=pickup_service_lb_by_node,
+                    pickup_service_ub_by_node=pickup_service_ub_by_node,
+                    slot_time_ub=float(route_prune_slot_time_ub),
+                    robot_capacity=int(robot_capacity),
+                    enable_time_window=bool(getattr(cfg, "enable_route_time_window_arc_prune", True)),
+                    enable_load_interval=bool(getattr(cfg, "enable_route_load_interval_arc_prune", True)),
+                    protected_arcs=protected_route_arcs,
+                    node_latest_ub_by_node={
+                        int(k): float(v)
+                        for k, v in dict(warm_prune_bound_diag.get("route_node_latest_ub_by_node", {}) or {}).items()
+                    },
+                )
+            else:
+                resource_route_arcs = list(legal_route_arcs)
+                resource_prune_diag = {
+                    "u_time_window_pruned_arc_count": 0,
+                    "u_load_interval_pruned_arc_count": 0,
+                    "u_protected_arc_kept_after_prune_count": 0,
+                    "u_resource_pruned_arc_count": 0,
+                    "u_arc_count_after_resource_prune": int(len(resource_route_arcs)),
+                    "route_time_window_prune_slot_time_ub": float(route_prune_slot_time_ub),
+                    "u_resource_prune_reason": "skipped_disabled",
+                }
             if bool(getattr(cfg, "enable_route_directional_arc_prune", False)):
                 resource_route_arcs, directional_prune_diag = self._prune_route_arcs_by_directional_bounds(
                     route_nodes=route_nodes,
@@ -4354,6 +5001,8 @@ class GlobalXYZUSolver:
         stack_equivalence_lex_count = 0
         slot_load_lex_count = 0
         slot_station_lex_count = 0
+        required_slot_active_lb_count = 0
+        slot_min_pick_workload_lb_count = 0
         tote_equivalence_lex_count = 0
         global_routing_workload_cut_count = 0
 
@@ -4390,6 +5039,31 @@ class GlobalXYZUSolver:
                         name=f"SlotLoadLex_{order_id}_{idx}",
                     )
                     slot_load_lex_count += 1
+            required_active_count = int(math.ceil(float(len(sku_ids)) / max(1, int(cap_limit)))) if sku_ids else 0
+            if required_active_count >= len(slot_ids) and slot_ids:
+                for slot_id in slot_ids:
+                    model.addConstr(a[int(slot_id)] == 1, name=f"RequiredSlotActive_{int(order_id)}_{int(slot_id)}")
+                    required_slot_active_lb_count += 1
+            min_order_pick_qty = min(
+                [
+                    int(demand_qty_by_order_sku.get((int(order_id), int(sku_id)), 0) or 0)
+                    for sku_id in sku_ids
+                    if int(demand_qty_by_order_sku.get((int(order_id), int(sku_id)), 0) or 0) > 0
+                ]
+                or [0]
+            )
+            if min_order_pick_qty > 0:
+                for slot_id in slot_ids:
+                    slot_pick_qty = gp.quicksum(
+                        int(unit.demand_qty) * x[str(unit.unit_id), int(slot_id)]
+                        for unit in work_units
+                        if int(unit.order_id) == int(order_id)
+                    )
+                    model.addConstr(
+                        slot_pick_qty >= float(min_order_pick_qty) * a[int(slot_id)],
+                        name=f"SlotMinPickWorkloadLB_{int(order_id)}_{int(slot_id)}",
+                    )
+                    slot_min_pick_workload_lb_count += 1
 
         # -----------------------------
         # Y 层约束：每个激活槽位选择一个 station/rank，未激活槽位时间绑定为 0。
@@ -4532,6 +5206,7 @@ class GlobalXYZUSolver:
         uz_lb_cut_count = 0
         sku_cover_cut_count = 0
         slot_min_arrival_lb_count = 0
+        station_release_workload_lb_count = 0
         route_incident_travel_lb_count = 0
         route_pair_service_travel_lb_count = 0
         route_slot_stack_count_lb_count = 0
@@ -4542,7 +5217,10 @@ class GlobalXYZUSolver:
         global_selected_route_workload_lb_count = 0
         global_selected_station_workload_lb_count = 0
         order_workload_lb_count = 0
+        station_clock_linear_count = 0
         anchor_first_order_robot_count = 0
+        sort_hit_tote_threshold_count = 0
+        sort_hit_tote_threshold = max(0, int(getattr(cfg, "sort_hit_tote_threshold", 3) or 0))
 
         # -----------------------------
         # Z 层约束：模式选择、tote 携带/命中/noise 关系、需求覆盖和容量。
@@ -4560,6 +5238,8 @@ class GlobalXYZUSolver:
                 stack_hit_totes = [tote_id for tote_id in demand_hit_totes if int(tote_to_stack.get(int(tote_id), -1)) == int(stack_id)]
                 stack_hit_tote_set = set(int(tote_id) for tote_id in stack_hit_totes)
                 stack_use_expr_by_slot_stack[(sid, int(stack_id))] = stack_use_expr
+                sort_choice_expr = gp.quicksum(sort_var[key] for key in sort_keys)
+                hit_count_expr = gp.quicksum(hit[sid, int(tote_id)] for tote_id in stack_hit_totes)
                 # 缓存 stack 级别载荷和机器人服务时间，U 层会复用这些线性表达式。
                 stack_load_expr_by_slot_stack[(sid, int(stack_id))] = gp.quicksum(carry[sid, int(tote_id)] for tote_id in stack_totes)
                 stack_robot_service_expr_by_slot_stack[(sid, int(stack_id))] = gp.quicksum(
@@ -4579,6 +5259,18 @@ class GlobalXYZUSolver:
                         gp.quicksum(carry[sid, int(tote_id)] for tote_id in stack_totes) <= int(getattr(OFSConfig, "ROBOT_CAPACITY", 8)) * stack_use_expr,
                         name=f"CarryStackBind_{sid}_{stack_id}",
                     )
+                # If a selected stack hits more than the configured tote threshold, it must use SORT;
+                # otherwise it must use FLIP. This keeps mode selection deterministic by hit count.
+                hit_big_m = max(1, len(stack_hit_totes))
+                model.addConstr(
+                    hit_count_expr <= float(sort_hit_tote_threshold) + float(hit_big_m) * sort_choice_expr,
+                    name=f"SortByHitThresholdUB_{sid}_{stack_id}",
+                )
+                model.addConstr(
+                    hit_count_expr >= float(sort_hit_tote_threshold + 1) * sort_choice_expr,
+                    name=f"SortByHitThresholdLB_{sid}_{stack_id}",
+                )
+                sort_hit_tote_threshold_count += 2
                 for tote_id in stack_totes:
                     cover_keys = tote_sort_cover_map.get((sid, int(tote_id)), [])
                     sort_cover_expr = gp.quicksum(sort_var[key] for key in cover_keys)
@@ -4925,6 +5617,25 @@ class GlobalXYZUSolver:
                             station_finish_clock[int(station_id), int(rank)] == finish[sid],
                             name=f"StationFinishClockEq_{station_id}_{rank}_{sid}",
                         )
+                        if bool(getattr(cfg, "enable_station_clock_linear", False)):
+                            y_off = 1 - y[sid, int(station_id), int(rank)]
+                            model.addConstr(
+                                station_arrival_clock[int(station_id), int(rank)] >= arrival[sid] - slot_time_ub * y_off,
+                                name=f"StationArrivalClockLinearLB_{station_id}_{rank}_{sid}",
+                            )
+                            model.addConstr(
+                                station_arrival_clock[int(station_id), int(rank)] <= arrival[sid] + slot_time_ub * y_off,
+                                name=f"StationArrivalClockLinearUB_{station_id}_{rank}_{sid}",
+                            )
+                            model.addConstr(
+                                station_finish_clock[int(station_id), int(rank)] >= finish[sid] - slot_time_ub * y_off,
+                                name=f"StationFinishClockLinearLB_{station_id}_{rank}_{sid}",
+                            )
+                            model.addConstr(
+                                station_finish_clock[int(station_id), int(rank)] <= finish[sid] + slot_time_ub * y_off,
+                                name=f"StationFinishClockLinearUB_{station_id}_{rank}_{sid}",
+                            )
+                            station_clock_linear_count += 4
                         if rank > 0:
                             model.addGenConstrIndicator(
                                 y[sid, int(station_id), int(rank)],
@@ -4938,6 +5649,17 @@ class GlobalXYZUSolver:
                                 start[sid] >= station_finish_clock[int(station_id), int(rank - 1)],
                                 name=f"StationStartAfterPrev_{station_id}_{rank}_{sid}",
                             )
+                            if bool(getattr(cfg, "enable_station_clock_linear", False)):
+                                y_off = 1 - y[sid, int(station_id), int(rank)]
+                                model.addConstr(
+                                    arrival[sid] >= station_arrival_clock[int(station_id), int(rank - 1)] - slot_time_ub * y_off,
+                                    name=f"StationArrivalMonotoneLinear_{station_id}_{rank}_{sid}",
+                                )
+                                model.addConstr(
+                                    start[sid] >= station_finish_clock[int(station_id), int(rank - 1)] - slot_time_ub * y_off,
+                                    name=f"StationStartAfterPrevLinear_{station_id}_{rank}_{sid}",
+                                )
+                                station_clock_linear_count += 2
             if bool(getattr(cfg, "enable_resource_lex_symmetry", True)):
                 station_coord_groups: Dict[Tuple[float, float], List[int]] = defaultdict(list)
                 for idx, station in enumerate(getattr(problem, "station_list", []) or []):
@@ -5164,6 +5886,7 @@ class GlobalXYZUSolver:
 
             if bool(getattr(cfg, "enable_slot_min_arrival_lb", False)):
                 arrival_avg_denominator = float(max(1, int(cap_limit)))
+                slot_min_intrinsic_by_slot: Dict[int, float] = {}
                 for slot in slots:
                     sid = int(slot.slot_id)
                     intrinsic_terms = []
@@ -5177,6 +5900,7 @@ class GlobalXYZUSolver:
                             intrinsic_values.append(float(value))
                             intrinsic_terms.append(value * pair_activate[key])
                     if intrinsic_values:
+                        slot_min_intrinsic_by_slot[int(sid)] = float(min(intrinsic_values))
                         model.addConstr(
                             arrival[sid] >= float(min(intrinsic_values)) * a[sid],
                             name=f"SlotArrivalMinIntrinsicLB_{sid}",
@@ -5188,6 +5912,30 @@ class GlobalXYZUSolver:
                             name=f"SlotArrivalAvgIntrinsicLB_{sid}",
                         )
                         slot_min_arrival_lb_count += 1
+                release_thresholds = sorted(
+                    {
+                        round(float(value), 6)
+                        for value in slot_min_intrinsic_by_slot.values()
+                        if float(value) > 1e-9
+                    }
+                )
+                for threshold in release_thresholds:
+                    suffix_workload_terms = []
+                    for slot in slots:
+                        sid = int(slot.slot_id)
+                        release_lb = float(slot_min_intrinsic_by_slot.get(sid, 0.0) or 0.0)
+                        if release_lb + 1e-9 < float(threshold):
+                            continue
+                        suffix_workload_terms.append(
+                            float(getattr(OFSConfig, "PICKING_TIME", 1.0)) * total_pick_qty_expr_by_slot[sid]
+                            + station_service_expr_by_slot[sid]
+                        )
+                    if suffix_workload_terms:
+                        model.addConstr(
+                            cmax >= float(threshold) + gp.quicksum(suffix_workload_terms) / max(1, len(station_ids)),
+                            name=f"StationReleaseSuffixWorkloadLB_{str(threshold).replace('.', '_')}",
+                        )
+                        station_release_workload_lb_count += 1
 
             if slot_robot is not None:
                 # 同一 slot 的所有激活 stack 访问绑定到同一机器人，匹配 SubTask.assigned_robot_id 字段语义。
@@ -5460,10 +6208,12 @@ class GlobalXYZUSolver:
                 "enable_anchor_first_order_robot": bool(getattr(cfg, "enable_anchor_first_order_robot", False)),
                 "enable_selected_workload_lbs": bool(getattr(cfg, "enable_selected_workload_lbs", True)),
                 "enable_route_arrival_slot_linear": bool(getattr(cfg, "enable_route_arrival_slot_linear", False)),
+                "enable_station_clock_linear": bool(getattr(cfg, "enable_station_clock_linear", False)),
                 "kitting_span_penalty_weight": float(span_weight),
                 "uz_lb_cut_count": int(uz_lb_cut_count),
                 "sku_cover_cut_count": int(sku_cover_cut_count),
                 "slot_min_arrival_lb_count": int(slot_min_arrival_lb_count),
+                "station_release_workload_lb_count": int(station_release_workload_lb_count),
                 "route_incident_travel_lb_count": int(route_incident_travel_lb_count),
                 "route_pair_service_travel_lb_count": int(route_pair_service_travel_lb_count),
                 "route_slot_stack_count_lb_count": int(route_slot_stack_count_lb_count),
@@ -5471,9 +6221,14 @@ class GlobalXYZUSolver:
                 "global_arrival_workload_lb_count": int(global_arrival_workload_lb_count),
                 "u_sec_cut_count": int(route_service_sec_cut_count),
                 "route_arrival_slot_linear_count": int(route_arrival_slot_linear_count),
+                "station_clock_linear_count": int(station_clock_linear_count),
+                "sort_hit_tote_threshold": int(sort_hit_tote_threshold),
+                "sort_hit_tote_threshold_count": int(sort_hit_tote_threshold_count),
                 "global_selected_route_workload_lb_count": int(global_selected_route_workload_lb_count),
                 "global_selected_station_workload_lb_count": int(global_selected_station_workload_lb_count),
                 "order_workload_lb_count": int(order_workload_lb_count),
+                "required_slot_active_lb_count": int(required_slot_active_lb_count),
+                "slot_min_pick_workload_lb_count": int(slot_min_pick_workload_lb_count),
                 "order_deadline_intrinsic_lb_count": int(order_deadline_intrinsic_lb_count),
                 "station_rank_prefix_process_lb_count": int(station_rank_prefix_process_lb_count),
                 "robot_task_count_lex_count": int(robot_task_count_lex_count),
@@ -5521,6 +6276,7 @@ class GlobalXYZUSolver:
             "auto_max_rank": int(auto_max_rank),
             "effective_max_rank": int(max_rank),
             "max_rank": max_rank,
+            "slots": slots,
             "station_ids": station_ids,
             "robot_ids": robot_ids,
             "integrate_u_route": integrate_u_route,
@@ -5571,7 +6327,11 @@ class GlobalXYZUSolver:
             "warm_start_capacity_violation_count": 0,
             "warm_start_time_inconsistency_count": 0,
             "warm_start_filtered_tote_count": 0,
+            "warm_start_duplicate_tote_filtered_count": 0,
+            "warm_start_duplicate_tote_ids": [],
+            "warm_start_duplicate_tote_slots": [],
             "warm_start_skipped_mode_count": 0,
+            "warm_start_uncovered_sku_start_skipped_count": 0,
             "warm_start_route_steps": {},
             "warm_start_slot_times": [],
             "warm_start_time_violations": [],
@@ -5588,6 +6348,9 @@ class GlobalXYZUSolver:
             "warm_start_route_repair_repaired_route_end_max": 0.0,
             "warm_start_route_repair_original_used_robot_count": 0,
             "warm_start_route_repair_repaired_used_robot_count": 0,
+            "warm_start_profile_repaired_empty_count": 0,
+            "warm_start_profile_donor_move_count": 0,
+            "warm_start_profile_unrepaired_empty_slots": [],
         }
         if warm is None or not warm.subtask_by_order:
             diagnostics["warm_start_u_skipped_reason"] = "empty_warm_start"
@@ -5636,6 +6399,7 @@ class GlobalXYZUSolver:
             for node_id, value in dict(payload.get("route_node_time_ub", {}) or {}).items()
         }
         robot_ids = sorted(int(r) for r in (payload.get("robot_ids", []) or []))
+        station_ids = [int(station_id) for station_id in (payload.get("station_ids", []) or [])]
         max_rank = int(payload.get("max_rank", 0))
         station_arrival_clock = payload.get("station_arrival_clock")
         station_finish_clock = payload.get("station_finish_clock")
@@ -5644,11 +6408,15 @@ class GlobalXYZUSolver:
         order_span_overrun = payload.get("order_span_overrun")
         order_deadline_overrun = payload.get("order_deadline_overrun")
         slot_ids_by_order: Dict[int, List[int]] = prepared["slot_ids_by_order"]
+        unique_skus_by_order: Dict[int, List[int]] = prepared.get("unique_skus_by_order", {})
         units_by_order_sku: Dict[Tuple[int, int], List[str]] = prepared["units_by_order_sku"]
         demand_qty_by_order_sku: Dict[Tuple[int, int], int] = prepared["demand_qty_by_order_sku"]
+        tote_sku_qty: Dict[Tuple[int, int], int] = prepared.get("tote_sku_qty", {})
         flip_cost_by_tote: Dict[int, float] = prepared.get("flip_cost_by_tote", {})
         depot_dist_by_stack: Dict[int, float] = prepared.get("depot_dist_by_stack", {})
         stack_station_dist: Dict[Tuple[int, int], float] = prepared.get("stack_station_dist", {})
+        demand_hit_totes_by_order: Dict[int, List[int]] = prepared.get("demand_hit_totes_by_order", {})
+        tote_to_stack: Dict[int, int] = prepared.get("tote_to_stack", {})
         robot_capacity = int(getattr(OFSConfig, "ROBOT_CAPACITY", 8))
         cfg = payload.get("cfg")
 
@@ -5662,29 +6430,98 @@ class GlobalXYZUSolver:
                 except Exception:
                     pass
 
+        def _unset_starts(var_container: Any) -> None:
+            if var_container is None:
+                return
+            values = var_container.values() if hasattr(var_container, "values") else [var_container]
+            for var in values:
+                try:
+                    var.Start = GRB.UNDEFINED
+                except Exception:
+                    pass
+
+        # SP3 now guarantees a globally covered, tote-unique candidate before
+        # reaching this projection.  Initialise the complete model start to
+        # zero, then turn on the selected X/Y/Z/U decisions below.  A complete
+        # start is essential at M8/M9 scale: leaving hundreds of thousands of
+        # route binaries undefined makes Gurobi abandon start completion before
+        # it can construct an incumbent.
         for var_container in [
-            x, a, sku_use, y, flip, sort_var, carry, hit, noise, flip_hit,
-            pair_activate, pass_x, route_arc, slot_robot, arrival, start, finish, cmax,
+            a, y, pass_x, route_arc, slot_robot, arrival, start, finish, cmax,
             route_owner, route_time, route_load, route_finish, station_arrival_clock, station_finish_clock,
             order_arrival_lb, order_arrival_ub, order_span_overrun, order_deadline_overrun,
         ]:
             _zero_starts(var_container)
+        for var_container in [flip, sort_var, carry, hit, noise, flip_hit, pair_activate, x, sku_use]:
+            _unset_starts(var_container)
+        if route_owner is not None:
+            robot_pos_by_id = {int(robot_id): int(pos) for pos, robot_id in enumerate(robot_ids)}
+            for robot_id in robot_ids:
+                owner_pos = float(robot_pos_by_id[int(robot_id)])
+                start_node = int(route_start_nodes.get(int(robot_id), -1))
+                end_node = int(route_end_nodes.get(int(robot_id), -1))
+                if start_node in route_owner:
+                    route_owner[start_node].Start = owner_pos
+                if end_node in route_owner:
+                    route_owner[end_node].Start = owner_pos
 
         slot_to_warm_subtask: Dict[int, SubTask] = {}
         slot_station_rank: Dict[int, Tuple[int, int]] = {}
+        slot_start_load_by_slot: Dict[int, int] = defaultdict(int)
+        slot_start_sku_ids_by_slot: Dict[int, Set[int]] = defaultdict(set)
+        slot_repair_seed_by_slot: Dict[int, Dict[str, int]] = {}
         slot_unit_count: Dict[int, int] = defaultdict(int)
         slot_noise_count: Dict[int, int] = defaultdict(int)
         for order_id, slot_ids in slot_ids_by_order.items():
-            rows = list(warm.subtask_by_order.get(int(order_id), []))
-            rows.sort(key=lambda row: int(getattr(row, "id", -1)))
-            for idx, st in enumerate(rows):
-                if idx >= len(slot_ids):
-                    break
-                slot_id = int(slot_ids[idx])
+            profiles = self._canonical_warm_slot_profiles(
+                order_id=int(order_id),
+                warm_rows=list(warm.subtask_by_order.get(int(order_id), [])),
+                slot_ids=list(slot_ids or []),
+                units_by_order_sku=units_by_order_sku,
+                tote_sku_qty=tote_sku_qty,
+            )
+            profiles, profile_repair_diag = self._repair_nonempty_warm_slot_profiles(
+                order_id=int(order_id),
+                profiles=profiles,
+                units_by_order_sku=units_by_order_sku,
+                demand_hit_totes_by_order=demand_hit_totes_by_order,
+                tote_to_stack=tote_to_stack,
+                tote_sku_qty=tote_sku_qty,
+            )
+            diagnostics["warm_start_profile_repaired_empty_count"] = (
+                int(diagnostics["warm_start_profile_repaired_empty_count"])
+                + int(profile_repair_diag.get("warm_start_profile_repaired_empty_count", 0) or 0)
+            )
+            diagnostics["warm_start_profile_donor_move_count"] = (
+                int(diagnostics["warm_start_profile_donor_move_count"])
+                + int(profile_repair_diag.get("warm_start_profile_donor_move_count", 0) or 0)
+            )
+            diagnostics["warm_start_profile_unrepaired_empty_slots"] = (
+                list(diagnostics.get("warm_start_profile_unrepaired_empty_slots", []) or [])
+                + list(profile_repair_diag.get("warm_start_profile_unrepaired_empty_slots", []) or [])
+            )
+            for profile in profiles:
+                if int(profile.get("start_load", 0) or 0) <= 0:
+                    diagnostics["warm_start_skipped_mode_count"] = (
+                        int(diagnostics["warm_start_skipped_mode_count"]) + 1
+                    )
+                    continue
+                st = profile["subtask"]
+                slot_id = int(profile["slot_id"])
                 slot_to_warm_subtask[slot_id] = st
                 a[slot_id].Start = 1.0
-                station_id = int(getattr(st, "assigned_station_id", -1))
-                rank = int(getattr(st, "station_sequence_rank", -1))
+                station_id = int(profile.get("station_id", -1))
+                rank = int(profile.get("rank", -1))
+                slot_start_load_by_slot[slot_id] = int(profile.get("start_load", 0) or 0)
+                slot_start_sku_ids_by_slot[slot_id] = set(
+                    int(sku_id) for sku_id in (profile.get("start_sku_ids", []) or [])
+                )
+                if isinstance(profile.get("repair_seed"), dict):
+                    slot_repair_seed_by_slot[slot_id] = {
+                        "sku_id": int(profile["repair_seed"].get("sku_id", -1)),
+                        "tote_id": int(profile["repair_seed"].get("tote_id", -1)),
+                        "stack_id": int(profile["repair_seed"].get("stack_id", -1)),
+                    }
                 slot_station_rank[slot_id] = (int(station_id), int(rank))
                 if station_id >= 0 and 0 <= rank < max_rank and (slot_id, station_id, rank) in y:
                     y[slot_id, station_id, rank].Start = 1.0
@@ -5695,28 +6532,72 @@ class GlobalXYZUSolver:
         }
         selected_route_rows: List[Dict[str, Any]] = []
         selected_route_keys: Set[int] = set()
+        selected_stack_start_keys: Set[Tuple[int, int]] = set()
         pending_pair_activate_keys: Set[Tuple[int, int, int]] = set()
         skipped_reasons: List[str] = []
+        warm_tote_owner: Dict[int, int] = {}
+        duplicate_tote_slots: Set[int] = set()
+
+        def _claim_warm_totes(slot_id: int, tote_ids: Iterable[int]) -> List[int]:
+            claimed: List[int] = []
+            for raw_tote_id in tote_ids:
+                tote_id = int(raw_tote_id)
+                owner = warm_tote_owner.get(tote_id)
+                if owner is not None and int(owner) != int(slot_id):
+                    diagnostics["warm_start_duplicate_tote_filtered_count"] = (
+                        int(diagnostics["warm_start_duplicate_tote_filtered_count"]) + 1
+                    )
+                    diagnostics["warm_start_duplicate_tote_ids"] = sorted(set(
+                        list(diagnostics.get("warm_start_duplicate_tote_ids", []) or []) + [int(tote_id)]
+                    ))
+                    duplicate_tote_slots.add(int(slot_id))
+                    continue
+                warm_tote_owner[tote_id] = int(slot_id)
+                claimed.append(int(tote_id))
+            return claimed
 
         for slot_id, st in slot_to_warm_subtask.items():
             order_id = int(getattr(getattr(st, "parent_order", None), "order_id", -1))
             station_id = int(getattr(st, "assigned_station_id", -1))
-            seen_slot_skus: Set[int] = set()
+            start_sku_ids = set(int(sku_id) for sku_id in slot_start_sku_ids_by_slot.get(int(slot_id), set()))
+            slot_sku_ids: List[int] = []
+            seen_profile_skus: Set[int] = set()
             for sku in getattr(st, "sku_list", []) or []:
                 sku_id = int(getattr(sku, "id", -1))
+                if sku_id < 0 or sku_id in seen_profile_skus:
+                    continue
+                seen_profile_skus.add(int(sku_id))
+                slot_sku_ids.append(int(sku_id))
+            for sku_id in sorted(start_sku_ids):
+                if int(sku_id) not in seen_profile_skus:
+                    slot_sku_ids.append(int(sku_id))
+                    seen_profile_skus.add(int(sku_id))
+            seen_slot_skus: Set[int] = set()
+            for sku_id in slot_sku_ids:
+                sku_id = int(sku_id)
                 if sku_id in seen_slot_skus:
                     continue
                 seen_slot_skus.add(int(sku_id))
-                if (order_id, sku_id, slot_id) in sku_use:
-                    sku_use[order_id, sku_id, slot_id].Start = 1.0
+                # If the heuristic SP3 route did not actually hit a tote carrying
+                # this SKU, forcing x/sku_use=1 makes Gurobi reject the whole MIP
+                # start on DemandCover. Leave it undefined so MIP-start repair can
+                # complete the assignment.
+                if sku_id not in start_sku_ids:
+                    diagnostics["warm_start_uncovered_sku_start_skipped_count"] = (
+                        int(diagnostics["warm_start_uncovered_sku_start_skipped_count"]) + 1
+                    )
+                    continue
                 key = (order_id, sku_id)
                 if not available_units.get(key):
                     continue
                 unit_id = available_units[key].popleft()
                 if (str(unit_id), slot_id) in x:
                     x[str(unit_id), slot_id].Start = 1.0
+                    if (order_id, sku_id, slot_id) in sku_use:
+                        sku_use[order_id, sku_id, slot_id].Start = 1.0
                     slot_unit_count[int(slot_id)] += int(demand_qty_by_order_sku.get((order_id, sku_id), 0) or 0)
 
+            slot_route_start_count = 0
             for task in getattr(st, "execution_tasks", []) or []:
                 stack_id = int(getattr(task, "target_stack_id", -1))
                 mode = str(getattr(task, "operation_mode", "FLIP")).upper()
@@ -5732,7 +6613,13 @@ class GlobalXYZUSolver:
                     if not hit_totes:
                         hit_totes = list(target_totes)
                     # FLIP 只携带命中 tote，避免把不受 FLIP/SORT 覆盖的噪声 tote 写进 carry。
-                    carried_totes = list(dict.fromkeys(int(tote_id) for tote_id in hit_totes if (slot_id, int(tote_id)) in carry))
+                    carried_totes = _claim_warm_totes(
+                        int(slot_id),
+                        dict.fromkeys(int(tote_id) for tote_id in hit_totes if (slot_id, int(tote_id)) in carry),
+                    )
+                    if not carried_totes:
+                        flip[slot_id, stack_id].Start = 0.0
+                        mode_selected = False
                     for tote_id in carried_totes:
                         if (slot_id, tote_id) in carry:
                             carry[slot_id, tote_id].Start = 1.0
@@ -5747,6 +6634,7 @@ class GlobalXYZUSolver:
                 elif mode == "SORT":
                     layer_range = getattr(task, "sort_layer_range", None)
                     requested_totes = set(int(tote_id) for tote_id in target_totes + hit_totes + noise_totes)
+                    selected_sort_key = None
                     if layer_range is not None:
                         sort_key = (slot_id, stack_id, int(layer_range[0]), int(layer_range[1]))
                         selected_sort_key = sort_key if sort_key in sort_var else None
@@ -5755,42 +6643,45 @@ class GlobalXYZUSolver:
                             interval_tote_set = set(int(tote_id) for tote_id in getattr(interval, "tote_ids", []) or [])
                             if requested_totes and interval_tote_set and not requested_totes.issubset(interval_tote_set):
                                 selected_sort_key = None
-                        if selected_sort_key is None and requested_totes:
-                            for candidate_key, interval in interval_lookup.items():
-                                if int(candidate_key[0]) != int(slot_id) or int(candidate_key[1]) != int(stack_id):
-                                    continue
-                                candidate_totes = set(int(tote_id) for tote_id in getattr(interval, "tote_ids", []) or [])
-                                if requested_totes.issubset(candidate_totes) and candidate_key in sort_var:
-                                    selected_sort_key = candidate_key
-                                    diagnostics["warm_start_filtered_tote_count"] = int(diagnostics["warm_start_filtered_tote_count"]) + 1
-                                    break
-                        if selected_sort_key is not None:
-                            sort_var[selected_sort_key].Start = 1.0
-                            mode_selected = True
-                            interval = interval_lookup.get(selected_sort_key)
-                            service_time_model = float(getattr(interval, "robot_service_time", 0.0) or 0.0)
-                            interval_tote_set = set(int(tote_id) for tote_id in getattr(interval, "tote_ids", []) or [])
-                            if not interval_tote_set:
-                                interval_tote_set = set(int(tote_id) for tote_id in target_totes)
-                            filtered_count = len(requested_totes - interval_tote_set)
-                            if filtered_count:
-                                diagnostics["warm_start_filtered_tote_count"] = int(diagnostics["warm_start_filtered_tote_count"]) + int(filtered_count)
-                            carried_totes = [
-                                int(tote_id)
-                                for tote_id in target_totes
-                                if int(tote_id) in interval_tote_set and (slot_id, int(tote_id)) in carry
-                            ]
-                            for tote_id in carried_totes:
-                                carry[slot_id, tote_id].Start = 1.0
-                            for tote_id in hit_totes:
-                                tote_id = int(tote_id)
-                                if tote_id in interval_tote_set and (slot_id, tote_id) in hit:
-                                    hit[slot_id, tote_id].Start = 1.0
-                            for tote_id in noise_totes:
-                                tote_id = int(tote_id)
-                                if tote_id in interval_tote_set and (slot_id, tote_id) in noise:
-                                    noise[slot_id, tote_id].Start = 1.0
-                                    slot_noise_count[int(slot_id)] += 1
+                    if selected_sort_key is None and requested_totes:
+                        for candidate_key, interval in interval_lookup.items():
+                            if int(candidate_key[0]) != int(slot_id) or int(candidate_key[1]) != int(stack_id):
+                                continue
+                            candidate_totes = set(int(tote_id) for tote_id in getattr(interval, "tote_ids", []) or [])
+                            if requested_totes.issubset(candidate_totes) and candidate_key in sort_var:
+                                selected_sort_key = candidate_key
+                                diagnostics["warm_start_filtered_tote_count"] = int(diagnostics["warm_start_filtered_tote_count"]) + 1
+                                break
+                    if selected_sort_key is not None:
+                        sort_var[selected_sort_key].Start = 1.0
+                        mode_selected = True
+                        interval = interval_lookup.get(selected_sort_key)
+                        service_time_model = float(getattr(interval, "robot_service_time", 0.0) or 0.0)
+                        interval_tote_set = set(int(tote_id) for tote_id in getattr(interval, "tote_ids", []) or [])
+                        if not interval_tote_set:
+                            interval_tote_set = set(int(tote_id) for tote_id in target_totes)
+                        filtered_count = len(requested_totes - interval_tote_set)
+                        if filtered_count:
+                            diagnostics["warm_start_filtered_tote_count"] = int(diagnostics["warm_start_filtered_tote_count"]) + int(filtered_count)
+                        carried_totes = _claim_warm_totes(int(slot_id), [
+                            int(tote_id)
+                            for tote_id in target_totes
+                            if int(tote_id) in interval_tote_set and (slot_id, int(tote_id)) in carry
+                        ])
+                        if not carried_totes:
+                            sort_var[selected_sort_key].Start = GRB.UNDEFINED
+                            mode_selected = False
+                        for tote_id in carried_totes:
+                            carry[slot_id, tote_id].Start = 1.0
+                        for tote_id in hit_totes:
+                            tote_id = int(tote_id)
+                            if tote_id in set(carried_totes) and (slot_id, tote_id) in hit:
+                                hit[slot_id, tote_id].Start = 1.0
+                        for tote_id in noise_totes:
+                            tote_id = int(tote_id)
+                            if tote_id in set(carried_totes) and (slot_id, tote_id) in noise:
+                                noise[slot_id, tote_id].Start = 1.0
+                                slot_noise_count[int(slot_id)] += 1
                 if not mode_selected:
                     diagnostics["warm_start_skipped_mode_count"] = int(diagnostics["warm_start_skipped_mode_count"]) + 1
                     skipped_reasons.append(f"missing_mode_var:slot={slot_id},stack={stack_id},mode={mode}")
@@ -5801,10 +6692,23 @@ class GlobalXYZUSolver:
                         pair_activate[slot_id, stack_id, station_id].Start = 1.0
                 if route_key < 0 or route_key in selected_route_keys:
                     if route_key < 0:
-                        skipped_reasons.append(f"missing_route_task:slot={slot_id},stack={stack_id},station={station_id}")
+                        diagnostics["warm_start_filtered_route_task_count"] = int(
+                            diagnostics.get("warm_start_filtered_route_task_count", 0) or 0
+                        ) + 1
+                        if (int(slot_id), int(stack_id)) in flip:
+                            flip[int(slot_id), int(stack_id)].Start = GRB.UNDEFINED
+                        for key, var in sort_var.items():
+                            if int(key[0]) == int(slot_id) and int(key[1]) == int(stack_id):
+                                var.Start = GRB.UNDEFINED
+                        for tote_id in set(target_totes + hit_totes + noise_totes):
+                            for container in (carry, hit, noise, flip_hit):
+                                if (int(slot_id), int(tote_id)) in container:
+                                    container[int(slot_id), int(tote_id)].Start = GRB.UNDEFINED
                     continue
+                selected_stack_start_keys.add((int(slot_id), int(stack_id)))
                 pending_pair_activate_keys.add((int(slot_id), int(stack_id), int(station_id)))
                 selected_route_keys.add(route_key)
+                slot_route_start_count += 1
                 robot_id = int(getattr(task, "robot_id", -1))
                 if robot_id < 0:
                     robot_id = int(getattr(st, "assigned_robot_id", -1))
@@ -5821,6 +6725,140 @@ class GlobalXYZUSolver:
                     "service_time": float(service_time_model),
                     "load": int(len(carried_totes)),
                 })
+            repair_seed = dict(slot_repair_seed_by_slot.get(int(slot_id), {}) or {})
+            if slot_route_start_count <= 0 and repair_seed:
+                repair_stack_id = int(repair_seed.get("stack_id", -1))
+                repair_tote_id = int(repair_seed.get("tote_id", -1))
+                repair_sku_id = int(repair_seed.get("sku_id", -1))
+                repair_station_id = int(station_id)
+                repair_tote_claimed = _claim_warm_totes(int(slot_id), [int(repair_tote_id)])
+                if not repair_tote_claimed:
+                    # The canonical empty-slot seed can collide with a tote already
+                    # used by another slot. Select an unowned tote carrying the same
+                    # SKU and having a legal stack/station route instead of emitting
+                    # a partial, infeasible MIP start.
+                    for candidate_tote_id in demand_hit_totes_by_order.get(int(order_id), []):
+                        candidate_tote_id = int(candidate_tote_id)
+                        if candidate_tote_id in warm_tote_owner:
+                            continue
+                        if int(tote_sku_qty.get((candidate_tote_id, repair_sku_id), 0) or 0) <= 0:
+                            continue
+                        candidate_stack_id = int(tote_to_stack.get(candidate_tote_id, -1))
+                        candidate_station_id = int(repair_station_id) if (
+                            int(slot_id), candidate_stack_id, int(repair_station_id)
+                        ) in route_task_by_tuple else -1
+                        if candidate_station_id < 0 or (int(slot_id), candidate_tote_id) not in carry:
+                            continue
+                        repair_tote_id = int(candidate_tote_id)
+                        repair_stack_id = int(candidate_stack_id)
+                        repair_station_id = int(candidate_station_id)
+                        repair_tote_claimed = _claim_warm_totes(int(slot_id), [int(repair_tote_id)])
+                        if repair_tote_claimed:
+                            # This branch is only entered when the slot has no valid
+                            # route row. Remove mode/load remnants from its failed
+                            # original seed before installing the alternative tote.
+                            for container in (flip, sort_var, carry, hit, noise, flip_hit, pair_activate):
+                                if container is None:
+                                    continue
+                                for key, var in container.items():
+                                    key_slot_id = int(key[0]) if isinstance(key, tuple) else int(key)
+                                    if key_slot_id == int(slot_id):
+                                        var.Start = GRB.UNDEFINED
+                            selected_stack_start_keys = {
+                                key for key in selected_stack_start_keys if int(key[0]) != int(slot_id)
+                            }
+                            duplicate_tote_slots.discard(int(slot_id))
+                            break
+                if (int(slot_id), repair_stack_id, repair_station_id) not in route_task_by_tuple:
+                    for candidate_station_id in station_ids:
+                        if (int(slot_id), repair_stack_id, int(candidate_station_id)) in route_task_by_tuple:
+                            repair_station_id = int(candidate_station_id)
+                            break
+                route_key = int(route_task_by_tuple.get((int(slot_id), repair_stack_id, repair_station_id), -1))
+                if (
+                    repair_stack_id >= 0
+                    and repair_tote_id >= 0
+                    and repair_sku_id >= 0
+                    and route_key >= 0
+                    and route_key not in selected_route_keys
+                ):
+                    if not repair_tote_claimed:
+                        continue
+                    if (int(slot_id), repair_stack_id) in flip:
+                        flip[int(slot_id), repair_stack_id].Start = 1.0
+                        selected_stack_start_keys.add((int(slot_id), int(repair_stack_id)))
+                    if (int(slot_id), repair_tote_id) in carry:
+                        carry[int(slot_id), repair_tote_id].Start = 1.0
+                    if (int(slot_id), repair_tote_id) in hit:
+                        hit[int(slot_id), repair_tote_id].Start = 1.0
+                    if (int(slot_id), repair_tote_id) in flip_hit:
+                        flip_hit[int(slot_id), repair_tote_id].Start = 1.0
+                    if not bool(payload.get("integrate_u_route", False)) and (int(slot_id), repair_stack_id, repair_station_id) in pair_activate:
+                        pair_activate[int(slot_id), repair_stack_id, repair_station_id].Start = 1.0
+                    pending_pair_activate_keys.add((int(slot_id), repair_stack_id, repair_station_id))
+                    selected_route_keys.add(route_key)
+                    fallback_robot_id = int(getattr(st, "assigned_robot_id", -1))
+                    if fallback_robot_id not in robot_ids and robot_ids:
+                        fallback_robot_id = int(robot_ids[0])
+                    selected_route_rows.append({
+                        "slot_id": int(slot_id),
+                        "route_key": int(route_key),
+                        "task_id": -1,
+                        "robot_id": int(fallback_robot_id),
+                        "trip_id": -1,
+                        "station_id": int(repair_station_id),
+                        "robot_visit_sequence": 10**6 + int(slot_id),
+                        "warm_stack_arrival": float(self._warm_subtask_arrival_lower(st)),
+                        "warm_station_arrival": float(self._warm_subtask_arrival_lower(st)),
+                        "service_time": float(flip_cost_by_tote.get(int(repair_tote_id), 0.0) or 0.0),
+                        "load": 1,
+                    })
+                else:
+                    skipped_reasons.append(
+                        f"missing_repair_route:slot={slot_id},stack={repair_stack_id},station={repair_station_id},sku={repair_sku_id}"
+                    )
+
+        diagnostics["warm_start_duplicate_tote_slots"] = sorted(int(v) for v in duplicate_tote_slots)
+        # A duplicate filtered from a slot may invalidate its coverage, mode and
+        # route decisions together. Leave that slot's complete X/Y/Z/U projection
+        # unspecified so Gurobi can repair it while retaining all conflict-free
+        # slots in the partial MIP start.
+        selected_route_rows = [
+            row for row in selected_route_rows
+            if int(row.get("slot_id", -1)) not in duplicate_tote_slots
+        ]
+        pending_pair_activate_keys = {
+            key for key in pending_pair_activate_keys if int(key[0]) not in duplicate_tote_slots
+        }
+        selected_stack_start_keys = {
+            key for key in selected_stack_start_keys if int(key[0]) not in duplicate_tote_slots
+        }
+        for container in (hit, noise, flip_hit):
+            for (slot_id, tote_id), var in container.items():
+                owner = warm_tote_owner.get(int(tote_id))
+                if owner is not None and int(owner) != int(slot_id):
+                    var.Start = GRB.UNDEFINED
+        for slot_id in sorted(duplicate_tote_slots):
+            a[int(slot_id)].Start = GRB.UNDEFINED
+            for key, var in y.items():
+                if int(key[0]) == int(slot_id):
+                    var.Start = GRB.UNDEFINED
+            for key, var in x.items():
+                if int(key[1]) == int(slot_id):
+                    var.Start = GRB.UNDEFINED
+            for key, var in sku_use.items():
+                if int(key[2]) == int(slot_id):
+                    var.Start = GRB.UNDEFINED
+            for container in (flip, sort_var, carry, hit, noise, flip_hit, pair_activate, slot_robot):
+                if container is None:
+                    continue
+                for key, var in container.items():
+                    key_slot_id = int(key[0]) if isinstance(key, tuple) else int(key)
+                    if key_slot_id == int(slot_id):
+                        var.Start = GRB.UNDEFINED
+            arrival[int(slot_id)].Start = GRB.UNDEFINED
+            start[int(slot_id)].Start = GRB.UNDEFINED
+            finish[int(slot_id)].Start = GRB.UNDEFINED
 
         selected_route_rows, robot_path_duration, robot_id_map, robot_id_swapped = self._swap_first_two_robot_ids_by_path_duration(
             selected_route_rows=selected_route_rows,
@@ -5940,6 +6978,54 @@ class GlobalXYZUSolver:
                     robot_capacity=robot_capacity,
                     route_arc_prune=bool(getattr(cfg, "route_arc_prune", True)),
                 )
+                # Enforce the robot symmetry order using the *rebuilt* route
+                # finish values.  SP4 arrival timestamps omit parts of the
+                # integrated route timing and are not precise enough for
+                # RobotFinishLex.  Relabel complete paths (task count first,
+                # exact finish second) and rebuild once more.
+                if bool(route_rebuild.get("ok", False)) and bool(
+                    getattr(cfg, "enable_robot_finish_lex_symmetry", True)
+                ):
+                    finish_by_robot = {
+                        int(k): float(v)
+                        for k, v in dict(route_rebuild.get("route_finish_start", {}) or {}).items()
+                    }
+                    task_count_by_robot: Dict[int, int] = defaultdict(int)
+                    for row in selected_route_rows:
+                        task_count_by_robot[int(row.get("robot_id", -1))] += 1
+                    source_order = sorted(
+                        (int(robot_id) for robot_id in robot_ids),
+                        key=lambda robot_id: (
+                            -int(task_count_by_robot.get(int(robot_id), 0)),
+                            -float(finish_by_robot.get(int(robot_id), 0.0) or 0.0),
+                            int(robot_id),
+                        ),
+                    )
+                    exact_robot_map = {
+                        int(source_id): int(target_id)
+                        for source_id, target_id in zip(source_order, sorted(int(r) for r in robot_ids))
+                    }
+                    if any(int(src) != int(dst) for src, dst in exact_robot_map.items()):
+                        selected_route_rows = [
+                            {
+                                **dict(row),
+                                "robot_id": int(exact_robot_map.get(int(row.get("robot_id", -1)), int(row.get("robot_id", -1)))),
+                            }
+                            for row in selected_route_rows
+                        ]
+                        route_rebuild = self._rebuild_warm_route_continuous_start(
+                            selected_route_rows=selected_route_rows,
+                            robot_ids=robot_ids,
+                            route_start_nodes=route_start_nodes,
+                            route_end_nodes=route_end_nodes,
+                            route_tasks=route_tasks,
+                            route_nodes=route_nodes,
+                            route_tau=route_tau,
+                            route_arc_keys={(int(i), int(j)) for (i, j) in route_arcs},
+                            robot_capacity=robot_capacity,
+                            route_arc_prune=bool(getattr(cfg, "route_arc_prune", True)),
+                        )
+                        diagnostics["warm_start_exact_robot_lex_map"] = dict(exact_robot_map)
                 route_rebuild_ok = bool(route_rebuild.get("ok", False))
                 diagnostics["warm_start_missing_arc_count"] = int(route_rebuild.get("missing_arc_count", 0) or 0)
                 diagnostics["warm_start_capacity_violation_count"] = int(route_rebuild.get("capacity_violation_count", 0) or 0)
@@ -5955,9 +7041,20 @@ class GlobalXYZUSolver:
                     diagnostics["warm_start_route_end_gap"] = float(route_end_max) - float(getattr(warm, "route_end", 0.0) or 0.0)
                     diagnostics["warm_start_route_steps"] = dict(route_rebuild.get("robot_path_logs", {}) or {})
                     if slot_robot is not None:
+                        assigned_slot_robots: Set[int] = set()
                         for slot_id, robot_id in (route_rebuild.get("slot_robot_choice", {}) or {}).items():
                             if (int(slot_id), int(robot_id)) in slot_robot:
                                 slot_robot[int(slot_id), int(robot_id)].Start = 1.0
+                                assigned_slot_robots.add(int(slot_id))
+                        for slot_id, st in slot_to_warm_subtask.items():
+                            slot_id = int(slot_id)
+                            if slot_id in assigned_slot_robots:
+                                continue
+                            fallback_robot_id = int(getattr(st, "assigned_robot_id", -1))
+                            if fallback_robot_id not in robot_ids and robot_ids:
+                                fallback_robot_id = int(robot_ids[0])
+                            if (slot_id, int(fallback_robot_id)) in slot_robot:
+                                slot_robot[slot_id, int(fallback_robot_id)].Start = 1.0
                     for key, value in (route_rebuild.get("pass_x_start", {}) or {}).items():
                         if key in pass_x:
                             pass_x[key].Start = float(value)
@@ -6003,6 +7100,28 @@ class GlobalXYZUSolver:
             for slot_id, station_rank in slot_station_rank.items()
             if int(station_rank[0]) >= 0 and int(station_rank[1]) >= 0
         ]
+        if active_slot_rows:
+            reranked_slot_rows = self._lex_aware_station_rank_rows(
+                active_slot_rows=active_slot_rows,
+                slot_ids_by_order=slot_ids_by_order,
+                slot_start_load_by_slot=slot_start_load_by_slot,
+                slot_arrival_lower=slot_arrival_lower,
+            )
+            if reranked_slot_rows != active_slot_rows:
+                diagnostics["warm_start_station_rank_reordered"] = True
+                for slot_id, _station_id, _rank in active_slot_rows:
+                    for station_id in station_ids:
+                        for rank in range(max_rank):
+                            if (int(slot_id), int(station_id), int(rank)) in y:
+                                y[int(slot_id), int(station_id), int(rank)].Start = GRB.UNDEFINED
+                for slot_id, station_id, rank in reranked_slot_rows:
+                    if (int(slot_id), int(station_id), int(rank)) in y:
+                        y[int(slot_id), int(station_id), int(rank)].Start = 1.0
+                active_slot_rows = list(reranked_slot_rows)
+            else:
+                diagnostics["warm_start_station_rank_reordered"] = False
+        else:
+            diagnostics["warm_start_station_rank_reordered"] = False
         slot_rebuild = self._rebuild_warm_slot_continuous_start(
             active_slot_rows=active_slot_rows,
             slot_arrival_lower=slot_arrival_lower,
@@ -6113,6 +7232,38 @@ class GlobalXYZUSolver:
             )
         diagnostics["warm_start_slot_times"] = slot_time_rows
 
+        # Project pair activation from the final Z-mode and Y-station starts. This
+        # must happen after duplicate-tote replacement and route repair because
+        # those steps can change the selected stack of a slot.
+        pair_projection_changed_count = 0
+        for (slot_id, stack_id, station_id), pair_var in pair_activate.items():
+            slot_id = int(slot_id)
+            stack_id = int(stack_id)
+            station_id = int(station_id)
+            stack_selected = (slot_id, stack_id) in selected_stack_start_keys
+            station_selected = int(slot_station_rank.get(slot_id, (-1, -1))[0]) == station_id
+            projected = 1.0 if stack_selected and station_selected else GRB.UNDEFINED
+            if projected == 1.0:
+                pair_projection_changed_count += 1
+            pair_var.Start = projected
+        diagnostics["warm_start_pair_projection_changed_count"] = int(pair_projection_changed_count)
+
+        diagnostics.update(
+            self._validate_slot_lex_starts(
+                a=a,
+                sku_use=sku_use,
+                y=y,
+                slot_ids_by_order=slot_ids_by_order,
+                unique_skus_by_order=unique_skus_by_order,
+                station_ids=station_ids,
+                max_rank=max_rank,
+            )
+        )
+        slot_lex_start_ok = (
+            int(diagnostics.get("warm_start_slot_load_lex_violation_count", 0) or 0) == 0
+            and int(diagnostics.get("warm_start_slot_station_lex_violation_count", 0) or 0) == 0
+        )
+
         finish_starts = [float(v) for v in dict(slot_rebuild.get("finish_start", {}) or {}).values()]
         model_cmax = float(max(finish_starts) if finish_starts else 0.0)
         cmax.Start = float(model_cmax)
@@ -6129,6 +7280,7 @@ class GlobalXYZUSolver:
             diagnostics["warm_start_continuous_time_start"]
             and int(diagnostics["warm_start_missing_arc_count"]) == 0
             and int(diagnostics["warm_start_capacity_violation_count"]) == 0
+            and bool(slot_lex_start_ok)
         )
         if not u_applied and not diagnostics["warm_start_u_skipped_reason"]:
             diagnostics["warm_start_u_skipped_reason"] = "integrated_u_disabled_or_no_route_rows"
@@ -6826,7 +7978,3 @@ class GlobalXYZUSolver:
 def solve_global_xyzu(problem: OFSProblemDTO, cfg: Optional[GlobalXYZUConfig] = None) -> GlobalXYZUResult:
     # 便捷函数：保持和其他 Gurobi 求解器一致的一行式调用入口。
     return GlobalXYZUSolver().solve(problem, cfg=cfg)
-
-
-
-

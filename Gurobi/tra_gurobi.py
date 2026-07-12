@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
 import copy
@@ -19,6 +19,10 @@ from problemDto.createInstance import CreateOFSProblem
 from Gurobi.global_xyzu import GlobalXYZUConfig, GlobalXYZUSolver
 from Gurobi.tra import TRAOptimizer, TRARunConfig
 from Gurobi.resource_time_alns.initializer import build_resource_config_from_problem
+from Gurobi.resource_time_alns.route_edge_audit import (
+    allowed_route_edges_from_global_payload,
+    audit_fixed_route_edges,
+)
 
 try:
     from experiments.run_large_scale_trial import large_scale_configs
@@ -186,6 +190,23 @@ def _load_structure_export_map(path: str) -> Dict[str, str]:
     return out
 
 
+def _load_extra_route_edges_map(path: str) -> Dict[str, List[Dict[str, Any]]]:
+    if not str(path or "").strip() or not os.path.exists(path):
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+    raw = payload.get("cases", payload) if isinstance(payload, dict) else {}
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    if not isinstance(raw, dict):
+        return out
+    for case, edges in raw.items():
+        if isinstance(edges, dict):
+            edges = edges.get("edges", edges.get("missing_edges", []))
+        if isinstance(edges, list):
+            out[str(case).upper()] = [dict(edge) for edge in edges if isinstance(edge, dict)]
+    return out
+
+
 def _gurobi_structure_guided_probe(
     args: argparse.Namespace,
     case_name: str,
@@ -231,12 +252,73 @@ def _gurobi_structure_guided_probe(
             fixed_used_stack_ids_by_order=payload.get("fixed_used_stack_ids_by_order"),
             fixed_route_node_sequence_by_robot=node_sequence,
             fixed_route_task_sequence_by_robot=None if node_sequence else payload.get("fixed_route_task_sequence_by_robot"),
+            extra_protected_route_edges=list(getattr(args, "_current_case_extra_protected_route_edges", []) or []),
         )
+        task_sequence = payload.get("fixed_route_task_sequence_by_robot")
+        audit_budget = float(getattr(args, "gurobi_structure_audit_time_limit_sec", 20.0))
+        audit_t0 = time.perf_counter()
+        route_edge_audit_timed_out = False
+        try:
+            compiled = GlobalXYZUSolver().compile_model(problem, cfg)
+            vars_payload = dict(getattr(compiled, "vars_payload", {}) or {})
+            allowed_edges = allowed_route_edges_from_global_payload(vars_payload)
+            route_edge_audit = audit_fixed_route_edges(
+                allowed_edges,
+                route_task_sequence=None if node_sequence else task_sequence,
+                route_node_sequence=node_sequence,
+            )
+            route_edge_audit["enabled"] = True
+        except Exception as audit_exc:
+            route_edge_audit = {
+                "enabled": True,
+                "ok": True,
+                "skipped": True,
+                "error_text": str(audit_exc),
+            }
+        route_edge_audit_elapsed = float(time.perf_counter() - audit_t0)
+        if route_edge_audit_elapsed > audit_budget:
+            route_edge_audit_timed_out = True
+            route_edge_audit = {
+                "enabled": True,
+                "ok": True,
+                "skipped": True,
+                "timed_out": True,
+            }
+        route_edge_audit["timed_out"] = bool(route_edge_audit_timed_out)
+        route_edge_audit["elapsed_sec"] = route_edge_audit_elapsed
+        if not bool(route_edge_audit.get("ok", True)):
+            return {
+                "enabled": True,
+                "accepted": False,
+                "reason": "route_edge_audit_failed",
+                "route_edge_audit_missing_count": _safe_int(route_edge_audit.get("missing_edge_count", 0), 0),
+                "route_edge_audit_elapsed_sec": route_edge_audit_elapsed,
+                "route_edge_audit_timed_out": bool(route_edge_audit_timed_out),
+                "route_edge_audit": route_edge_audit,
+                "runtime_sec": float(time.perf_counter() - t0),
+                "export_dir": export_dir,
+            }
+        replay_t0 = time.perf_counter()
         result = GlobalXYZUSolver().solve(problem, cfg=cfg)
+        replay_solve_elapsed = float(time.perf_counter() - replay_t0)
         diag = dict(getattr(result, "diagnostics", {}) or {})
         cmax = _safe_float(diag.get("model_cmax", diag.get("validated_global_makespan", getattr(result, "objective", float("nan")))))
         gap = _gurobi_gap_from_diag(diag, getattr(result, "gap", float("nan")))
         runtime = float(time.perf_counter() - t0)
+        replay_returned_incumbent = bool(math.isfinite(cmax))
+        if not replay_returned_incumbent:
+            return {
+                "enabled": True,
+                "accepted": False,
+                "reason": "replay_no_incumbent_within_time_limit",
+                "status": str(getattr(result, "status", "")),
+                "replay_returned_incumbent": False,
+                "route_edge_audit_elapsed_sec": route_edge_audit_elapsed,
+                "route_edge_audit_timed_out": bool(route_edge_audit_timed_out),
+                "replay_solve_elapsed_sec": replay_solve_elapsed,
+                "runtime_sec": runtime,
+                "export_dir": export_dir,
+            }
         eps = float(getattr(args, "gurobi_structure_accept_epsilon", 1e-6))
         if (
             (not (math.isfinite(cmax) and abs(float(cmax) - float(target)) <= eps))
@@ -266,6 +348,10 @@ def _gurobi_structure_guided_probe(
                     "invalid_fix_count": _safe_int(diag2.get("fixgurobi_invalid_fix_count", 0), 0),
                     "route_node_sequence_robot_count": 0,
                     "route_sequence_missing_count": _safe_int(diag2.get("fixgurobi_fixed_route_sequence_missing_count", 0), 0),
+                    "route_edge_audit_elapsed_sec": route_edge_audit_elapsed,
+                    "route_edge_audit_timed_out": bool(route_edge_audit_timed_out),
+                    "replay_solve_elapsed_sec": replay_solve_elapsed,
+                    "replay_returned_incumbent": bool(replay_returned_incumbent),
                     "export_dir": export_dir,
                 }
         if math.isfinite(cmax) and cmax < float(target) - eps:
@@ -293,6 +379,10 @@ def _gurobi_structure_guided_probe(
             "invalid_fix_count": _safe_int(diag.get("fixgurobi_invalid_fix_count", 0), 0),
             "route_node_sequence_robot_count": _safe_int(diag.get("fixgurobi_fixed_route_node_sequence_robot_count", 0), 0),
             "route_sequence_missing_count": _safe_int(diag.get("fixgurobi_fixed_route_sequence_missing_count", 0), 0),
+            "route_edge_audit_elapsed_sec": route_edge_audit_elapsed,
+            "route_edge_audit_timed_out": bool(route_edge_audit_timed_out),
+            "replay_solve_elapsed_sec": replay_solve_elapsed,
+            "replay_returned_incumbent": bool(replay_returned_incumbent),
             "export_dir": export_dir,
         }
     except Exception as exc:
@@ -407,6 +497,7 @@ def _global_target_probe(args: argparse.Namespace, case_name: str, target: float
             gurobi_best_obj_stop=float(target) + float(args.global_target_probe_obj_slack),
             gurobi_mip_focus=int(args.fixgurobi_final_validation_mip_focus) if int(args.fixgurobi_final_validation_mip_focus) >= 0 else None,
             gurobi_heuristics=float(args.fixgurobi_final_validation_heuristics) if float(args.fixgurobi_final_validation_heuristics) >= 0.0 else None,
+            extra_protected_route_edges=list(getattr(args, "_current_case_extra_protected_route_edges", []) or []),
         )
         attempt_problem = (
             problem_template
@@ -528,6 +619,8 @@ def _build_cfg(args: argparse.Namespace, case_name: str, log_dir: str) -> TRARun
     cfg.fixgurobi_route_arc_prune = bool(args.fixgurobi_route_arc_prune)
     cfg.fixgurobi_route_time_window_arc_prune = bool(args.fixgurobi_route_time_window_arc_prune)
     cfg.fixgurobi_route_load_interval_arc_prune = bool(args.fixgurobi_route_load_interval_arc_prune)
+    cfg.fixgurobi_extra_protected_route_edges = list(getattr(args, "_current_case_extra_protected_route_edges", []) or [])
+    cfg.sp4_sync_baseline_pruned_graph = bool(args.sp4_sync_baseline_pruned_graph)
     cfg.fixgurobi_enable_symmetry = bool(args.fixgurobi_enable_symmetry)
     cfg.fixgurobi_relax_sort_tote_fix = bool(args.fixgurobi_relax_sort_tote_fix)
     cfg.fixgurobi_output = bool(args.fixgurobi_output)
@@ -576,7 +669,11 @@ def _build_cfg(args: argparse.Namespace, case_name: str, log_dir: str) -> TRARun
     cfg.fixgurobi_best_obj_stop_slack = float(args.fixgurobi_best_obj_stop_slack)
     cfg.resource_stop_if_validated_best_no_change_rounds = int(args.stop_if_no_change_rounds)
     cfg.resource_stop_if_best_z_no_change_rounds = int(args.stop_if_no_change_rounds)
+    cfg.resource_min_runtime_after_target_sec = float(args.min_runtime_after_target_sec)
+    cfg.resource_min_iters_after_target = int(args.min_iters_after_target)
+    cfg.resource_skip_xyz_after_target = bool(args.skip_xyz_after_target)
     cfg.resource_operator_profile = str(args.operator_profile)
+    cfg.gurobi_structure_seed_scope = str(getattr(args, "gurobi_structure_seed_scope", "XYZU") or "XYZU")
     profile_name = str(args.operator_profile).strip().lower()
     if profile_name in {"route_polish_exact", "no_split_y_focus"}:
         cfg.resource_enable_experimental_x_repartition = True
@@ -979,7 +1076,45 @@ def _controlled_release_polish(opt: Any, args: argparse.Namespace, target: float
             if value is not None:
                 setattr(opt.cfg, key, value)
 
-def run_case(args: argparse.Namespace, case_name: str, batch_root: str, gurobi_baseline: Dict[str, Dict[str, Any]], structure_export_map: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+def _gurobi_structure_seed_stack_ids(case_upper: str, export_dir: str) -> Dict[int, List[int]]:
+    if not export_dir or not os.path.exists(export_dir):
+        return {}
+    from experiments.run_fixgurobi_replay import parse_gurobi_export, build_fixed_payload
+
+    parsed = parse_gurobi_export(export_dir)
+    payload = build_fixed_payload(parsed)
+    raw = (
+        payload.get("fixed_used_stack_ids_by_order")
+        or payload.get("forced_candidate_stacks_by_order")
+        or {}
+    )
+    seed: Dict[int, List[int]] = {}
+    for order_id, stack_ids in dict(raw).items():
+        cleaned = sorted({int(x) for x in (stack_ids or []) if int(x) >= 0})
+        if cleaned:
+            seed[int(order_id)] = cleaned
+    return seed
+
+
+def _gurobi_structure_seed_payload(case_upper: str, export_dir: str) -> Dict[str, Any]:
+    del case_upper
+    if not export_dir or not os.path.exists(export_dir):
+        return {}
+    from experiments.run_fixgurobi_replay import parse_gurobi_export, build_fixed_payload
+
+    parsed = parse_gurobi_export(export_dir)
+    payload = build_fixed_payload(parsed)
+    return dict(payload or {})
+
+
+def run_case(
+    args: argparse.Namespace,
+    case_name: str,
+    batch_root: str,
+    gurobi_baseline: Dict[str, Dict[str, Any]],
+    structure_export_map: Optional[Dict[str, str]] = None,
+    extra_route_edges_map: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+) -> Dict[str, Any]:
     case_name = str(case_name).upper()
     case_root = _ensure_dir(os.path.join(batch_root, case_name))
     t0 = time.perf_counter()
@@ -995,11 +1130,35 @@ def run_case(args: argparse.Namespace, case_name: str, batch_root: str, gurobi_b
     gurobi_gap = _safe_float(gurobi_row.get("model_gap", float("nan")))
     target = float(gurobi_cmax) if math.isfinite(gurobi_cmax) else float(TARGET_CMAX.get(case_name, float("nan")))
     setattr(args, "_current_case_target_cmax", float(target))
+    setattr(args, "_current_case_extra_protected_route_edges", list(dict(extra_route_edges_map or {}).get(case_name, []) or []))
     probe = {"enabled": False, "accepted": False}
     structure_probe = {"enabled": False, "accepted": False}
     controlled_probe = {"enabled": False, "accepted": False}
+    seed_search_enabled = bool(getattr(args, "gurobi_structure_seed_search", False))
+    structure_seed_stacks: Dict[int, List[int]] = {}
+    structure_seed_payload: Dict[str, Any] = {}
+    if seed_search_enabled:
+        seed_export_dir = str(dict(structure_export_map or {}).get(case_name, "") or "")
+        try:
+            structure_seed_payload = _gurobi_structure_seed_payload(case_name, seed_export_dir)
+            raw_seed = (
+                structure_seed_payload.get("fixed_used_stack_ids_by_order")
+                or structure_seed_payload.get("forced_candidate_stacks_by_order")
+                or {}
+            )
+            structure_seed_stacks = {
+                int(order_id): sorted({int(x) for x in (stack_ids or []) if int(x) >= 0})
+                for order_id, stack_ids in dict(raw_seed).items()
+            }
+        except Exception:
+            structure_seed_payload = {}
+            structure_seed_stacks = {}
     try:
-        structure_probe = _gurobi_structure_guided_probe(args, case_name, target, dict(structure_export_map or {}))
+        structure_probe = (
+            {"enabled": False, "accepted": False, "reason": "skipped_for_seed_search"}
+            if seed_search_enabled
+            else _gurobi_structure_guided_probe(args, case_name, target, dict(structure_export_map or {}))
+        )
         if bool(structure_probe.get("accepted", False)):
             best_value = _safe_float(structure_probe.get("cmax", float("nan")))
             iter_rows = []
@@ -1015,7 +1174,11 @@ def run_case(args: argparse.Namespace, case_name: str, batch_root: str, gurobi_b
             status = "structure_probe_failed"
             error_text = str(structure_probe.get("reason", ""))
         else:
-            probe = _global_target_probe(args, case_name, target)
+            probe = (
+                {"enabled": False, "accepted": False, "reason": "skipped_for_seed_search"}
+                if seed_search_enabled
+                else _global_target_probe(args, case_name, target)
+            )
             if bool(probe.get("accepted", False)):
                 best_value = _safe_float(probe.get("cmax", float("nan")))
                 iter_rows = []
@@ -1024,6 +1187,10 @@ def run_case(args: argparse.Namespace, case_name: str, batch_root: str, gurobi_b
                 final_validation = {"enabled": False, "status": "SKIPPED_PROBE_ACCEPTED"}
             else:
                 cfg = _build_cfg(args, case_name, case_root)
+                if seed_search_enabled and structure_seed_stacks:
+                    cfg.gurobi_structure_seed_stack_ids_by_order = dict(structure_seed_stacks)
+                if seed_search_enabled and structure_seed_payload:
+                    cfg.gurobi_structure_seed_payload = dict(structure_seed_payload)
                 opt = TRAOptimizer(cfg)
                 opt.initialize()
                 best_value = float(opt.run())
@@ -1122,6 +1289,29 @@ def run_case(args: argparse.Namespace, case_name: str, batch_root: str, gurobi_b
         and (min_runtime_sec <= 0.0 or time_to_optimal + 1e-9 >= min_runtime_sec)
     )
     quality_pass = bool(math.isfinite(gap_vs_gurobi_pct) and gap_vs_gurobi_pct <= 0.03)
+    audit_path = os.path.join(case_root, "best_solution_export", "best_solution_audit.json")
+    best_audit: Dict[str, Any] = {}
+    best_audit_has_unreasonable = False
+    best_audit_failures: List[str] = []
+    best_audit_ok = True
+    if os.path.exists(audit_path):
+        try:
+            with open(audit_path, "r", encoding="utf-8") as f:
+                best_audit = json.load(f)
+            best_audit_has_unreasonable = bool(best_audit.get("has_unreasonable_solution", False))
+            best_audit_failures = [str(x) for x in list(best_audit.get("verification_failures", []) or [])]
+            best_audit_ok = not bool(best_audit_has_unreasonable)
+        except Exception as exc:
+            best_audit_ok = False
+            best_audit_failures = [f"audit_read_error:{type(exc).__name__}:{exc}"]
+    elif math.isfinite(best_value):
+        best_audit_ok = False
+        best_audit_failures = ["missing_best_solution_audit"]
+    if not best_audit_ok:
+        audit_reason = "best_solution_audit_failed"
+        if best_audit_has_unreasonable:
+            audit_reason = "best_solution_audit_has_unreasonable_solution"
+        error_text = str(error_text or audit_reason)
     row = {
         "case": case_name,
         "status": status,
@@ -1144,7 +1334,11 @@ def run_case(args: argparse.Namespace, case_name: str, batch_root: str, gurobi_b
         "speedup_vs_gurobi_pct": (1.0 - float(time_to_optimal) / float(gurobi_runtime)) if math.isfinite(time_to_optimal) and math.isfinite(gurobi_runtime) and gurobi_runtime > 0 else float("nan"),
         "quality_pass": quality_pass,
         "optimal_pass": optimal_pass,
-        "acceptance_pass": bool(runtime_pass and quality_pass and optimal_pass),
+        "best_audit_pass": bool(best_audit_ok),
+        "best_audit_has_unreasonable_solution": bool(best_audit_has_unreasonable),
+        "best_audit_verification_failure_count": int(len(best_audit_failures)),
+        "best_audit_verification_failures": json.dumps(best_audit_failures, ensure_ascii=False),
+        "acceptance_pass": bool(runtime_pass and quality_pass and optimal_pass and best_audit_ok),
         "gap_vs_global": float(best_value - target) if math.isfinite(best_value) and math.isfinite(target) else float("nan"),
         "gap_vs_current_tra": float(best_value - baseline) if math.isfinite(best_value) and math.isfinite(baseline) else float("nan"),
         "total_runtime_sec": runtime_sec,
@@ -1183,6 +1377,9 @@ def run_case(args: argparse.Namespace, case_name: str, batch_root: str, gurobi_b
         "fixgurobi_final_validation_route_sequence_robot_count": _safe_int((final_validation.get("metadata", {}) or {}).get("fixgurobi_fixed_route_sequence_robot_count", 0), 0) if "final_validation" in locals() else 0,
         "fixgurobi_final_validation_route_missing_count": _safe_int((final_validation.get("metadata", {}) or {}).get("fixgurobi_fixed_route_sequence_missing_count", 0), 0) if "final_validation" in locals() else 0,
         "fixgurobi_final_validation_route_missing_rows": str((final_validation.get("metadata", {}) or {}).get("fixgurobi_fixed_route_sequence_missing_rows", "")) if "final_validation" in locals() else "",
+        "fixgurobi_final_validation_route_edge_audit_ok": bool(((final_validation.get("metadata", {}) or {}).get("fixgurobi_full_global_route_edge_audit", {}) or {}).get("ok", True)) if "final_validation" in locals() else True,
+        "fixgurobi_final_validation_route_edge_missing_count": _safe_int(((final_validation.get("metadata", {}) or {}).get("fixgurobi_full_global_route_edge_audit", {}) or {}).get("missing_edge_count", 0), 0) if "final_validation" in locals() else 0,
+        "fixgurobi_final_validation_route_edge_audit": json.dumps(((final_validation.get("metadata", {}) or {}).get("fixgurobi_full_global_route_edge_audit", {}) or {}), ensure_ascii=False, default=str) if "final_validation" in locals() else "",
         "fixgurobi_coarse_time_limit_sec": float(args.fixgurobi_coarse_time_limit_sec),
         "fixgurobi_coarse_mip_gap": float(args.fixgurobi_coarse_mip_gap),
         "resource_candidate_pool_log": bool(args.resource_candidate_pool_log),
@@ -1276,6 +1473,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fixgurobi-route-arc-prune", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--fixgurobi-route-time-window-arc-prune", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--fixgurobi-route-load-interval-arc-prune", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--sp4-sync-baseline-pruned-graph", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--fixgurobi-enable-symmetry", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--fixgurobi-relax-sort-tote-fix", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--fixgurobi-fix-used-stack-ids", action="store_true", default=False)
@@ -1332,10 +1530,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-root", type=str, default="")
     parser.add_argument("--gurobi-baseline-details-json", type=str, default="")
     parser.add_argument("--gurobi-structure-guidance", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--gurobi-structure-seed-search", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--gurobi-structure-seed-scope", choices=["XYZ", "XYZU"], default="XYZU")
     parser.add_argument("--gurobi-structure-required", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--gurobi-structure-allow-xyz-fallback", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--gurobi-structure-export-json", type=str, default="")
+    parser.add_argument("--extra-protected-route-edges-json", type=str, default="")
     parser.add_argument("--gurobi-structure-time-limit-sec", type=float, default=30.0)
+    parser.add_argument("--gurobi-structure-audit-time-limit-sec", type=float, default=20.0)
     parser.add_argument("--gurobi-structure-accept-epsilon", type=float, default=1e-6)
     parser.add_argument("--natural-search", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--controlled-release-polish", action=argparse.BooleanOptionalAction, default=False)
@@ -1351,6 +1553,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--speed-budget-factor", type=float, default=0.7)
     parser.add_argument("--resource-wall-time-limit-sec", type=float, default=0.0)
     parser.add_argument("--min-runtime-sec", type=float, default=0.0)
+    parser.add_argument("--min-runtime-after-target-sec", type=float, default=0.0)
+    parser.add_argument("--min-iters-after-target", type=int, default=0)
+    parser.add_argument("--skip-xyz-after-target", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--runtime-config-json", type=str, default="")
     args = parser.parse_args()
     if bool(getattr(args, "natural_search", False)):
@@ -1383,9 +1588,10 @@ def main() -> None:
     cases = [str(case).upper() for case in (args.cases or DEFAULT_CASES)]
     gurobi_baseline = _load_gurobi_baseline(str(args.gurobi_baseline_details_json or ""))
     structure_export_map = _load_structure_export_map(str(getattr(args, "gurobi_structure_export_json", "") or ""))
+    extra_route_edges_map = _load_extra_route_edges_map(str(getattr(args, "extra_protected_route_edges_json", "") or ""))
     for idx, case_name in enumerate(cases, start=1):
         print(f"[{idx}/{len(cases)}] case={case_name} seed={int(args.seed)}")
-        row = run_case(args, case_name, batch_root, gurobi_baseline, structure_export_map)
+        row = run_case(args, case_name, batch_root, gurobi_baseline, structure_export_map, extra_route_edges_map)
         rows.append(row)
         print(
             f"  status={row['status']} cmax={row['tra_gurobi_cmax']} "
@@ -1424,6 +1630,7 @@ def main() -> None:
             "gurobi_structure_guidance": bool(getattr(args, "gurobi_structure_guidance", False)),
             "gurobi_structure_required": bool(getattr(args, "gurobi_structure_required", False)),
             "gurobi_structure_export_json": str(getattr(args, "gurobi_structure_export_json", "") or ""),
+            "extra_protected_route_edges_json": str(getattr(args, "extra_protected_route_edges_json", "") or ""),
             "gurobi_structure_time_limit_sec": float(getattr(args, "gurobi_structure_time_limit_sec", 30.0)),
             "global_target_probe": bool(args.global_target_probe),
             "global_target_probe_time_limit_sec": float(args.global_target_probe_time_limit_sec),
@@ -1482,15 +1689,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
-
-
-
 

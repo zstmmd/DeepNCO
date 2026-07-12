@@ -1,0 +1,8 @@
+[Gurobi Best Solution Audit]
+coverage_ok=True
+makespan_consistent=True
+model_objective=2376.265000
+model_cmax=1229.000000
+total_span_overrun=229.000000
+total_deadline_overrun=44.000000
+has_unreasonable_solution=False

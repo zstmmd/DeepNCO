@@ -1,0 +1,45 @@
+# Tasks
+- [x] Task 1: 盘点 middle 现状并建立结果表字段
+  - [x] SubTask 1.1: 从 accepted M1-M3 和当前 M4 probe 汇总请求的表格字段
+  - [x] SubTask 1.2: 确认 `tmp/middle_stack_bomseq_runtime_configs.json` 已包含可运行 `configs`
+  - [x] SubTask 1.3: 标记 M4 当前未达标原因和后续调参边界
+- [ ] Task 2: 优先完成 M4 非 KNN 验收
+  - [x] SubTask 2.1: 设计 M4 无 KNN 调参候选，保持 4 robots / 3 stations
+  - [x] SubTask 2.2: 运行 M4 候选并收集 summary、audit、TRA verification
+  - [x] SubTask 2.3: 若通过，将 M4 写入 JSON 结果表；若失败，记录 rejected probe 和原因
+  - [x] SubTask 2.4: 继续运行降 Cmax / 增强证明候选；未达 gap<=1%，继续阻塞 M5
+  - [x] SubTask 2.5: 基于 non-integrated U-route 2.32% gap 运行 1050s 候选；未达 gap<=1%，记录 rejected probe
+  - [x] SubTask 2.6: 运行推荐 M4 bq55 non-integrated U-route 1050s 候选；未达 gap<=1%，记录 rejected probe
+  - [x] SubTask 2.7: 运行推荐 M4 bq55 non-integrated U-route 1050s focus1 h0.3 候选；未达 gap<=1%，记录 rejected probe
+  - [x] SubTask 2.8: 探索 M4 bq66/bq77 non-integrated U-route 短 probe；均未达 gap<=1%，记录建议
+  - [x] SubTask 2.9: 探索 M4 bq88/bq99 non-integrated U-route 短 probe，并选择 bq99 正式 1050s；仍未达 gap<=1%，记录 rejected probe
+  - [x] SubTask 2.10: 探索 M4 bq111/bq121 non-integrated U-route 短 probe；bq121 达到 gap<=1%，记录 accepted candidate，不推进 M5
+  - [x] SubTask 2.11: 运行 M4 bq111 non-integrated U-route 1050s 正式候选；runtime 接近窗口但 gap>1%，记录 rejected
+  - [x] SubTask 2.12: 探索 M4 bq115/bq117 non-integrated U-route，选择 bq117 正式 1050s；gap<=1%，标 Task2 完成，不推进 M5
+  - [x] SubTask 2.13: 按新约束复核并 invalidated 既有 M4 accepted/formal：不得更改 `bom_batch_quantity_range`，M4 runtime 必须慢于 M3，且 Cmax/总需求量不得过度放大
+  - [x] SubTask 2.14: 在不更改 `bom_batch_quantity_range`、无 KNN 的前提下，基于变量/约束数和短 probe 初判 M4 难度；尝试 warm start/初始解注入，仍未达 gap<=1%，记录 rejected
+  - [x] SubTask 2.15: 运行 M4 fixed-batch 1200s 正式窗口候选；runtime>M3、无 KNN、cmax/需求合理，但 gap=2.3275%，记录 rejected，不推进 M5
+  - [x] SubTask 2.16: 尝试 M4 fixed-batch integrated U-route 高变量短 probe；vars=388161、constrs=1146272，但未建立 gap/bound，Cmax=929，记录 rejected，不跑正式窗口、不推进 M5
+  - [x] SubTask 2.17: 尝试 M4 fixed-batch integrated U-route + station-top2 安全剪枝中等规模 probe；vars=241665、constrs=707168、runtime>M3，但未建立 finite bound/gap，记录 rejected，不跑正式窗口、不推进 M5
+  - [ ] SubTask 2.18: 继续在原始 `bom_batch_quantity_range=[2,3]`、无 KNN 条件下寻找 finite bound 且 gap<=1% 的有效 M4
+- [ ] Task 3: 顺序设计并验收 M5-M9
+  - [x] SubTask 3.1-M5: 基于 middle 配置仅运行 M5 候选，不推进 M6
+  - [x] SubTask 3.2-M5: M5 bq[12,14] non-integrated U-route 达到 gap<=1%，audit clean，TRA PASS，且 route_pickup_neighbor_limit=0；已按新约束 invalidated
+  - [x] SubTask 3.3-M5: M5 accepted 曾写入 `tmp/middle_stack_bomseq_runtime_configs.json` 的 configs/case_runs/results/result_table/progress；当前标记 invalidated
+  - [x] SubTask 3.4-M6: M6 bq[12,14] non-integrated U-route 达到 gap<=1%，audit clean，TRA PASS，且 route_pickup_neighbor_limit=0；已按新约束 invalidated
+  - [x] SubTask 3.5-M6: M6 accepted 曾写入 `tmp/middle_stack_bomseq_runtime_configs.json` 的 configs/case_runs/results/result_table/progress；当前标记 invalidated
+  - [x] SubTask 3.6-M7: M7 bq[12,14] non-integrated U-route 达到 gap<=1%，audit clean，TRA PASS，且 route_pickup_neighbor_limit=0；已按新约束 invalidated
+  - [x] SubTask 3.7-M7: M7 accepted 曾写入 `tmp/middle_stack_bomseq_runtime_configs.json` 的 configs/case_runs/results/result_table/progress；当前标记 invalidated
+  - [x] SubTask 3.8-M8: M8 bq[12,14] non-integrated U-route 达到 gap<=1%、runtime<=3600，audit clean，TRA PASS，且 route_pickup_neighbor_limit=0/noKNN；已按新约束 invalidated
+  - [x] SubTask 3.9-M8: M8 accepted 曾写入 `tmp/middle_stack_bomseq_runtime_configs.json` 的 configs/case_runs/results/result_table/accepted_candidates/progress；当前标记 invalidated
+  - [ ] SubTask 3.10-M9: 基于地图和 BOM/SKU 序列补齐并验收 M9 候选配置
+  - [ ] SubTask 3.11-M9: M9 通过后写入命令、结果表和可复现输出路径
+- [ ] Task 4: 验证无 KNN 与结果完整性
+  - [ ] SubTask 4.1: 检查 accepted 命令未启用 pickup KNN
+  - [ ] SubTask 4.2: 校验 JSON 语法和所有 accepted rows 的必填字段
+  - [ ] SubTask 4.3: 生成最终 M1-M9 或当前已完成 case 的汇总说明
+
+# Task Dependencies
+- Task 2 depends on Task 1.
+- Task 3 depends on Task 2.
+- Task 4 depends on Task 1 and any completed accepted case updates.

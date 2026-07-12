@@ -59,6 +59,24 @@ class SP2_Station_Assigner:
     def _task_order_span_limit_sec(self, task: SubTask) -> float:
         return float(getattr(task, "kitting_span_limit_sec", getattr(getattr(task, "parent_order", None), "kitting_span_limit_sec", 0.0)) or 0.0)
 
+    def _task_pick_units(self, task: SubTask) -> int:
+        order = getattr(task, "parent_order", None)
+        qty_by_sku = {
+            int(k): int(v)
+            for k, v in dict(getattr(order, "bom_total_quantity_by_sku", {}) or {}).items()
+            if int(v) > 0
+        }
+        sku_ids = {
+            int(getattr(sku, "id", -1))
+            for sku in getattr(task, "unique_sku_list", []) or []
+            if int(getattr(sku, "id", -1)) >= 0
+        }
+        if qty_by_sku and sku_ids:
+            total = sum(int(qty_by_sku.get(int(sid), 0)) for sid in sku_ids)
+            if total > 0:
+                return int(total)
+        return int(len(getattr(task, "sku_list", []) or []))
+
     def _candidate_order_anchor(self, order_state: Dict[int, Dict[str, float]], task: SubTask, start: float) -> float:
         order_id = self._task_order_id(task)
         if order_id < 0:
@@ -139,7 +157,7 @@ class SP2_Station_Assigner:
         order_state: Dict[int, Dict[str, float]] = {}
 
         for task in self.problem.subtask_list:
-            proc_time = len(task.sku_list) * self.picking_time
+            proc_time = self._task_pick_units(task) * self.picking_time
             best_choice = None
             for station_id in sorted(station_makespan.keys()):
                 start_time = float(station_makespan[station_id])
@@ -198,7 +216,7 @@ class SP2_Station_Assigner:
 
         p_times: Dict[int, float] = {}
         for k_idx, task in enumerate(tasks):
-            base_time = len(task.sku_list) * self.picking_time
+            base_time = self._task_pick_units(task) * self.picking_time
             extra_time = sp3_sorting_costs.get(task.id, 0.0) if sp3_sorting_costs else 0.0
             p_times[k_idx] = base_time + extra_time
 

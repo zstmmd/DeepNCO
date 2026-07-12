@@ -1,0 +1,9 @@
+- [x] `tmp/middle_stack_bomseq_runtime_configs.json` 包含顶层 `configs`，可用于 `--runtime-config-json`
+- [x] 已汇总 accepted M1-M3 和当前 M4 probe 的请求表格字段
+- [x] M4 的未达标原因被记录到 JSON 或最终说明中
+- [x] M4-M8 既有 accepted/formal 已按新约束标记 invalidated，并保留历史 result/rejected/probe 证据
+- [ ] 新 M4 accepted 之前不推进 M5-M9 formal accepted 验收
+- [x] 每个 accepted case 的命令未启用 pickup KNN 剪枝
+- [x] 历史 accepted/invalidated case 都记录 case、BOM数、每BOM SKU数、总SKU数、tote、stack、robot、station、总需求量、变量数、约束数、命中stack数、subtask数、flip的tote数、sort的tote数、上界、下界、cmax、gap、runtime、status
+- [x] 已记录新约束：不得更改 `bom_batch_quantity_range`；M4 runtime 必须慢于 M3；M4 Cmax/总需求量不能过度放大；无 KNN；先用变量/约束数初判难度，必要时初始解注入
+- [x] JSON 语法校验通过

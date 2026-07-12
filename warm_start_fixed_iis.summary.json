@@ -1,0 +1,159 @@
+{
+  "status": "INFEASIBLE",
+  "fixed_int_count": 30054,
+  "iis_path": "/Users/bytedance/Documents/trae_projects/deepnco/warm_start_fixed_iis.ilp",
+  "categories": {
+    "WarmStartFix": 17,
+    "SkuUseUB_2": 12,
+    "SlotCap_2": 4,
+    "Assign_2:57": 1,
+    "Assign_2:59": 1,
+    "Assign_2:64": 1
+  },
+  "sample_rows": [
+    {
+      "name": "Assign_2:57",
+      "category": "Assign_2:57"
+    },
+    {
+      "name": "Assign_2:59",
+      "category": "Assign_2:59"
+    },
+    {
+      "name": "Assign_2:64",
+      "category": "Assign_2:64"
+    },
+    {
+      "name": "SkuUseUB_2_57_8",
+      "category": "SkuUseUB_2"
+    },
+    {
+      "name": "SkuUseUB_2_59_8",
+      "category": "SkuUseUB_2"
+    },
+    {
+      "name": "SkuUseUB_2_64_8",
+      "category": "SkuUseUB_2"
+    },
+    {
+      "name": "SlotCap_2_8",
+      "category": "SlotCap_2"
+    },
+    {
+      "name": "SkuUseUB_2_57_9",
+      "category": "SkuUseUB_2"
+    },
+    {
+      "name": "SkuUseUB_2_59_9",
+      "category": "SkuUseUB_2"
+    },
+    {
+      "name": "SkuUseUB_2_64_9",
+      "category": "SkuUseUB_2"
+    },
+    {
+      "name": "SlotCap_2_9",
+      "category": "SlotCap_2"
+    },
+    {
+      "name": "SkuUseUB_2_57_10",
+      "category": "SkuUseUB_2"
+    },
+    {
+      "name": "SkuUseUB_2_59_10",
+      "category": "SkuUseUB_2"
+    },
+    {
+      "name": "SkuUseUB_2_64_10",
+      "category": "SkuUseUB_2"
+    },
+    {
+      "name": "SlotCap_2_10",
+      "category": "SlotCap_2"
+    },
+    {
+      "name": "SkuUseUB_2_57_11",
+      "category": "SkuUseUB_2"
+    },
+    {
+      "name": "SkuUseUB_2_59_11",
+      "category": "SkuUseUB_2"
+    },
+    {
+      "name": "SkuUseUB_2_64_11",
+      "category": "SkuUseUB_2"
+    },
+    {
+      "name": "SlotCap_2_11",
+      "category": "SlotCap_2"
+    },
+    {
+      "name": "WarmStartFix_a[11]",
+      "category": "WarmStartFix"
+    },
+    {
+      "name": "WarmStartFix_sku_use[2,44,8]",
+      "category": "WarmStartFix"
+    },
+    {
+      "name": "WarmStartFix_sku_use[2,45,8]",
+      "category": "WarmStartFix"
+    },
+    {
+      "name": "WarmStartFix_sku_use[2,46,8]",
+      "category": "WarmStartFix"
+    },
+    {
+      "name": "WarmStartFix_sku_use[2,47,8]",
+      "category": "WarmStartFix"
+    },
+    {
+      "name": "WarmStartFix_sku_use[2,48,8]",
+      "category": "WarmStartFix"
+    },
+    {
+      "name": "WarmStartFix_sku_use[2,49,8]",
+      "category": "WarmStartFix"
+    },
+    {
+      "name": "WarmStartFix_sku_use[2,50,9]",
+      "category": "WarmStartFix"
+    },
+    {
+      "name": "WarmStartFix_sku_use[2,51,9]",
+      "category": "WarmStartFix"
+    },
+    {
+      "name": "WarmStartFix_sku_use[2,52,9]",
+      "category": "WarmStartFix"
+    },
+    {
+      "name": "WarmStartFix_sku_use[2,53,9]",
+      "category": "WarmStartFix"
+    },
+    {
+      "name": "WarmStartFix_sku_use[2,54,9]",
+      "category": "WarmStartFix"
+    },
+    {
+      "name": "WarmStartFix_sku_use[2,55,9]",
+      "category": "WarmStartFix"
+    },
+    {
+      "name": "WarmStartFix_sku_use[2,60,10]",
+      "category": "WarmStartFix"
+    },
+    {
+      "name": "WarmStartFix_sku_use[2,61,10]",
+      "category": "WarmStartFix"
+    },
+    {
+      "name": "WarmStartFix_sku_use[2,62,10]",
+      "category": "WarmStartFix"
+    },
+    {
+      "name": "WarmStartFix_sku_use[2,63,10]",
+      "category": "WarmStartFix"
+    }
+  ]
+}

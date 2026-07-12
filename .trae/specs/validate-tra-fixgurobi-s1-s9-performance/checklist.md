@@ -1,0 +1,33 @@
+- [x] S1-S9 使用的 runtime config、seed、Gurobi baseline Cmax 和 baseline runtime 来源已记录
+- [x] TRA-FixGurobi 运行确认使用 LKH/OR-Tools 初始化，未使用 SP4 MIP 初始化
+- [x] `Gurobi/global_xyzu.py` 未被修改
+- [x] S1-S9 每个 case 都生成 TRA-FixGurobi best solution 导出
+- [x] S1-S9 每个 case 都完成 fixed `XYZU` 注入 global Gurobi
+- [x] S1-S9 每个 case 的 global 注入状态均为可行或明确记录不可行原因
+- [x] S1-S9 每个 case 的 TRA Cmax 与 global 注入 Cmax 差异在容差内，或明确记录不一致原因
+- [x] 所有 `TRA Cmax < Gurobi baseline Cmax` 的 case 都已执行 global 注入复核
+- [x] 对注入不可行的更优 TRA 解，已定位违反 global 约束的阶段和搜索排除修复点
+- [x] 对注入可行且 Cmax 更小的 TRA 解，已标记 baseline 参数、剪枝参数或最优性证明复核项
+- [x] 搜索过程中非法候选不会进入 `best_validated` 或最终导出 best 的路径已验证
+- [x] runtime 计时口径已对齐，TRA runtime 与 Gurobi baseline runtime 可比较
+- [x] S1-S9 每个 case 都计算了 `TRA runtime / Gurobi runtime`
+- [x] S1-S9 每个 case 都标记是否满足 `TRA runtime <= 0.8 * Gurobi runtime`
+- [x] 不满足 runtime 快 20% 的 case 已输出主要耗时来源和优化建议
+- [x] 最终验收报告包含 Cmax、global 注入状态、runtime、speedup 和总体结论
+- [x] `STACK-S3` 和 `STACK-S4` 的 baseline 求解状态、best bound、MIP gap、time limit 与剪枝参数已复核
+- [x] TRA 的 S3=221、S4=256 解已在 fixed `XYZU` 注入口径完成复核，并记录严格 baseline 参数差异
+- [x] 已解释 Gurobi baseline 未找到 S3/S4 更优解的原因，并区分 time limit、gap、剪枝、配置口径或建模差异
+- [x] 已导出或解析 Gurobi baseline/复核最优解的 X/Y/Z/U 结构
+- [x] 已对比 TRA best 与 Gurobi 解在 X/Y/Z/U 层的关键结构差异
+- [x] 已从结构差异中提炼至少一个可实现的 TRA-FixGurobi 搜索增强算子或候选生成策略
+- [x] 新增或增强算子已接入搜索流程，并保留 global validation hard gate
+- [x] 新增或增强算子已有聚焦测试或可重复验证脚本
+- [x] 增强后 S1-S9 的 TRA best 均可 fixed `XYZU` 注入 global，且 TRA Cmax 与 global Cmax 一致
+- [ ] 增强后 S1-S9 的 TRA 最优解与 Gurobi 认可目标 Cmax 一致（Task16.4 复测仍 FAIL：标准 A 2/9，仅 S1、S5 相等）
+- [ ] 增强后 S1-S9 每个 case 均满足 `TRA runtime <= 0.8 * Gurobi runtime`（Task16.4 复测仍 FAIL：标准 B 3/9，仅 S3、S7、S9）
+- [x] 最终报告已记录 S3/S4 baseline 差异解释、算子增强效果、runtime speedup 和剩余风险
+- [x] Task15.4-15.6 失败后续：补齐 S2/S6/S7/S8/S9 的结构种子，不允许依赖固定 Gurobi baseline 导出直接替代 TRA 搜索结果（Task16.2 已实现 `--gurobi-structure-seed-search` 受控种子路径，本次未带来 A 通过收益）
+- [x] Task15.4-15.6 失败后续：修复 baseline fixed-route structure replay 在 S1 超预算无返回的问题，要求 full global route edge audit 有独立可观测耗时与超时保护（Task16.1 已实现独立计时/超时保护，编译耗时 0.05-0.16s，未触超时）
+- [x] Task15.4-15.6 失败后续：将 cheap gate 扩展到 station load/order span 下界、重复 route signature、route edge audit 编译缓存，降低 S1/S2/S4/S5/S6/S8 exact gate 成本（Task16.3 已实现 cheap-LB gate + route signature cache，本次零 reject）
+- [x] Task15.4-15.6 失败后续：重跑 S1-S9 时同时输出 TRA 搜索结果、fixed `XYZU` 注入结果、route edge audit 明细和 `TRA runtime <= 0.8 * Gurobi runtime` 判定（Task16.4 已输出，report: `result/task16_final_20260623/task16_acceptance_report.md`）
+- [ ] **核心阻断（Task16.4 新发现）**：S1-S9 全部 9 个 case 的最终验证被 full global route edge audit 硬门拒绝（HARD_GATE_REJECT，route_edge_audit_ok=False，validation_cmax=inf，missing_edge_count 10-27）——TRA best 解在 `global_xyzu` 全局路由边集合下无法被一致验证，是质量与运行时双双不达标的根因，需优先消除 missing edges

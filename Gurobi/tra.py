@@ -25,6 +25,7 @@ from Gurobi.sp1 import SP1_BOM_Splitter
 from Gurobi.sp2 import SP2LayerContext, SP2LocalSolveResult, SP2_Station_Assigner
 from Gurobi.sp3 import SP3_Bin_Hitter
 from Gurobi.sp4 import SP4_Robot_Router, SP4RoutingInfeasibleError
+from Gurobi.global_xyzu import GlobalXYZUConfig, GlobalXYZUSolver
 from Gurobi.layer_surrogate import (
     CandidatePrediction,
     F1EvalResult,
@@ -41,6 +42,7 @@ from Gurobi.resource_time_alns.reporting import (
     write_resource_time_iters_csv,
 )
 from Gurobi.resource_time_alns.runtime_support import init_resource_time_runtime_state
+from Gurobi.resource_time_alns.route_edge_audit import global_route_node_key, slot_lookup_from_global_payload
 
 from entity.calculate import GlobalTimeCalculator
 from entity.subTask import SubTask
@@ -74,6 +76,7 @@ class TRARunConfig:
     sp4_raise_on_no_solution: bool = True
     sp4_route_cache_enabled: bool = True
     sp4_route_cache_size: int = 256
+    sp4_sync_baseline_pruned_graph: bool = True
     resource_validation_cache_enabled: bool = True
     resource_validation_cache_size: int = 1024
 
@@ -643,41 +646,151 @@ class XSplitProposal:
 
 
 class RankAwareGlobalTimeCalculator(GlobalTimeCalculator):
-    def _simulate_station_fcfs(self, all_tasks: List):
-        station_to_tasks: Dict[int, List] = defaultdict(list)
-        for task in all_tasks:
-            station_to_tasks[int(getattr(task, "target_station_id", 0))].append(task)
+    def _sync_arrivals_from_sp4_sequences(self, all_tasks: List) -> None:
+        route_rows = list(getattr(self.problem, "sp4_route_sequences", []) or [])
+        if not route_rows:
+            return
+        task_by_id = {
+            int(getattr(task, "task_id", -1)): task
+            for task in all_tasks
+            if int(getattr(task, "task_id", -1)) >= 0
+        }
+        robots = list(getattr(self.problem, "robot_list", []) or [])
+        shared_depot = getattr(robots[0], "start_point", None) if robots else None
+        if shared_depot is None:
+            return
+        speed = max(1.0, float(getattr(OFSConfig, "ROBOT_SPEED", 1.0)))
 
-        for station_id, tasks in station_to_tasks.items():
+        def _travel(p0: Any, p1: Any) -> float:
+            return float((abs(float(getattr(p0, "x", 0.0)) - float(getattr(p1, "x", 0.0))) + abs(float(getattr(p0, "y", 0.0)) - float(getattr(p1, "y", 0.0)))) / speed)
+
+        def _row_point(row: Dict[str, Any]) -> Optional[Any]:
+            kind = str(row.get("node_type", row.get("kind", "")) or "").lower()
+            if kind in {"start", "end"}:
+                return shared_depot
+            task = task_by_id.get(int(row.get("task_id", -1)))
+            if task is None:
+                return None
+            if kind == "pickup":
+                stack = getattr(self.problem, "point_to_stack", {}).get(int(getattr(task, "target_stack_id", -1)))
+                return getattr(stack, "store_point", None) if stack is not None else None
+            if kind == "delivery":
+                station_id = int(getattr(task, "target_station_id", -1))
+                stations = list(getattr(self.problem, "station_list", []) or [])
+                if 0 <= station_id < len(stations):
+                    return getattr(stations[station_id], "point", None)
+            return None
+
+        rows_by_robot: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+        for row in route_rows:
+            rows_by_robot[int(row.get("robot_id", -1))].append(dict(row))
+        for robot_id, rows in rows_by_robot.items():
+            current_time = 0.0
+            prev_point = shared_depot
+            prev_service = 0.0
+            for seq_idx, row in enumerate(sorted(rows, key=lambda item: (int(item.get("seq", 0)), float(item.get("time", 0.0) or 0.0)))):
+                kind = str(row.get("node_type", row.get("kind", "")) or "").lower()
+                point = _row_point(row)
+                if point is None:
+                    continue
+                if kind == "start":
+                    current_time = 0.0
+                    prev_point = point
+                    prev_service = 0.0
+                    continue
+                current_time += float(prev_service) + _travel(prev_point, point)
+                task = task_by_id.get(int(row.get("task_id", -1)))
+                if task is not None:
+                    if kind == "pickup":
+                        task.arrival_time_at_stack = float(current_time)
+                        task.robot_id = int(robot_id)
+                        task.robot_visit_sequence = int(seq_idx)
+                    elif kind == "delivery":
+                        task.arrival_time_at_station = float(current_time)
+                prev_point = point
+                prev_service = float(getattr(task, "robot_service_time", 0.0) or 0.0) if task is not None and kind == "pickup" else 0.0
+
+    def _simulate_station_fcfs(self, all_tasks: List):
+        self._sync_arrivals_from_sp4_sequences(all_tasks)
+        task_ids = {id(task) for task in all_tasks}
+        station_to_subtasks: Dict[int, List] = defaultdict(list)
+        for st in getattr(self.problem, "subtask_list", []) or []:
+            tasks = [
+                task
+                for task in (getattr(st, "execution_tasks", []) or [])
+                if id(task) in task_ids
+            ]
+            if not tasks:
+                continue
+            station_id = int(getattr(st, "assigned_station_id", -1))
+            if station_id < 0:
+                station_id = int(getattr(tasks[0], "target_station_id", 0))
+            station_to_subtasks[station_id].append(st)
+
+        for station_id, subtasks in station_to_subtasks.items():
             station = self.problem.station_list[station_id]
-            ordered_tasks = sorted(
-                tasks,
-                key=lambda t: (
-                    int(getattr(t, "station_sequence_rank", -1)) if int(getattr(t, "station_sequence_rank", -1)) >= 0 else 10 ** 9,
-                    float(getattr(t, "arrival_time_at_station", 0.0)),
-                    int(getattr(t, "task_id", -1)),
+            ordered_subtasks = sorted(
+                subtasks,
+                key=lambda st: (
+                    int(getattr(st, "station_sequence_rank", -1)) if int(getattr(st, "station_sequence_rank", -1)) >= 0 else 10 ** 9,
+                    max(
+                        [
+                            float(getattr(task, "arrival_time_at_station", 0.0))
+                            for task in (getattr(st, "execution_tasks", []) or [])
+                            if id(task) in task_ids
+                        ] or [0.0]
+                    ),
+                    int(getattr(st, "id", -1)),
                 ),
             )
 
-            for task in ordered_tasks:
-                sku_count_in_task = self._calculate_sku_count(task)
-                task.picking_duration = sku_count_in_task * self.t_pick
+            for st in ordered_subtasks:
+                tasks = [
+                    task
+                    for task in (getattr(st, "execution_tasks", []) or [])
+                    if id(task) in task_ids
+                ]
+                if not tasks:
+                    continue
+                slot_arrival = max(float(getattr(task, "arrival_time_at_station", 0.0)) for task in tasks)
+                pick_units_by_task = {
+                    int(getattr(task, "task_id", -1)): int(self._calculate_sku_count(task))
+                    for task in tasks
+                }
+                picking_duration_by_task = {
+                    int(getattr(task, "task_id", -1)): float(units) * float(self.t_pick)
+                    for task, units in (
+                        (task, pick_units_by_task[int(getattr(task, "task_id", -1))])
+                        for task in tasks
+                    )
+                }
+                extra_service_by_task = {
+                    int(getattr(task, "task_id", -1)): (
+                        float(getattr(task, "station_service_time", 0.0))
+                        if getattr(task, "noise_tote_ids", None)
+                        else 0.0
+                    )
+                    for task in tasks
+                }
+                slot_process_duration = float(sum(picking_duration_by_task.values()) + sum(extra_service_by_task.values()))
 
-                extra_service = task.station_service_time if getattr(task, "noise_tote_ids", None) else 0.0
-                total_process_duration = task.picking_duration + extra_service
-
-                start_time = max(float(getattr(task, "arrival_time_at_station", 0.0)), station.next_available_time)
+                start_time = max(float(slot_arrival), station.next_available_time)
                 if start_time > station.next_available_time:
                     station.total_idle_time += (start_time - station.next_available_time)
 
-                task.tote_wait_time = start_time - float(getattr(task, "arrival_time_at_station", 0.0))
-                task.start_process_time = start_time
-                task.end_process_time = start_time + total_process_duration
-                task.extra_service_used = float(extra_service)
-                task.total_process_duration = float(total_process_duration)
+                current_process_time = float(start_time)
+                for task in sorted(tasks, key=lambda item: int(getattr(item, "task_id", -1))):
+                    task_id = int(getattr(task, "task_id", -1))
+                    task.picking_duration = float(picking_duration_by_task.get(task_id, 0.0))
+                    task.extra_service_used = float(extra_service_by_task.get(task_id, 0.0))
+                    task.total_process_duration = float(task.picking_duration + task.extra_service_used)
+                    task.tote_wait_time = float(current_process_time - float(getattr(task, "arrival_time_at_station", 0.0)))
+                    task.start_process_time = float(current_process_time)
+                    task.end_process_time = float(current_process_time + task.total_process_duration)
+                    current_process_time = float(task.end_process_time)
+                    station.processed_tasks.append(task)
 
-                station.next_available_time = task.end_process_time
-                station.processed_tasks.append(task)
+                station.next_available_time = float(current_process_time)
 
 class TRAOptimizer:
     """
@@ -1303,6 +1416,9 @@ class TRAOptimizer:
             int(getattr(self.cfg, "sp4_same_subtask_vehicle_threshold", 2)),
             bool(getattr(self.cfg, "sp4_enable_greedy_fallback", False)) if allow_greedy_fallback is None else bool(allow_greedy_fallback),
             bool(getattr(self.cfg, "sp4_raise_on_no_solution", True)) or bool(raise_on_failure),
+            bool(getattr(self.cfg, "sp4_sync_baseline_pruned_graph", True)),
+            bool(getattr(self.cfg, "fixgurobi_route_arc_prune", True)),
+            int(getattr(self.cfg, "fixgurobi_route_pickup_neighbor_limit", 0) or 0),
             tuple(
                 self._sp4_subtask_signature(st)
                 for st in sorted(
@@ -1373,6 +1489,63 @@ class TRAOptimizer:
         cache.move_to_end(str(key))
         return copy.deepcopy(entry)
 
+    @staticmethod
+    def _global_route_node_key(node: Any, route_tasks: Dict[int, Any], *, is_destination: bool) -> Tuple[Any, ...]:
+        return global_route_node_key(node, route_tasks)
+
+    def _baseline_route_allowed_arcs_for_sp4(self) -> Optional[Set[Tuple[Any, Any]]]:
+        if not bool(getattr(self.cfg, "sp4_sync_baseline_pruned_graph", True)):
+            return None
+        if self.problem is None:
+            return None
+        try:
+            global_cfg = GlobalXYZUConfig(
+                time_limit_sec=0.05,
+                mip_gap=float(getattr(self.cfg, "fixgurobi_mip_gap", 0.01) or 0.01),
+                candidate_stack_topk=int(getattr(self.cfg, "fixgurobi_candidate_stack_topk", 999) or 999),
+                max_candidate_stacks_per_order=int(getattr(self.cfg, "fixgurobi_max_candidate_stacks_per_order", 0) or 0),
+                candidate_station_topk_per_stack=int(getattr(self.cfg, "fixgurobi_candidate_station_topk_per_stack", 999) or 999),
+                warm_start_sp4_time_limit_sec=0,
+                enable_warm_start=False,
+                warm_start_use_sp4=False,
+                integrate_u_route=True,
+                route_arc_prune=bool(getattr(self.cfg, "fixgurobi_route_arc_prune", True)),
+                route_pickup_neighbor_limit=int(getattr(self.cfg, "fixgurobi_route_pickup_neighbor_limit", 0) or 0),
+                enable_route_time_window_arc_prune=bool(getattr(self.cfg, "fixgurobi_route_time_window_arc_prune", True)),
+                enable_route_load_interval_arc_prune=bool(getattr(self.cfg, "fixgurobi_route_load_interval_arc_prune", True)),
+                gurobi_output=False,
+            )
+            compiled = GlobalXYZUSolver().compile_model(copy.deepcopy(self.problem), global_cfg)
+            payload = getattr(compiled, "vars_payload", {}) or {}
+            route_nodes = dict(payload.get("route_nodes", {}) or {})
+            route_tasks = dict(payload.get("route_tasks", {}) or {})
+            slot_lookup = slot_lookup_from_global_payload(payload)
+            allowed: Set[Tuple[Any, Any]] = set()
+            for i, j in dict(payload.get("route_tau", {}) or {}).keys():
+                src = route_nodes.get(int(i))
+                dst = route_nodes.get(int(j))
+                if src is None or dst is None:
+                    continue
+                allowed.add((
+                    global_route_node_key(src, route_tasks, slot_lookup=slot_lookup),
+                    global_route_node_key(dst, route_tasks, slot_lookup=slot_lookup),
+                ))
+            self.last_sp4_baseline_route_graph_diag = {
+                "enabled": True,
+                "source": "global_xyzu_compile_model",
+                "route_tau_arc_count": int(len(payload.get("route_tau", {}) or {})),
+                "route_task_count": int(len(route_tasks)),
+                "route_allowed_arc_key_count": int(len(allowed)),
+            }
+            return allowed
+        except Exception as exc:
+            self.last_sp4_baseline_route_graph_diag = {
+                "enabled": False,
+                "source": "global_xyzu_compile_model",
+                "error": str(exc),
+            }
+            return None
+
     def _run_sp4_with_cache(
         self,
         mode_tag: str,
@@ -1403,6 +1576,7 @@ class TRAOptimizer:
 
         self.sp4_route_cache_miss_count = int(getattr(self, "sp4_route_cache_miss_count", 0)) + 1
         raised_infeasible = False
+        baseline_route_allowed_arcs = self._baseline_route_allowed_arcs_for_sp4()
         try:
             arrival_times, robot_assign = self.sp4.solve(
                 self.problem.subtask_list,
@@ -1417,6 +1591,10 @@ class TRAOptimizer:
                 same_subtask_vehicle_threshold=int(getattr(self.cfg, "sp4_same_subtask_vehicle_threshold", 2)),
                 enable_greedy_fallback=bool(getattr(self.cfg, "sp4_enable_greedy_fallback", False)) if allow_greedy_fallback is None else bool(allow_greedy_fallback),
                 raise_on_no_solution=bool(getattr(self.cfg, "sp4_raise_on_no_solution", True)) or bool(raise_on_failure),
+                sync_baseline_pruned_graph=bool(getattr(self.cfg, "sp4_sync_baseline_pruned_graph", True)),
+                route_arc_prune=bool(getattr(self.cfg, "fixgurobi_route_arc_prune", True)),
+                route_pickup_neighbor_limit=int(getattr(self.cfg, "fixgurobi_route_pickup_neighbor_limit", 0) or 0),
+                baseline_route_allowed_arcs=baseline_route_allowed_arcs,
             )
         except SP4RoutingInfeasibleError:
             raised_infeasible = True
@@ -7968,6 +8146,7 @@ class TRAOptimizer:
                     else:
                         merged_latest[int(task_id)] = float(latest)
                 soft_windows["latest_by_task"] = merged_latest
+        baseline_route_allowed_arcs = self._baseline_route_allowed_arcs_for_sp4()
         try:
             arrival_times, robot_assign = self.sp4.solve(
                 self.problem.subtask_list,
@@ -7982,6 +8161,10 @@ class TRAOptimizer:
                 same_subtask_vehicle_threshold=int(getattr(self.cfg, "sp4_same_subtask_vehicle_threshold", 2)),
                 enable_greedy_fallback=bool(getattr(self.cfg, "sp4_enable_greedy_fallback", False)) if allow_greedy_fallback is None else bool(allow_greedy_fallback),
                 raise_on_no_solution=bool(getattr(self.cfg, "sp4_raise_on_no_solution", True)) or bool(raise_on_failure),
+                sync_baseline_pruned_graph=bool(getattr(self.cfg, "sp4_sync_baseline_pruned_graph", True)),
+                route_arc_prune=bool(getattr(self.cfg, "fixgurobi_route_arc_prune", True)),
+                route_pickup_neighbor_limit=int(getattr(self.cfg, "fixgurobi_route_pickup_neighbor_limit", 0) or 0),
+                baseline_route_allowed_arcs=baseline_route_allowed_arcs,
             )
         except SP4RoutingInfeasibleError:
             self.last_sp4_arrival_times = {}
@@ -8042,9 +8225,15 @@ class TRAOptimizer:
         initial_time_window_metrics = self._evaluate_order_time_window_metrics()
         initial_bom_arrival_window = self._evaluate_bom_arrival_window()
         initial_robot_assignment_ok = bool(len(self._unassigned_robot_task_rows()) == 0)
+        initial_bom_arrival_window_ok = bool(initial_bom_arrival_window.get("feasible", True))
+        initial_span_overrun_total = float(initial_time_window_metrics.get("span_overrun_total", 0.0) or 0.0)
+        initial_deadline_overrun_total = float(initial_time_window_metrics.get("deadline_overrun_total", 0.0) or 0.0)
+        initial_time_window_ok = bool(initial_span_overrun_total <= 1e-9 and initial_deadline_overrun_total <= 1e-9)
         initial_incumbent_feasible = bool(
             initial_coverage_ok
             and initial_robot_assignment_ok
+            and initial_bom_arrival_window_ok
+            and initial_time_window_ok
         )
         incumbent_z0 = float(z0) if initial_incumbent_feasible else float("inf")
         # harvest soft-coupling caches
@@ -8069,8 +8258,14 @@ class TRAOptimizer:
             if not bool(initial_coverage_ok):
                 last_row["validation_trigger"] = "coverage_hard_reject"
                 last_row["candidate_hard_reject_reason"] = "coverage_hard_reject"
+            elif not bool(initial_bom_arrival_window_ok):
+                last_row["validation_trigger"] = "bom_arrival_window_hard_reject"
+                last_row["candidate_hard_reject_reason"] = "bom_arrival_window_hard_reject"
+            elif not bool(initial_time_window_ok):
+                last_row["validation_trigger"] = "kitting_span_hard_reject" if initial_span_overrun_total > 1e-9 else "order_time_window_hard_reject"
+                last_row["candidate_hard_reject_reason"] = last_row["validation_trigger"]
             last_row["true_makespan"] = float(getattr(self.problem, "global_makespan", 0.0) or 0.0)
-            last_row["span_overrun_total"] = float(initial_time_window_metrics.get("span_overrun_total", 0.0) or 0.0)
+            last_row["span_overrun_total"] = float(initial_span_overrun_total)
             last_row["bom_arrival_window_violating_order_count"] = int(initial_bom_arrival_window.get("violating_order_count", 0) or 0)
 
     def _append_iter_log(self, iter_id: int, focus: str, z: float, improved: bool, skipped: bool,
@@ -8830,13 +9025,24 @@ class TRAOptimizer:
         tote_map = getattr(self.problem, "id_to_tote", {}) if self.problem is not None else {}
         for st in getattr(self.problem, "subtask_list", []) or []:
             req: Dict[int, int] = {}
-            for sku in getattr(st, "sku_list", []) or []:
-                sid = int(getattr(sku, "id", -1))
-                if sid >= 0:
-                    req[sid] = 1
+            sku_ids = {
+                int(getattr(sku, "id", -1))
+                for sku in getattr(st, "unique_sku_list", []) or []
+                if int(getattr(sku, "id", -1)) >= 0
+            }
+            if not sku_ids:
+                sku_ids = {
+                    int(getattr(sku, "id", -1))
+                    for sku in getattr(st, "sku_list", []) or []
+                    if int(getattr(sku, "id", -1)) >= 0
+                }
+            # Align with GlobalXYZU DemandCover: hit coverage is binary by SKU type.
+            # BOM quantities affect station processing time through sku_pick_count, not hit coverage.
+            for sid in sku_ids:
+                req[int(sid)] = 1
             prov: Dict[int, int] = {}
             for task in getattr(st, "execution_tasks", []) or []:
-                for tote_id in getattr(task, "target_tote_ids", []) or []:
+                for tote_id in getattr(task, "hit_tote_ids", []) or []:
                     tote = tote_map.get(int(tote_id))
                     if tote is None:
                         continue
@@ -8853,7 +9059,7 @@ class TRAOptimizer:
                 "subtask_id": int(getattr(st, "id", -1)),
                 "order_id": int(getattr(getattr(st, "parent_order", None), "order_id", -1)),
                 "required_sku_units": int(sum(req.values())),
-                "provided_sku_units": int(sum(1 for sid in req if int(prov.get(sid, 0) or 0) > 0)),
+                "provided_sku_units": int(sum(min(int(req.get(sid, 0)), int(prov.get(sid, 0) or 0)) for sid in req)),
                 "unmet_sku_units": int(unmet_units),
                 "unmet_skus": unmet,
                 "coverage_ok": bool(unmet_units == 0),
@@ -9139,46 +9345,29 @@ class TRAOptimizer:
                 "point_id": int(getattr(depot, "idx", -1)) if depot is not None else -1,
             })
             seq += 1
-            pickups = sorted(
-                tasks,
-                key=lambda t: (
-                    float(getattr(t, "arrival_time_at_stack", 0.0) or 0.0),
-                    int(getattr(t, "robot_visit_sequence", 0) or 0),
-                    int(getattr(t, "task_id", -1)),
-                ),
-            )
             current_load = 0
-            for task in pickups:
-                current_load += int(getattr(task, "total_load_count", 0) or 0)
+            events: List[Tuple[float, int, int, Any]] = []
+            for task in tasks:
+                task_id = int(getattr(task, "task_id", -1))
+                visit_seq = int(getattr(task, "robot_visit_sequence", 0) or 0)
+                events.append((float(getattr(task, "arrival_time_at_stack", 0.0) or 0.0), 0, visit_seq, task))
+                events.append((float(getattr(task, "arrival_time_at_station", 0.0) or 0.0), 1, visit_seq, task))
+            events.sort(key=lambda row: (float(row[0]), int(row[1]), int(row[2]), int(getattr(row[3], "task_id", -1))))
+            for event_time, event_type, _visit_seq, task in events:
+                if int(event_type) == 0:
+                    current_load += int(getattr(task, "total_load_count", 0) or 0)
+                    node_type = "pickup"
+                else:
+                    current_load -= int(getattr(task, "total_load_count", 0) or 0)
+                    node_type = "delivery"
                 route_rows.append({
                     "robot_id": int(rid),
                     "trip_id": int(trip_id),
                     "seq": int(seq),
-                    "node_type": "pickup",
+                    "node_type": str(node_type),
                     "task_id": int(getattr(task, "task_id", -1)),
                     "subtask_id": int(getattr(task, "sub_task_id", -1)),
-                    "time": float(getattr(task, "arrival_time_at_stack", 0.0) or 0.0),
-                    "load": int(current_load),
-                })
-                seq += 1
-            deliveries = sorted(
-                tasks,
-                key=lambda t: (
-                    float(getattr(t, "arrival_time_at_station", 0.0) or 0.0),
-                    int(getattr(t, "station_sequence_rank", 0) or 0),
-                    int(getattr(t, "task_id", -1)),
-                ),
-            )
-            for task in deliveries:
-                current_load -= int(getattr(task, "total_load_count", 0) or 0)
-                route_rows.append({
-                    "robot_id": int(rid),
-                    "trip_id": int(trip_id),
-                    "seq": int(seq),
-                    "node_type": "delivery",
-                    "task_id": int(getattr(task, "task_id", -1)),
-                    "subtask_id": int(getattr(task, "sub_task_id", -1)),
-                    "time": float(getattr(task, "arrival_time_at_station", 0.0) or 0.0),
+                    "time": float(event_time),
                     "load": int(current_load),
                 })
                 seq += 1
@@ -9214,6 +9403,10 @@ class TRAOptimizer:
 
         calc = self.sim if self.sim is not None else RankAwareGlobalTimeCalculator(self.problem)
         z = float(calc.calculate())
+        # Export is the acceptance boundary; keep the snapshot objective aligned
+        # with the GlobalXYZU-style replay recomputation used for dumped fields.
+        if self.best is not None:
+            self.best.z = float(z)
         calc.calculate_and_export(out_dir)
         verification_result = self._verify_makespan_breakdown(out_dir)
         self._write_best_solution_summary(out_dir, z)
@@ -9724,6 +9917,3 @@ if __name__ == "__main__":
     opt = TRAOptimizer(cfg)
     best_z = opt.run()
     print(f"Best z = {best_z:.3f}s")
-
-
-

@@ -375,7 +375,7 @@ def _build_solution_audit(problem: Any, best_z: float, verification_result: Opti
     }
 
 
-def _write_warm_start_export(result_root: str, solver: Any, scale: str, seed: int) -> str:
+def _write_warm_start_export(result_root: str, solver: Any, scale: str, seed: int, skip_tra_makespan_verification: bool = False) -> str:
     return ""
 
     warm = getattr(solver, "_warm_start", None)
@@ -543,7 +543,7 @@ def _write_warm_start_export(result_root: str, solver: Any, scale: str, seed: in
                         tokens.append(f"delivery(task={int(row.get('task_id', -1))},station={int(row.get('station_id', -1))},t={time_value:.6f})")
                 f.write(f"robot_id={int(robot_id)}, sequence={' -> '.join(tokens)}\n")
 
-    verification_result = _verify_makespan_breakdown(problem, out_dir)
+    verification_result = None if skip_tra_makespan_verification else _verify_makespan_breakdown(problem, out_dir)
     audit = _build_solution_audit(problem, best_z=float(getattr(warm, "makespan", 0.0) or 0.0), verification_result=verification_result)
     with open(os.path.join(out_dir, "best_solution_audit.json"), "w", encoding="utf-8") as f:
         json.dump(_normalize_jsonable(audit), f, ensure_ascii=False, indent=2)
@@ -569,7 +569,7 @@ def _write_warm_start_export(result_root: str, solver: Any, scale: str, seed: in
     return out_dir
 
 
-def _write_gurobi_solution_export(result_root: str, problem: Any, result: Any, scale: str, seed: int) -> str:
+def _write_gurobi_solution_export(result_root: str, problem: Any, result: Any, scale: str, seed: int, skip_tra_makespan_verification: bool = False) -> str:
     out_dir = os.path.join(result_root, "gurobi_solution_export")
     os.makedirs(out_dir, exist_ok=True)
 
@@ -673,7 +673,7 @@ def _write_gurobi_solution_export(result_root: str, problem: Any, result: Any, s
                         tokens.append(f"delivery(task={int(row.get('task_id', -1))},station={int(row.get('station_id', -1))},t={time_value:.6f})")
                 f.write(f"robot_id={int(robot_id)}, sequence={' -> '.join(tokens)}\n")
 
-    verification_result = _verify_makespan_breakdown(problem, out_dir)
+    verification_result = None if skip_tra_makespan_verification else _verify_makespan_breakdown(problem, out_dir)
     audit = _build_solution_audit(problem, best_z=float(global_makespan), verification_result=verification_result)
     audit["model_objective"] = float(objective_value)
     audit["model_cmax"] = float(model_cmax)
@@ -694,7 +694,7 @@ def _write_gurobi_solution_export(result_root: str, problem: Any, result: Any, s
     return out_dir
 
 
-def _write_result_files(problem: Any, result: Any, scale: str, seed: int, cfg: GlobalXYZUConfig, output_root: str = "") -> str:
+def _write_result_files(problem: Any, result: Any, scale: str, seed: int, cfg: GlobalXYZUConfig, output_root: str = "", skip_tra_makespan_verification: bool = False) -> str:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     result_root = str(output_root or os.path.join(ROOT_DIR, "result", f"gurobi_{str(scale).lower()}_{timestamp}"))
     os.makedirs(result_root, exist_ok=True)
@@ -797,7 +797,7 @@ def _write_result_files(problem: Any, result: Any, scale: str, seed: int, cfg: G
             f.write(f"robot_id={robot_id}\n")
             for row in list(rows or []):
                 f.write(f"  {row}\n")
-    _write_gurobi_solution_export(result_root=result_root, problem=problem, result=result, scale=scale, seed=seed)
+    _write_gurobi_solution_export(result_root=result_root, problem=problem, result=result, scale=scale, seed=seed, skip_tra_makespan_verification=skip_tra_makespan_verification)
     return result_root
 
 
@@ -811,6 +811,7 @@ def main() -> None:
     parser.add_argument("--max-rank", type=int, default=0)
     parser.add_argument("--write-lp", action="store_true")
     parser.add_argument("--quiet-gurobi", action="store_true", help="Disable Gurobi solver log output.")
+    parser.add_argument("--integer-cmax", action="store_true", help="Use an integer Cmax variable for integral-time benchmark calibration.")
     parser.add_argument("--disable-warm-start", action="store_true")
     parser.add_argument("--disable-integrated-u-route", action="store_true")
     parser.add_argument("--disable-route-arc-prune", action="store_true")
@@ -835,6 +836,7 @@ def main() -> None:
     parser.add_argument("--enable-route-finish-cmax-lb", action="store_true", help="Enable cmax lower bound from robot route finish times.")
     parser.add_argument("--enable-global-arrival-workload-lb", action="store_true", help="Deprecated no-op: global arrival workload lower-bound cut is enabled by default.")
     parser.add_argument("--disable-global-arrival-workload-lb", action="store_true", help="Disable global arrival plus station workload lower-bound cut.")
+    parser.add_argument("--enable-route-time-window-arc-prune", action="store_true", help="Enable safe U-layer time-window arc pruning.")
     parser.add_argument("--disable-route-time-window-arc-prune", action="store_true", help="Disable safe U-layer time-window arc pruning.")
     parser.add_argument("--disable-route-load-interval-arc-prune", action="store_true", help="Disable safe U-layer load-interval arc pruning.")
     parser.add_argument("--enable-route-directional-arc-prune", action="store_true", help="Enable safe delivery-to-pickup directional arc pruning.")
@@ -846,20 +848,41 @@ def main() -> None:
     parser.add_argument("--disable-warm-candidate-stack-prune", action="store_true", help="Disable warm-stack candidate pruning.")
     parser.add_argument("--candidate-station-topk-per-stack", type=int, default=999)
     parser.add_argument("--route-pickup-neighbor-limit", type=int, default=0)
+    parser.add_argument("--sort-hit-tote-threshold", type=int, default=3, help="Use SORT when selected hit tote count on a stack is greater than this threshold; otherwise use FLIP.")
     parser.add_argument("--enable-scale-adaptive-candidate-prune", action="store_true", help="Enable GUROBI-S6+ adaptive candidate compression.")
     parser.add_argument("--disable-scale-adaptive-candidate-prune", action="store_true", help="Deprecated no-op: scale-adaptive candidate compression is disabled by default.")
     parser.add_argument("--disable-resource-lex-symmetry", action="store_true", help="Disable safe same-coordinate resource lex symmetry constraints.")
+    parser.add_argument("--disable-slot-lex-symmetry", action="store_true", help="Disable slot load/station lex symmetry constraints.")
     parser.add_argument("--enable-anchor-first-order-robot", action="store_true", help="Experimental: fix warm first pickup to its warm robot.")
     parser.add_argument("--disable-selected-workload-lbs", action="store_true", help="Disable selected route/station workload lower bounds.")
     parser.add_argument("--enable-route-arrival-slot-linear", action="store_true", help="Re-enable redundant linear Big-M route-arrival binding.")
+    parser.add_argument("--enable-station-clock-linear", action="store_true", help="Add redundant linear Big-M station clock constraints alongside station rank indicators.")
     parser.add_argument("--enable-warm-prune-bound-repair", action="store_true", help="Enable experimental pre-arc warm upper-bound repair for route pruning.")
     parser.add_argument("--disable-warm-start-route-repair", action="store_true", help="Disable warm-start route list-scheduling repair before MIP start injection.")
+    parser.add_argument("--warm-start-use-sp2-mip-initial", action="store_true", help="Use SP2 MIP for initial warm-start station/rank assignment before SP3/SP4.")
+    parser.add_argument("--warm-start-sp2-mip-time-limit", type=float, default=30.0, help="Time limit in seconds for initial SP2 warm-start MIP.")
+    parser.add_argument("--warm-start-refine-sp2-after-sp4", action="store_true", help="Refine warm-start station/rank assignment using SP4 arrival times, then reroute.")
+    parser.add_argument("--audit-warm-start-fixed-iis", action="store_true", help="Fix integer MIP-start values and run an IIS feasibility audit.")
+    parser.add_argument("--audit-warm-start-iis-path", type=str, default="", help="Output .ilp path for the fixed warm-start IIS audit.")
+    parser.add_argument("--audit-warm-start-time-limit", type=float, default=120.0, help="Time limit in seconds for the fixed warm-start feasibility audit.")
     parser.add_argument("--gurobi-mem-limit-gb", type=float, default=0.0, help="Optional Gurobi MemLimit in GB; <=0 leaves it unset.")
     parser.add_argument("--gurobi-nodefile-start-gb", type=float, default=0.0, help="Optional Gurobi NodefileStart in GB; <=0 leaves it unset.")
     parser.add_argument("--gurobi-threads", type=int, default=0, help="Optional Gurobi thread count; <=0 leaves it unset.")
+    parser.add_argument("--gurobi-method", type=int, default=-1, help="Optional Gurobi Method; negative leaves it unset.")
+    parser.add_argument("--gurobi-node-method", type=int, default=-1, help="Optional Gurobi NodeMethod; negative leaves it unset.")
+    parser.add_argument("--gurobi-crossover", type=int, default=-1, help="Optional Gurobi Crossover; negative leaves it unset.")
+    parser.add_argument("--gurobi-mip-focus", type=int, default=-1, help="Optional Gurobi MIPFocus; negative leaves it unset.")
+    parser.add_argument("--gurobi-start-node-limit", type=int, default=-1, help="Optional Gurobi StartNodeLimit for MIP-start repair; negative leaves it unset.")
+    parser.add_argument("--gurobi-cuts", type=int, default=-1, help="Optional Gurobi Cuts parameter; negative uses config default.")
+    parser.add_argument("--gurobi-cut-passes", type=int, default=-1, help="Optional Gurobi CutPasses parameter; negative uses config default.")
+    parser.add_argument("--gurobi-presolve", type=int, default=-1, help="Optional Gurobi Presolve parameter; negative uses config default.")
+    parser.add_argument("--gurobi-heuristics", type=float, default=-1.0, help="Optional Gurobi Heuristics; negative leaves it unset.")
+    parser.add_argument("--gurobi-cutoff", type=float, default=0.0, help="Optional Gurobi Cutoff; <=0 leaves it unset.")
+    parser.add_argument("--gurobi-best-obj-stop", type=float, default=0.0, help="Optional Gurobi BestObjStop; <=0 leaves it unset.")
     parser.add_argument("--full-diag", action="store_true", help="Print full diagnostics payload (may be very large).")
     parser.add_argument("--runtime-config-json", type=str, default="")
     parser.add_argument("--output-root", type=str, default="")
+    parser.add_argument("--skip-tra-makespan-verification", action="store_true", help="Skip post-solve TRA makespan verification exports.")
     args = parser.parse_args()
     _install_runtime_configs(str(args.runtime_config_json or ""))
 
@@ -873,6 +896,7 @@ def main() -> None:
         enable_warm_start=not bool(args.disable_warm_start),
         write_lp=bool(args.write_lp),
         gurobi_output=not bool(args.quiet_gurobi),
+        integer_cmax=bool(args.integer_cmax),
         max_candidate_stacks_per_order=int(args.max_candidate_stacks_per_order),
         u_route_use_mip=not bool(args.u_route_lkh),
         integrate_u_route=not bool(args.disable_integrated_u_route),
@@ -892,7 +916,7 @@ def main() -> None:
         enable_route_slot_stack_count_lb=not bool(args.disable_route_slot_stack_count_lb),
         enable_route_finish_cmax_lb=bool(args.enable_route_finish_cmax_lb),
         enable_global_arrival_workload_lb=not bool(args.disable_global_arrival_workload_lb),
-        enable_route_time_window_arc_prune=False,
+        enable_route_time_window_arc_prune=bool(args.enable_route_time_window_arc_prune) and not bool(args.disable_route_time_window_arc_prune),
         enable_route_load_interval_arc_prune=not bool(args.disable_route_load_interval_arc_prune),
         enable_route_directional_arc_prune=bool(args.enable_route_directional_arc_prune),
         enable_route_service_sec_cuts=bool(args.enable_route_service_sec_cuts),
@@ -900,13 +924,33 @@ def main() -> None:
         enable_warm_candidate_stack_prune=bool(args.enable_warm_candidate_stack_prune) and not bool(args.disable_warm_candidate_stack_prune),
         candidate_station_topk_per_stack=int(args.candidate_station_topk_per_stack),
         route_pickup_neighbor_limit=int(args.route_pickup_neighbor_limit),
+        sort_hit_tote_threshold=int(args.sort_hit_tote_threshold),
         enable_scale_adaptive_candidate_prune=bool(args.enable_scale_adaptive_candidate_prune) and not bool(args.disable_scale_adaptive_candidate_prune),
         enable_resource_lex_symmetry=not bool(args.disable_resource_lex_symmetry),
+        enable_slot_lex_symmetry=not bool(args.disable_slot_lex_symmetry),
         enable_anchor_first_order_robot=bool(args.enable_anchor_first_order_robot),
         enable_selected_workload_lbs=not bool(args.disable_selected_workload_lbs),
         enable_route_arrival_slot_linear=bool(args.enable_route_arrival_slot_linear),
+        enable_station_clock_linear=bool(args.enable_station_clock_linear),
         enable_warm_prune_bound_repair=bool(args.enable_warm_prune_bound_repair),
         enable_warm_start_route_repair=not bool(args.disable_warm_start_route_repair),
+        warm_start_use_sp2_mip_initial=bool(args.warm_start_use_sp2_mip_initial),
+        warm_start_sp2_mip_time_limit_sec=float(args.warm_start_sp2_mip_time_limit),
+        warm_start_refine_sp2_after_sp4=bool(args.warm_start_refine_sp2_after_sp4),
+        audit_warm_start_fixed_iis=bool(args.audit_warm_start_fixed_iis),
+        audit_warm_start_iis_path=str(args.audit_warm_start_iis_path or ""),
+        audit_warm_start_time_limit_sec=float(args.audit_warm_start_time_limit),
+        gurobi_mip_focus=int(args.gurobi_mip_focus) if int(args.gurobi_mip_focus) >= 0 else None,
+        gurobi_method=int(args.gurobi_method) if int(args.gurobi_method) >= 0 else None,
+        gurobi_node_method=int(args.gurobi_node_method) if int(args.gurobi_node_method) >= 0 else None,
+        gurobi_crossover=int(args.gurobi_crossover) if int(args.gurobi_crossover) >= 0 else None,
+        gurobi_start_node_limit=int(args.gurobi_start_node_limit) if int(args.gurobi_start_node_limit) >= 0 else None,
+        gurobi_cuts=int(args.gurobi_cuts) if int(args.gurobi_cuts) >= 0 else 1,
+        gurobi_cut_passes=int(args.gurobi_cut_passes) if int(args.gurobi_cut_passes) >= 0 else 1,
+        gurobi_presolve=int(args.gurobi_presolve) if int(args.gurobi_presolve) >= 0 else 1,
+        gurobi_heuristics=float(args.gurobi_heuristics) if float(args.gurobi_heuristics) >= 0.0 else None,
+        gurobi_cutoff=float(args.gurobi_cutoff) if float(args.gurobi_cutoff) > 0.0 else None,
+        gurobi_best_obj_stop=float(args.gurobi_best_obj_stop) if float(args.gurobi_best_obj_stop) > 0.0 else None,
         gurobi_mem_limit_gb=float(args.gurobi_mem_limit_gb) if float(args.gurobi_mem_limit_gb) > 0.0 else None,
         gurobi_nodefile_start_gb=float(args.gurobi_nodefile_start_gb) if float(args.gurobi_nodefile_start_gb) > 0.0 else None,
         gurobi_threads=int(args.gurobi_threads) if int(args.gurobi_threads) > 0 else None,
@@ -917,8 +961,8 @@ def main() -> None:
         cfg.enable_route_load_interval_arc_prune = False
     solver = GlobalXYZUSolver()
     result = solver.solve(problem, cfg=cfg)
-    result_root = _write_result_files(problem, result, scale=args.scale, seed=args.seed, cfg=cfg, output_root=str(args.output_root or ""))
-    warm_start_root = _write_warm_start_export(result_root=result_root, solver=solver, scale=args.scale, seed=args.seed)
+    result_root = _write_result_files(problem, result, scale=args.scale, seed=args.seed, cfg=cfg, output_root=str(args.output_root or ""), skip_tra_makespan_verification=bool(args.skip_tra_makespan_verification))
+    warm_start_root = _write_warm_start_export(result_root=result_root, solver=solver, scale=args.scale, seed=args.seed, skip_tra_makespan_verification=bool(args.skip_tra_makespan_verification))
 
     print("=== Global XYZU Result ===")
     print(f"status={result.status}")

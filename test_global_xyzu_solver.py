@@ -643,6 +643,9 @@ class GlobalXYZUSolverTests(unittest.TestCase):
         self.assertTrue(diagnostics.get("warm_start_route_rebuild_ok"))
         self.assertTrue(diagnostics.get("warm_start_slot_time_rebuild_ok"))
         self.assertTrue(diagnostics.get("warm_start_mip_start_ready"))
+        self.assertTrue(diagnostics.get("warm_start_slot_lex_checked"))
+        self.assertEqual(int(diagnostics.get("warm_start_slot_load_lex_violation_count", -1)), 0)
+        self.assertEqual(int(diagnostics.get("warm_start_slot_station_lex_violation_count", -1)), 0)
         self.assertIn("warm_start_robot_id_swapped", diagnostics)
         self.assertIn("warm_start_robot_id_map", diagnostics)
         self.assertIn("warm_start_robot_path_duration", diagnostics)
@@ -650,6 +653,86 @@ class GlobalXYZUSolverTests(unittest.TestCase):
         slot_time_rows = list(diagnostics.get("warm_start_slot_times") or [])
         self.assertTrue(slot_time_rows)
         self.assertTrue(any(float(row.get("arrival", 0.0) or 0.0) > 0.0 for row in slot_time_rows))
+
+    def test_warm_start_slot_lex_order_canonicalizes_load_and_station_rank(self):
+        def _sku(sku_id):
+            return SimpleNamespace(id=int(sku_id))
+
+        def _task(tote_ids, arrival):
+            return SimpleNamespace(
+                target_tote_ids=list(tote_ids),
+                hit_tote_ids=[],
+                arrival_time_at_station=float(arrival),
+            )
+
+        rows = [
+            SimpleNamespace(
+                id=1,
+                assigned_station_id=0,
+                station_sequence_rank=0,
+                sku_list=[_sku(101)],
+                execution_tasks=[_task([10], 5.0)],
+            ),
+            SimpleNamespace(
+                id=2,
+                assigned_station_id=1,
+                station_sequence_rank=9,
+                sku_list=[_sku(101), _sku(102)],
+                execution_tasks=[_task([10, 11], 1.0)],
+            ),
+            SimpleNamespace(
+                id=3,
+                assigned_station_id=1,
+                station_sequence_rank=1,
+                sku_list=[_sku(102), _sku(103)],
+                execution_tasks=[_task([11, 12], 100.0)],
+            ),
+        ]
+        profiles = GlobalXYZUSolver._canonical_warm_slot_profiles(
+            order_id=1,
+            warm_rows=rows,
+            slot_ids=[20, 21, 22],
+            units_by_order_sku={(1, 101): ["u1"], (1, 102): ["u2"], (1, 103): ["u3"]},
+            tote_sku_qty={(10, 101): 1, (11, 102): 1, (12, 103): 1},
+        )
+        self.assertEqual([int(row["slot_id"]) for row in profiles], [20, 21, 22])
+        self.assertEqual([int(row["start_load"]) for row in profiles], [2, 2, 1])
+        self.assertEqual([int(row["subtask_id"]) for row in profiles], [3, 2, 1])
+
+        active_rows = [
+            (int(row["slot_id"]), int(row["station_id"]), int(row["rank"]))
+            for row in profiles
+        ]
+        reranked_rows = GlobalXYZUSolver._lex_aware_station_rank_rows(
+            active_slot_rows=active_rows,
+            slot_ids_by_order={1: [20, 21, 22]},
+            slot_start_load_by_slot={int(row["slot_id"]): int(row["start_load"]) for row in profiles},
+            slot_arrival_lower={20: 100.0, 21: 1.0, 22: 5.0},
+        )
+        self.assertIn((20, 1, 0), reranked_rows)
+        self.assertIn((21, 1, 1), reranked_rows)
+
+        def _var(value):
+            return SimpleNamespace(Start=float(value))
+
+        a = {20: _var(1.0), 21: _var(1.0), 22: _var(1.0)}
+        sku_use = {}
+        for profile in profiles:
+            for sku_id in profile["start_sku_ids"]:
+                sku_use[(1, int(sku_id), int(profile["slot_id"]))] = _var(1.0)
+        y = {(slot_id, station_id, rank): _var(1.0) for slot_id, station_id, rank in reranked_rows}
+        diagnostics = GlobalXYZUSolver._validate_slot_lex_starts(
+            a=a,
+            sku_use=sku_use,
+            y=y,
+            slot_ids_by_order={1: [20, 21, 22]},
+            unique_skus_by_order={1: [101, 102, 103]},
+            station_ids=[0, 1],
+            max_rank=3,
+        )
+        self.assertTrue(diagnostics.get("warm_start_slot_lex_checked"))
+        self.assertEqual(int(diagnostics.get("warm_start_slot_load_lex_violation_count", -1)), 0)
+        self.assertEqual(int(diagnostics.get("warm_start_slot_station_lex_violation_count", -1)), 0)
 
     def test_apply_warm_start_does_not_set_pair_activate_without_route_cover(self):
         problem = CreateOFSProblem.generate_problem_by_scale("test", seed=42)

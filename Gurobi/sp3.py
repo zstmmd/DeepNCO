@@ -1,7 +1,7 @@
 import gurobipy as gp
 from gurobipy import GRB
 from typing import List, Dict, Set, Tuple, Optional
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 
 from entity.SKUs import SKUs
 from entity.point import Point
@@ -23,7 +23,7 @@ class SP3_Bin_Hitter:
     使用虚拟 layer 管理堆垛状态
     """
 
-    def __init__(self, problem_dto: OFSProblemDTO):
+    def __init__(self, problem_dto: OFSProblemDTO, sort_hit_tote_threshold: Optional[int] = None):
         self.problem = problem_dto
 
         # --- 成本参数 ---
@@ -42,6 +42,10 @@ class SP3_Bin_Hitter:
         self.min_hit_ratio_sort = getattr(OFSConfig, 'SP3_MIN_HIT_RATIO_SORT', 0.0)
         # 结果阶段：若某个 Task 没有命中料箱，是否直接丢弃该 Task
         self.require_positive_hit = getattr(OFSConfig, 'SP3_REQUIRE_POSITIVE_HIT', True)
+        self.sort_hit_tote_threshold = int(
+            3 if sort_hit_tote_threshold is None
+            else sort_hit_tote_threshold
+        )
 
         # ✅ 虚拟层级管理
         self.stack_snapshots: Dict[int, List[Tote]] = {}  # {stack_id: [current_totes]}
@@ -62,6 +66,17 @@ class SP3_Bin_Hitter:
             }
         counts: Dict[int, int] = defaultdict(int)
         order = getattr(task, "parent_order", None)
+        explicit_qty_by_sku = {
+            int(k): int(v)
+            for k, v in dict(getattr(order, "bom_total_quantity_by_sku", {}) or {}).items()
+            if int(v) > 0
+        }
+        if explicit_qty_by_sku:
+            for sku_id, qty in explicit_qty_by_sku.items():
+                if int(sku_id) in sku_ids:
+                    counts[int(sku_id)] += int(qty)
+            if counts:
+                return {int(k): int(v) for k, v in counts.items()}
         for sku_id in getattr(order, "order_product_id_list", []) or []:
             sku_id = int(sku_id)
             if sku_id in sku_ids:
@@ -100,11 +115,20 @@ class SP3_Bin_Hitter:
             # 分数越小越稀缺。取任务中所有 SKU 最小的堆垛覆盖数。
             # 如果某个 SKU 只在 1 个堆垛里有，这个任务优先级极高。
             min_availability = 9999
+            candidate_stacks: Set[int] = set()
             for sku in t.unique_sku_list:
                 count = sku_stack_count.get(sku.id, 0)
                 if count < min_availability:
                     min_availability = count
-            return (min_availability, -len(t.unique_sku_list))
+                for tote_id in getattr(sku, "storeToteList", []) or []:
+                    tote = self.problem.id_to_tote.get(int(tote_id))
+                    if not (tote and tote.store_point):
+                        continue
+                    stack_idx = int(tote.store_point.idx)
+                    if any(int(cur.id) == int(tote_id) for cur in self.stack_snapshots.get(stack_idx, []) or []):
+                        candidate_stacks.add(stack_idx)
+            # Protect later slots with only one feasible stack before broader multi-SKU slots consume totes.
+            return (min_availability, len(candidate_stacks) or 10**9, len(t.unique_sku_list), int(t.id))
 
         sorted_tasks = sorted(sub_tasks, key=get_task_scarcity_score)
 
@@ -145,6 +169,41 @@ class SP3_Bin_Hitter:
             # 直接使用当前的列表索引 + 1 作为 priority
             for idx, pt in enumerate(physical_tasks):
                 pt.priority = idx + 1
+
+        incomplete_tasks = [
+            task for task in sorted_tasks
+            if int(getattr(task, "assigned_station_id", -1)) != -1
+            and not bool(getattr(task, "sp3_coverage_ok", False))
+        ]
+        if incomplete_tasks:
+            # A sequential per-subtask MIP can consume a tote needed by a later
+            # subtask.  Returning that prefix used to create a deceptively
+            # plausible but infeasible global MIP start.  Rebuild the *whole*
+            # SP3 solution with the global reservation planner so tote ownership
+            # and SKU coverage are decided jointly; never mix the failed prefix
+            # with the repaired suffix.
+            failed_ids = [int(getattr(task, "id", -1)) for task in incomplete_tasks]
+            print(
+                "  [SP3][REPAIR] Sequential allocation left incomplete subtasks "
+                f"{failed_ids}; rebuilding all subtasks with global tote reservations."
+            )
+            heuristic = self.SP3_Heuristic_Solver(self.problem)
+            repaired = heuristic.solve(
+                sub_tasks,
+                beta_congestion=beta_congestion,
+            )
+            repaired_incomplete = [
+                task for task in sub_tasks
+                if int(getattr(task, "assigned_station_id", -1)) != -1
+                and not bool(getattr(task, "sp3_coverage_ok", False))
+            ]
+            if repaired_incomplete:
+                repaired_ids = [int(getattr(task, "id", -1)) for task in repaired_incomplete]
+                raise RuntimeError(
+                    "SP3 global repair failed to cover subtasks "
+                    f"{repaired_ids}; refusing to emit a partial warm start"
+                )
+            return repaired
 
         return physical_tasks, final_tote_selection, final_sorting_costs
 
@@ -260,7 +319,7 @@ class SP3_Bin_Hitter:
                                   beta: float,
                                   routing_costs: Dict[int, float]) -> Tuple[List[Task], List[int], float]:
 
-        # 1. 需求统计
+        # 1. 覆盖需求：与 GlobalXYZU 的 DemandCover 对齐，命中层只要求每个 SKU 类型至少 1 个 hit tote。
         demand = {int(sku.id): 1 for sku in task.unique_sku_list}
 
         # 2. 候选堆垛与料箱
@@ -347,6 +406,9 @@ class SP3_Bin_Hitter:
             m.addConstr(bin_sum <= self.BigM * (m_flip[u] + m_sort[u]))
             # 若选择在该架上执行操作，则必须至少选择一个命中料箱
             m.addConstr(m_flip[u] + m_sort[u] <= bin_sum)
+            hit_threshold = max(0, int(getattr(self, "sort_hit_tote_threshold", 3)))
+            m.addConstr(bin_sum <= hit_threshold + self.BigM * m_sort[u], name=f"SortByHitThresholdUB_SP3_{u}")
+            m.addConstr(bin_sum >= (hit_threshold + 1) * m_sort[u], name=f"SortByHitThresholdLB_SP3_{u}")
             # 可选：强化下界，至少命中 min_hits_per_op 个（按可命中上限截断）
             if self.min_hits_per_op and self.min_hits_per_op > 1:
                 avail_hits_u = 0
@@ -469,7 +531,7 @@ class SP3_Bin_Hitter:
                         # 若不允许 0 命中，则直接跳过
                         if self.require_positive_hit and len(hit_totes) == 0:
                             continue
-                        # ✅ [新增] 计算该 Task 实际命中的 SKU 数量
+                        # sku_pick_count 用于工站处理时间，按 BOM 数量计；覆盖层本身只需要命中一次。
                         current_task_pick_count = 0
                         for t_id in hit_totes:
                             tote = self.problem.id_to_tote.get(t_id)
@@ -478,7 +540,6 @@ class SP3_Bin_Hitter:
                             # 遍历该料箱内的 SKU
                             for s_id, qty in tote.sku_quantity_map.items():
                                 if s_id in remaining_demand and remaining_demand[s_id] > 0:
-                                    # 实际贡献量 = min(料箱库存, 剩余需求)
                                     current_task_pick_count += int(remaining_demand[s_id])
                                     remaining_demand[s_id] = 0
 
@@ -521,7 +582,13 @@ class SP3_Bin_Hitter:
         task.sp3_unmet_sku_total = unmet_total
         task.sp3_coverage_ok = (unmet_total == 0)
         if unmet_total > 0:
-            print(f"  [SP3][WARN] SubTask {task.id} unmet sku units: {unmet_total}")
+            print(
+                f"  [SP3][WARN] SubTask {task.id} unmet sku units: {unmet_total}; "
+                f"order={int(getattr(getattr(task, 'parent_order', None), 'order_id', -1))}; "
+                f"unique_skus={len(getattr(task, 'unique_sku_list', []) or [])}; "
+                f"demand={dict(sorted(self._subtask_demand_counts(task).items()))}; "
+                f"remaining={dict(sorted((int(k), int(v)) for k, v in remaining_demand.items() if int(v) > 0))}"
+            )
 
         return p_tasks, selected_totes_for_feedback, total_sc_cost
 
@@ -541,6 +608,8 @@ class SP3_Bin_Hitter:
             # ✅ 虚拟层级管理
             self.stack_snapshots: Dict[int, List[Tote]] = {}
             self.layer_mapping: Dict[int, int] = {}
+            self.used_tote_ids: Set[int] = set()
+            self.reserved_tote_owner: Dict[int, int] = {}
             # 约束/安全开关
             self.require_positive_hit = getattr(OFSConfig, 'SP3_REQUIRE_POSITIVE_HIT', True)
             self.min_hit_ratio_sort = getattr(OFSConfig, 'SP3_MIN_HIT_RATIO_SORT', 0.0)
@@ -560,6 +629,17 @@ class SP3_Bin_Hitter:
                 }
             counts: Dict[int, int] = defaultdict(int)
             order = getattr(task, "parent_order", None)
+            explicit_qty_by_sku = {
+                int(k): int(v)
+                for k, v in dict(getattr(order, "bom_total_quantity_by_sku", {}) or {}).items()
+                if int(v) > 0
+            }
+            if explicit_qty_by_sku:
+                for sku_id, qty in explicit_qty_by_sku.items():
+                    if int(sku_id) in sku_ids:
+                        counts[int(sku_id)] += int(qty)
+                if counts:
+                    return {int(k): int(v) for k, v in counts.items()}
             for sku_id in getattr(order, "order_product_id_list", []) or []:
                 sku_id = int(sku_id)
                 if sku_id in sku_ids:
@@ -577,10 +657,13 @@ class SP3_Bin_Hitter:
 
             #print(f"  >>> [SP3 Heuristic] Using Virtual Layer (Beta={beta_congestion:.2f})...")
             self._initialize_stack_snapshots()
+            self._repair_subtask_sku_groups_for_unique_totes(sub_tasks)
             physical_tasks: List[Task] = []
             final_tote_selection = defaultdict(list)
             final_sorting_costs = defaultdict(float)
             self.stack_allocation = {}
+            self.used_tote_ids = set()
+            self.reserved_tote_owner = {}
 
             # 统计每个 SKU 在当前快照中出现在多少个堆垛里
             sku_stack_count = defaultdict(int)
@@ -594,13 +677,22 @@ class SP3_Bin_Hitter:
 
             def get_task_scarcity_score(t: SubTask):
                 min_availability = 9999
+                candidate_stacks: Set[int] = set()
                 for sku in t.unique_sku_list:
                     count = sku_stack_count.get(sku.id, 0)
                     if count < min_availability:
                         min_availability = count
-                return (min_availability, -len(t.unique_sku_list))
+                    for tote_id in getattr(sku, "storeToteList", []) or []:
+                        tote = self.problem.id_to_tote.get(int(tote_id))
+                        if not (tote and tote.store_point):
+                            continue
+                        stack_idx = int(tote.store_point.idx)
+                        if any(int(cur.id) == int(tote_id) for cur in self.stack_snapshots.get(stack_idx, []) or []):
+                            candidate_stacks.add(stack_idx)
+                return (min_availability, len(candidate_stacks) or 10**9, len(t.unique_sku_list), int(t.id))
 
             sorted_tasks = sorted(sub_tasks, key=get_task_scarcity_score)
+            global_coverage_plan = self._build_global_coverage_plan(sorted_tasks)
 
             for task in sorted_tasks:
                 task.reset_execution_details()
@@ -611,10 +703,12 @@ class SP3_Bin_Hitter:
                 task.sp3_unmet_sku_total = 0
                 task.sp3_coverage_ok = True
 
-                # ✅ [新增] 追踪该 SubTask 的剩余需求
+                coverage_remaining = {int(sku.id): 1 for sku in task.unique_sku_list}
                 task_remaining_demand = self._subtask_demand_counts(task)
 
-                stack_plan = self._greedy_tote_selection_v2(task)
+                stack_plan = global_coverage_plan.get(int(task.id))
+                if not stack_plan:
+                    stack_plan = self._greedy_tote_selection_v2(task)
 
                 # 验证：检查选中的 Tote 是否仍然可用
                 for stack_idx, needed_totes in list(stack_plan.items()):
@@ -671,7 +765,7 @@ class SP3_Bin_Hitter:
                                 current_batch = [pending_totes[i] for i in range(len(pending_totes)) if
                                                  i in batch_indices]
 
-                        mode, layer_range, sc_time, rc_time = self._decide_operation_mode(
+                        current_batch, mode, layer_range, sc_time, rc_time = self._choose_threshold_compatible_batch_and_mode(
                             stack, current_batch, beta_congestion
                         )
 
@@ -684,8 +778,23 @@ class SP3_Bin_Hitter:
                                 virtual_layer = self._get_virtual_layer(tote.id)
                                 if low <= virtual_layer <= high:
                                     physical_totes_ids.append(tote.id)
+                            if any(
+                                int(tid) in self.used_tote_ids
+                                or int(self.reserved_tote_owner.get(int(tid), int(task.id))) != int(task.id)
+                                for tid in physical_totes_ids
+                            ):
+                                mode = 'FLIP'
+                                layer_range = None
+                                physical_totes_ids = [t.id for t in current_batch if int(t.id) not in self.used_tote_ids]
+                                rc_time = 0.0
+                                top_layer_idx = len(self.stack_snapshots.get(stack_idx, []) or []) - 1
+                                for tote in current_batch:
+                                    idx = self._get_virtual_layer(tote.id)
+                                    is_deep = 1 if idx < top_layer_idx else 0
+                                    rc_time += self.t_shift + is_deep * self.t_lift
+                                sc_time = 0.0
                         else:
-                            physical_totes_ids = [t.id for t in current_batch]
+                            physical_totes_ids = [t.id for t in current_batch if int(t.id) not in self.used_tote_ids]
                             layer_range = None
 
                         # 区分 Hit 和 Noise
@@ -702,7 +811,7 @@ class SP3_Bin_Hitter:
                         if self.require_positive_hit and len(hit_totes_ids) == 0:
                             break
 
-                        # ✅ [新增] 计算当前 Task 的 sku_pick_count
+                        # hit 覆盖只需要一次；sku_pick_count 仍按 BOM 数量计入处理时间。
                         current_pick_count = 0
                         for t_id in hit_totes_ids:
                             tote = self.problem.id_to_tote.get(t_id)
@@ -711,6 +820,8 @@ class SP3_Bin_Hitter:
                                 if s_id in task_remaining_demand and task_remaining_demand[s_id] > 0:
                                     current_pick_count += int(task_remaining_demand[s_id])
                                     task_remaining_demand[s_id] = 0
+                                if s_id in coverage_remaining and coverage_remaining[s_id] > 0:
+                                    coverage_remaining[s_id] = 0
 
                         # 生成 Task
                         new_task = Task(
@@ -745,6 +856,7 @@ class SP3_Bin_Hitter:
                         self._global_task_id += 1
                         self.stack_allocation[stack_idx] = task.id
                         self._apply_stack_modification(new_task)
+                        self.used_tote_ids.update(int(tid) for tid in physical_totes_ids)
 
                         final_tote_selection[task.id].extend(physical_totes_ids)
                         if sc_time > 0:
@@ -760,7 +872,7 @@ class SP3_Bin_Hitter:
                     if used_stack_idx in self.stack_allocation:
                         del self.stack_allocation[used_stack_idx]
 
-                unmet_total = int(sum(v for v in task_remaining_demand.values() if v > 0))
+                unmet_total = int(sum(v for v in coverage_remaining.values() if v > 0))
                 task.sp3_unmet_sku_total = unmet_total
                 task.sp3_coverage_ok = (unmet_total == 0)
                 if unmet_total > 0:
@@ -814,35 +926,148 @@ class SP3_Bin_Hitter:
                 for i, tote in enumerate(stack.totes):
                     self.layer_mapping[tote.id] = i
 
+        def _repair_subtask_sku_groups_for_unique_totes(self, sub_tasks: List[SubTask]) -> None:
+            rows_by_order: Dict[int, List[SubTask]] = defaultdict(list)
+            for task in sub_tasks or []:
+                order = getattr(task, "parent_order", None)
+                order_id = int(getattr(order, "order_id", -1))
+                if order_id >= 0:
+                    rows_by_order[order_id].append(task)
+
+            for _order_id, rows in rows_by_order.items():
+                rows.sort(key=lambda st: int(getattr(st, "id", -1)))
+                if len(rows) <= 1:
+                    continue
+                sku_order: List[int] = []
+                seen: Set[int] = set()
+                for st in rows:
+                    for sku in getattr(st, "unique_sku_list", []) or []:
+                        sku_id = int(getattr(sku, "id", -1))
+                        if sku_id >= 0 and sku_id not in seen:
+                            seen.add(sku_id)
+                            sku_order.append(sku_id)
+                if not sku_order:
+                    continue
+
+                groups: "OrderedDict[int, List[int]]" = OrderedDict()
+                for sku_id in sku_order:
+                    sku_obj = self.problem.id_to_sku.get(int(sku_id))
+                    primary_tote = -10**9 - int(sku_id)
+                    for tote_id in getattr(sku_obj, "storeToteList", []) or []:
+                        tote = self.problem.id_to_tote.get(int(tote_id))
+                        if tote is not None and tote.store_point is not None:
+                            primary_tote = int(tote_id)
+                            break
+                    groups.setdefault(int(primary_tote), []).append(int(sku_id))
+
+                max_size = max(1, max(len(getattr(st, "unique_sku_list", []) or []) for st in rows))
+                bins: List[List[int]] = [[] for _ in rows]
+                for group in groups.values():
+                    placed = False
+                    for bin_row in bins:
+                        if len(bin_row) + len(group) <= max_size:
+                            bin_row.extend(group)
+                            placed = True
+                            break
+                    if not placed:
+                        min(bins, key=len).extend(group)
+
+                for st, sku_ids in zip(rows, bins):
+                    sku_objs = [self.problem.id_to_sku[int(sid)] for sid in sku_ids if int(sid) in self.problem.id_to_sku]
+                    st.unique_sku_list = list(sku_objs)
+                    st.sku_list = list(sku_objs)
+
         def _get_virtual_layer(self, tote_id: int) -> int:
             return self.layer_mapping.get(tote_id, -1)
 
         def _apply_stack_modification(self, task: Task):
-            stack_id = task.target_stack_id
-            if stack_id not in self.stack_snapshots:
-                return
-            current_totes = self.stack_snapshots[stack_id]
+            # GlobalXYZU evaluates hit coverage against the static inventory graph.
+            # Do not consume hit totes across slots in the greedy initializer; otherwise
+            # earlier broad slots can starve later slots whose SKU has a single support stack.
+            return
 
-            if task.operation_mode == 'FLIP':
-                removed_ids = set(task.target_tote_ids)
-                remaining_totes = [t for t in current_totes if t.id not in removed_ids]
-            elif task.operation_mode == 'SORT':
-                if task.sort_layer_range is None:
-                    return
-                low, high = task.sort_layer_range
-                remaining_totes = [
-                    t for t in current_totes
-                    if not (low <= self._get_virtual_layer(t.id) <= high)
-                ]
-            else:
-                return
+        def _build_global_coverage_plan(self, sub_tasks: List[SubTask]) -> Dict[int, Dict[int, List[Tote]]]:
+            pending_by_task: Dict[int, Set[int]] = {}
+            task_by_id: Dict[int, SubTask] = {}
+            for task in sub_tasks:
+                if int(getattr(task, "assigned_station_id", -1)) == -1:
+                    continue
+                task_id = int(getattr(task, "id", -1))
+                task_by_id[task_id] = task
+                pending_by_task[task_id] = {
+                    int(getattr(sku, "id", -1))
+                    for sku in getattr(task, "unique_sku_list", []) or []
+                    if int(getattr(sku, "id", -1)) >= 0
+                }
 
-            for i, tote in enumerate(remaining_totes):
-                self.layer_mapping[tote.id] = i
-            self.stack_snapshots[stack_id] = remaining_totes
+            selected_by_task: Dict[int, Dict[int, Tote]] = defaultdict(dict)
+            owner_by_tote: Dict[int, int] = {}
+
+            def candidate_totes(task_id: int, sku_id: int) -> List[Tote]:
+                sku_obj = self.problem.id_to_sku.get(int(sku_id))
+                if sku_obj is None:
+                    return []
+                out: List[Tote] = []
+                for tote_id in getattr(sku_obj, "storeToteList", []) or []:
+                    tote_id = int(tote_id)
+                    owner = owner_by_tote.get(tote_id)
+                    if owner is not None and int(owner) != int(task_id):
+                        continue
+                    tote = self.problem.id_to_tote.get(tote_id)
+                    if not (tote and tote.store_point):
+                        continue
+                    stack_idx = int(tote.store_point.idx)
+                    if not any(int(cur.id) == tote_id for cur in self.stack_snapshots.get(stack_idx, []) or []):
+                        continue
+                    out.append(tote)
+                return out
+
+            while True:
+                demand_rows: List[Tuple[int, int, int]] = []
+                for task_id, pending in pending_by_task.items():
+                    for sku_id in pending:
+                        demand_rows.append((len(candidate_totes(task_id, sku_id)), int(task_id), int(sku_id)))
+                if not demand_rows:
+                    break
+                demand_rows.sort(key=lambda row: (row[0] if row[0] > 0 else 10**9, len(pending_by_task.get(row[1], set())), row[1], row[2]))
+                cand_count, task_id, sku_id = demand_rows[0]
+                if cand_count <= 0:
+                    break
+                pending = pending_by_task.get(task_id, set())
+                candidates = candidate_totes(task_id, sku_id)
+
+                def tote_score(tote: Tote) -> Tuple[int, int, float, int]:
+                    covered = sum(
+                        1
+                        for sid, qty in getattr(tote, "sku_quantity_map", {}).items()
+                        if int(qty or 0) > 0 and int(sid) in pending
+                    )
+                    same_owner = 1 if owner_by_tote.get(int(tote.id)) == int(task_id) else 0
+                    layer = float(self._get_virtual_layer(int(tote.id)))
+                    return (int(same_owner), int(covered), -layer, -int(tote.id))
+
+                chosen = max(candidates, key=tote_score)
+                owner_by_tote[int(chosen.id)] = int(task_id)
+                selected_by_task[int(task_id)][int(chosen.id)] = chosen
+                for sid, qty in getattr(chosen, "sku_quantity_map", {}).items():
+                    if int(qty or 0) > 0:
+                        pending.discard(int(sid))
+
+            plan: Dict[int, Dict[int, List[Tote]]] = {}
+            for task_id, tote_map in selected_by_task.items():
+                by_stack: Dict[int, List[Tote]] = defaultdict(list)
+                for tote in tote_map.values():
+                    if not (tote and tote.store_point):
+                        continue
+                    by_stack[int(tote.store_point.idx)].append(tote)
+                    self.reserved_tote_owner[int(tote.id)] = int(task_id)
+                for totes in by_stack.values():
+                    totes.sort(key=lambda t: (self._get_virtual_layer(int(t.id)), int(t.id)))
+                plan[int(task_id)] = by_stack
+            return plan
 
         def _greedy_tote_selection_v2(self, task: SubTask) -> Dict[int, List[Tote]]:
-            # 需求使用 multiset（计数），避免把同 SKU 多件压成 set 造成漏选
+            # 覆盖层与 GlobalXYZU 对齐：每个 SKU 类型只需要至少一个 hit tote。
             pending_demand = {int(sku.id): 1 for sku in task.unique_sku_list}
             pending_skus_set = set(k for k, v in pending_demand.items() if v > 0)
             selected_stacks_map = defaultdict(list)
@@ -872,6 +1097,8 @@ class SP3_Bin_Hitter:
                     for tote_id in sorted(sku_obj.storeToteList):
                         tote = self.problem.id_to_tote.get(tote_id)
                         if not (tote and tote.store_point): continue
+                        if int(tote.id) in self.used_tote_ids:
+                            continue
                         stack_idx = tote.store_point.idx
                         if stack_idx not in self.stack_snapshots: continue
                         current_totes_in_stack = self.stack_snapshots[stack_idx]
@@ -939,20 +1166,20 @@ class SP3_Bin_Hitter:
                 best_stack_idx = max(stack_score.items(), key=lambda x: (x[1], -x[0]))[0]
                 chosen_totes = stack_candidate_totes[best_stack_idx]
                 chosen_totes.sort(key=lambda t: (
-                    -len(set(s.id for s in t.skus_list) & pending_skus_set),
+                    -sum(1 for s_id, qty in t.sku_quantity_map.items() if int(qty or 0) > 0 and pending_demand.get(int(s_id), 0) > 0),
                     self._get_virtual_layer(t.id),
                     t.id
                 ))
 
                 for t in chosen_totes:
-                    # 只要该 tote 能对剩余需求贡献，就选入，并按库存扣减需求
+                    # 只要该 tote 能对剩余覆盖贡献，就选入。
                     used_any = False
                     for s_id, qty in t.sku_quantity_map.items():
                         if qty <= 0:
                             continue
                         if pending_demand.get(s_id, 0) <= 0:
                             continue
-                        pending_demand.pop(s_id, None)
+                        pending_demand.pop(int(s_id), None)
                         used_any = True
                     if used_any:
                         if t not in selected_stacks_map[best_stack_idx]:
@@ -972,6 +1199,8 @@ class SP3_Bin_Hitter:
                 return ('FLIP', None, 0.0, 0.0)
 
             target_indices = [self._get_virtual_layer(t.id) for t in target_totes]
+            if not target_indices:
+                return ('FLIP', None, 0.0, 0.0)
             top_layer_idx = current_height - 1
 
             time_flip = 0.0
@@ -980,6 +1209,10 @@ class SP3_Bin_Hitter:
                 time_flip += (self.t_shift + is_deep * self.t_lift)
             cost_flip = self.alpha * time_flip
             res_flip = ('FLIP', None, 0.0, time_flip)
+            hit_count = len({int(t.id) for t in target_totes})
+            threshold = max(0, int(getattr(self, "sort_hit_tote_threshold", 3)))
+            if hit_count <= threshold:
+                return res_flip
 
             deepest_index = min(target_indices)
             highest_needed_index = max(target_indices)
@@ -1009,9 +1242,23 @@ class SP3_Bin_Hitter:
                 return res_flip
 
             best_sort = min(candidates, key=lambda x: x[0])
-            if best_sort[0] < cost_flip:
-                return best_sort[1], best_sort[2], best_sort[3], best_sort[4]
-            else:
-                return res_flip
+            return best_sort[1], best_sort[2], best_sort[3], best_sort[4]
 
+        def _choose_threshold_compatible_batch_and_mode(
+            self,
+            stack: Stack,
+            target_totes: List[Tote],
+            beta: float,
+        ) -> Tuple[List[Tote], str, Optional[Tuple[int, int]], float, float]:
+            threshold = max(0, int(getattr(self, "sort_hit_tote_threshold", 3)))
+            batch = list(target_totes or [])
+            mode, layer_range, sc_time, rc_time = self._decide_operation_mode(stack, batch, beta)
+            if len({int(t.id) for t in batch}) <= threshold or mode == 'SORT':
+                return batch, mode, layer_range, sc_time, rc_time
 
+            # No feasible SORT interval can cover the broad hit batch. Trim the
+            # batch so the generated warm-start task satisfies SortByHitThreshold.
+            keep = max(1, min(threshold, len(batch)))
+            batch = sorted(batch, key=lambda t: (self._get_virtual_layer(t.id), int(t.id)))[:keep]
+            mode, layer_range, sc_time, rc_time = self._decide_operation_mode(stack, batch, beta)
+            return batch, mode, layer_range, sc_time, rc_time

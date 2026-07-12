@@ -705,6 +705,38 @@ def y_destroy_load_skew_release(opt, config: ResourceConfig, rng, degree: int) -
     return y_destroy_congested_station_block(opt, config, rng, degree)
 
 
+def _critical_load_release_payload(opt, config: ResourceConfig, rng, degree: int, preview: bool) -> Dict[str, object]:
+    loads = _station_loads(config)
+    if not loads:
+        return {"success": False}
+    heavy_station = min(loads.keys(), key=lambda sid: (-float(loads[sid]), int(sid)))
+    light_station = min(loads.keys(), key=lambda sid: (float(loads[sid]), int(sid)))
+    station_rows = sorted(
+        config.station_subtasks(int(heavy_station)),
+        key=lambda row: (
+            -float(_subtask_station_work(row)),
+            -int(row.station_rank if int(row.station_rank) >= 0 else -1),
+            int(row.subtask_id),
+        ),
+    )
+    if not station_rows:
+        return {"success": False}
+    move_n = max(1, min(int(degree), int(getattr(opt.cfg, "resource_y_critical_load_degree_cap", 3)), len(station_rows)))
+    selected = station_rows[:move_n]
+    released = _preview_release_rows(selected, move_n) if bool(preview) else _release_rows(selected, move_n)
+    return {
+        "success": bool(released),
+        "released_subtasks": released,
+        "source_station_ids": [int(heavy_station)],
+        "target_station_hint": int(light_station),
+        "trigger_reason": "critical_load_rebalance",
+    }
+
+
+def y_destroy_critical_load_rebalance(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
+    return _critical_load_release_payload(opt, config, rng, int(degree), preview=False)
+
+
 def _random_release_payload(config: ResourceConfig, rng, degree: int, preview: bool) -> Dict[str, object]:
     rows = [row for row in config.subtasks.values() if int(row.station_id) >= 0]
     if not rows:
@@ -1096,6 +1128,10 @@ def y_plan_destroy_rank_window_release(opt, config: ResourceConfig, rng, degree:
 
 def y_plan_destroy_load_skew_release(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
     return y_plan_destroy_congested_station_block(opt, config, rng, degree)
+
+
+def y_plan_destroy_critical_load_rebalance(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
+    return _critical_load_release_payload(opt, config, rng, int(degree), preview=True)
 
 
 def y_plan_destroy_random_release(opt, config: ResourceConfig, rng, degree: int) -> Dict[str, object]:
@@ -2213,6 +2249,7 @@ def plan_y_candidate(opt, config: ResourceConfig, destroy_name: str, repair_name
         "y_destroy_cross_station_fragment": y_plan_destroy_cross_station_fragment,
         "y_destroy_rank_window_release": y_plan_destroy_rank_window_release,
         "y_destroy_load_skew_release": y_plan_destroy_load_skew_release,
+        "y_destroy_critical_load_rebalance": y_plan_destroy_critical_load_rebalance,
         "y_destroy_random_release": y_plan_destroy_random_release,
         "y_destroy_related_station_release": y_plan_destroy_related_station_release,
         "y_destroy_related_robot_release": y_plan_destroy_related_robot_release,
@@ -2509,6 +2546,7 @@ Y_DESTROY_OPERATORS = {
     "y_destroy_cross_station_fragment": y_destroy_cross_station_fragment,
     "y_destroy_rank_window_release": y_destroy_rank_window_release,
     "y_destroy_load_skew_release": y_destroy_load_skew_release,
+    "y_destroy_critical_load_rebalance": y_destroy_critical_load_rebalance,
     "y_destroy_random_release": y_destroy_random_release,
     "y_destroy_related_station_release": y_destroy_related_station_release,
     "y_destroy_related_robot_release": y_destroy_related_robot_release,

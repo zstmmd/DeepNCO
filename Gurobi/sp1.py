@@ -248,6 +248,22 @@ class SP1_BOM_Splitter:
                 )
                 sub_tasks.append(task)
                 self._global_task_id += 1
+            else:
+                # Fallback for SKUs without usable tote/stack mapping; otherwise
+                # remaining_skus never shrinks and SP1 can loop forever.
+                fallback_skus = sorted(remaining_skus)[:max(1, int(cap_limit))]
+                task_full_sku_list = []
+                for sid in fallback_skus:
+                    task_full_sku_list.extend(sku_groups[sid])
+                    remaining_skus.remove(sid)
+
+                task = SubTask(
+                    id=self._global_task_id,
+                    parent_order=order,
+                    sku_list=task_full_sku_list
+                )
+                sub_tasks.append(task)
+                self._global_task_id += 1
 
         return sub_tasks
 

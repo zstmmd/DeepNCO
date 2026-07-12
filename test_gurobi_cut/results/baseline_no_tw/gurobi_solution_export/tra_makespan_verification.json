@@ -1,0 +1,358 @@
+{
+  "status": "PASS",
+  "task_count": 19,
+  "max_task_end": 967.0,
+  "global_makespan": 967.0,
+  "coverage": {
+    "coverage_ok": true,
+    "unmet_sku_total": 0,
+    "unmet_subtask_count": 0,
+    "subtasks": [
+      {
+        "subtask_id": 0,
+        "order_id": 4,
+        "required_sku_units": 6,
+        "provided_sku_units": 6,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 1,
+        "order_id": 0,
+        "required_sku_units": 4,
+        "provided_sku_units": 4,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 2,
+        "order_id": 1,
+        "required_sku_units": 4,
+        "provided_sku_units": 4,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 3,
+        "order_id": 2,
+        "required_sku_units": 4,
+        "provided_sku_units": 4,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 4,
+        "order_id": 0,
+        "required_sku_units": 6,
+        "provided_sku_units": 6,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 5,
+        "order_id": 5,
+        "required_sku_units": 6,
+        "provided_sku_units": 6,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 6,
+        "order_id": 0,
+        "required_sku_units": 6,
+        "provided_sku_units": 6,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 7,
+        "order_id": 1,
+        "required_sku_units": 6,
+        "provided_sku_units": 6,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 8,
+        "order_id": 2,
+        "required_sku_units": 6,
+        "provided_sku_units": 6,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 9,
+        "order_id": 3,
+        "required_sku_units": 6,
+        "provided_sku_units": 6,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 10,
+        "order_id": 3,
+        "required_sku_units": 4,
+        "provided_sku_units": 4,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 11,
+        "order_id": 4,
+        "required_sku_units": 6,
+        "provided_sku_units": 6,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 12,
+        "order_id": 5,
+        "required_sku_units": 4,
+        "provided_sku_units": 4,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 13,
+        "order_id": 3,
+        "required_sku_units": 6,
+        "provided_sku_units": 6,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 14,
+        "order_id": 4,
+        "required_sku_units": 4,
+        "provided_sku_units": 4,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 15,
+        "order_id": 5,
+        "required_sku_units": 6,
+        "provided_sku_units": 6,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 16,
+        "order_id": 0,
+        "required_sku_units": 6,
+        "provided_sku_units": 6,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 17,
+        "order_id": 2,
+        "required_sku_units": 6,
+        "provided_sku_units": 6,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 18,
+        "order_id": 1,
+        "required_sku_units": 6,
+        "provided_sku_units": 6,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      }
+    ]
+  },
+  "failures": [],
+  "station_task_rows": [
+    {
+      "station_id": 0,
+      "task_id": 0,
+      "start": 256.0,
+      "end": 409.0,
+      "wait": 0.0,
+      "pick": 153.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 0,
+      "task_id": 1,
+      "start": 409.0,
+      "end": 490.0,
+      "wait": 153.0,
+      "pick": 81.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 0,
+      "task_id": 2,
+      "start": 490.0,
+      "end": 580.0,
+      "wait": 234.0,
+      "pick": 90.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 0,
+      "task_id": 3,
+      "start": 580.0,
+      "end": 679.0,
+      "wait": 324.0,
+      "pick": 99.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 0,
+      "task_id": 4,
+      "start": 679.0,
+      "end": 805.0,
+      "wait": 423.0,
+      "pick": 126.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 0,
+      "task_id": 5,
+      "start": 805.0,
+      "end": 940.0,
+      "wait": 549.0,
+      "pick": 135.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 1,
+      "task_id": 6,
+      "start": 112.0,
+      "end": 256.0,
+      "wait": 0.0,
+      "pick": 144.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 1,
+      "task_id": 7,
+      "start": 256.0,
+      "end": 364.0,
+      "wait": 131.0,
+      "pick": 108.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 1,
+      "task_id": 8,
+      "start": 364.0,
+      "end": 499.0,
+      "wait": 122.0,
+      "pick": 135.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 1,
+      "task_id": 9,
+      "start": 499.0,
+      "end": 634.0,
+      "wait": 144.0,
+      "pick": 135.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 1,
+      "task_id": 10,
+      "start": 634.0,
+      "end": 724.0,
+      "wait": 0.0,
+      "pick": 90.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 1,
+      "task_id": 11,
+      "start": 724.0,
+      "end": 868.0,
+      "wait": 90.0,
+      "pick": 144.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 1,
+      "task_id": 12,
+      "start": 868.0,
+      "end": 967.0,
+      "wait": 228.76055488560496,
+      "pick": 99.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 2,
+      "task_id": 13,
+      "start": 119.0,
+      "end": 263.0,
+      "wait": 0.0,
+      "pick": 144.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 2,
+      "task_id": 14,
+      "start": 263.0,
+      "end": 353.0,
+      "wait": 140.0,
+      "pick": 90.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 2,
+      "task_id": 15,
+      "start": 353.0,
+      "end": 479.0,
+      "wait": 230.0,
+      "pick": 126.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 2,
+      "task_id": 16,
+      "start": 479.0,
+      "end": 614.0,
+      "wait": 237.0,
+      "pick": 135.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 2,
+      "task_id": 17,
+      "start": 614.0,
+      "end": 740.0,
+      "wait": 372.0,
+      "pick": 126.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 2,
+      "task_id": 18,
+      "start": 740.0,
+      "end": 875.0,
+      "wait": 498.0,
+      "pick": 135.0,
+      "extra": 0.0
+    }
+  ]
+}

@@ -1,13 +1,13 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import copy
-from collections import deque
+from collections import defaultdict, deque
 import itertools
 import math
 import random
 import statistics
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from Gurobi.global_xyzu import GlobalXYZUConfig, GlobalXYZUSolver
 from problemDto.createInstance import CreateOFSProblem
@@ -44,7 +44,7 @@ from .operators_z import (
 )
 from .projection import apply_projection_repair
 from .reporting import build_iter_row
-from .state import OperatorArm, ResourceConfig, UpperEvalResult, ValidatedIncumbent
+from .state import OperatorArm, ResourceConfig, ResourceSubtask, UpperEvalResult, ValidatedIncumbent, ZTaskDescriptor
 from .surrogate import ResourceSurrogateScorer, config_distance
 from .validator import ResourceValidator
 from .fixgurobi_evaluator import FixGurobiEvaluator
@@ -67,6 +67,24 @@ class ResourceTimeALNSEngine:
             and bool(getattr(self.cfg, "resource_fixgurobi_skip_ortools_validation", False))
         )
         self.current_config: ResourceConfig = build_initial_resource_config(opt)
+        cfg_seed_stacks = getattr(self.cfg, "gurobi_structure_seed_stack_ids_by_order", None)
+        if cfg_seed_stacks:
+            merged_seed = {
+                int(order_id): set(int(x) for x in (stack_ids or []) if int(x) >= 0)
+                for order_id, stack_ids in dict(
+                    self.current_config.metadata.get("structure_seed_stack_ids_by_order", {}) or {}
+                ).items()
+            }
+            for order_id, stack_ids in dict(cfg_seed_stacks).items():
+                merged_seed.setdefault(int(order_id), set()).update(
+                    int(x) for x in (stack_ids or []) if int(x) >= 0
+                )
+            if merged_seed:
+                self.current_config.metadata["structure_seed_stack_ids_by_order"] = {
+                    int(order_id): sorted(stack_ids)
+                    for order_id, stack_ids in sorted(merged_seed.items())
+                    if stack_ids
+                }
         self._bootstrap_x_tote_conflicts(self.current_config)
         self._bootstrap_x_route_ordered_chunks(self.current_config)
         self._bootstrap_z_coverage(self.current_config)
@@ -84,15 +102,47 @@ class ResourceTimeALNSEngine:
         if self.fixgurobi_only_eval:
             initial_hard_reject_reason = ""
             initial_makespan = float("inf") if bool(skip_initial_fixgurobi) else float(self.current_eval.F_raw)
+            initial_materialized = None
+            initial_config = self.current_config.clone()
+            if math.isfinite(float(initial_makespan)):
+                initial_materialized = copy.deepcopy(
+                    self.current_eval.metadata.get("fixgurobi_materialized_problem", None)
+                )
+                if initial_materialized is not None:
+                    unreasonable = self._rebuilt_unreasonable_summary(initial_materialized)
+                    if bool(unreasonable.get("has_unreasonable_solution", False)):
+                        initial_hard_reject_reason = "unreasonable_solution_hard_reject"
+                        self.current_eval.metadata["unreasonable_solution_summary"] = dict(unreasonable or {})
+                        self.current_eval.metadata["verification_failures"] = list(unreasonable.get("verification_failures", []) or [])
+                        initial_materialized = None
+                        initial_makespan = float("inf")
+                    else:
+                        initial_config = build_resource_config_from_problem(self.opt, initial_materialized)
+                        self.current_config = initial_config.clone()
+                        self.last_validated_config = initial_config.clone() if hasattr(self, "last_validated_config") else initial_config.clone()
+                else:
+                    initial_hard_reject_reason = "missing_fixgurobi_materialized_problem"
+                    initial_makespan = float("inf")
             self.best_validated = ValidatedIncumbent(
-                config=self.current_config.clone(),
+                config=initial_config.clone(),
                 makespan=float(initial_makespan),
                 iter_id=0,
-                snapshot=None,
+                snapshot=initial_materialized,
             )
-            initial_validated_makespans = [] if bool(skip_initial_fixgurobi) else [float(initial_makespan)]
-            if not bool(skip_initial_fixgurobi):
+            initial_validated_makespans = [float(initial_makespan)] if math.isfinite(float(initial_makespan)) else []
+            if initial_materialized is not None:
+                self.opt.problem = copy.deepcopy(initial_materialized)
+                self.opt._rebuild_solvers()
                 self._sync_fixgurobi_best_snapshot(float(initial_makespan), 0)
+            elif not math.isfinite(float(initial_makespan)):
+                for attr in ("best", "work"):
+                    snapshot = getattr(self.opt, attr, None)
+                    if snapshot is not None:
+                        try:
+                            snapshot.z = float("inf")
+                        except Exception:
+                            pass
+                self.opt.work_z = float("inf")
         else:
             initial_validation = self.validator.validate(self.current_config, 0)
             initial_hard_reject_reason = str(initial_validation.get("hard_reject_reason", "") or "")
@@ -152,6 +202,8 @@ class ResourceTimeALNSEngine:
         self.z_operator_pick_count = 0
         self.forced_layer_queue: deque[str] = deque()
         self.global_decomp_repair_used = False
+        if dict(getattr(self.cfg, "gurobi_structure_seed_payload", {}) or {}) and "XYZ" in self.resource_layers:
+            self.forced_layer_queue.append("XYZ")
         if bool(getattr(self.cfg, "resource_global_decomp_repair_enabled", False)) and "XYZ" in self.resource_layers:
             self.forced_layer_queue.append("XYZ")
         self.last_selected_layer = ""
@@ -509,6 +561,32 @@ class ResourceTimeALNSEngine:
             except Exception:
                 pass
 
+    def _rebuilt_unreasonable_summary(self, problem_snapshot) -> Dict[str, object]:
+        old_problem = getattr(self.opt, "problem", None)
+        old_sp3 = getattr(self.opt, "sp3", None)
+        old_sp4 = getattr(self.opt, "sp4", None)
+        try:
+            direct_summary = dict(self.validator._unreasonable_solution_summary(problem_snapshot) or {})
+            if bool(direct_summary.get("has_unreasonable_solution", False)):
+                return direct_summary
+            self.opt.problem = copy.deepcopy(problem_snapshot)
+            self.opt._rebuild_solvers()
+            verify_method = getattr(self.opt, "_verify_makespan_breakdown", None)
+            if callable(verify_method):
+                verification = dict(verify_method("") or {})
+                failures = list(verification.get("failures", []) or [])
+                if failures:
+                    return {
+                        "has_unreasonable_solution": True,
+                        "verification_failures": failures,
+                        "verification": verification,
+                    }
+            return dict(self.validator._unreasonable_solution_summary(self.opt.problem) or {})
+        finally:
+            self.opt.problem = old_problem
+            self.opt.sp3 = old_sp3
+            self.opt.sp4 = old_sp4
+
     def _snapshot_tail_metrics(self, snapshot, config: Optional[ResourceConfig] = None) -> Dict[str, object]:
         rows = list(getattr(snapshot, "subtask_state", []) or [])
         active_robots = set()
@@ -849,6 +927,13 @@ class ResourceTimeALNSEngine:
             arms["Z"]["destroy"]["z_destroy_shared_stack_window"].weight = 3.0
         if "y_destroy_heavy_robot_tail" in arms["Y"]["destroy"]:
             arms["Y"]["destroy"]["y_destroy_heavy_robot_tail"].weight = 2.0
+        if "y_destroy_critical_load_rebalance" in arms["Y"]["destroy"]:
+            arms["Y"]["destroy"]["y_destroy_critical_load_rebalance"].weight = 5.0
+        if "y_repair_load_balance" in arms["Y"]["repair"]:
+            arms["Y"]["repair"]["y_repair_load_balance"].weight = max(
+                float(arms["Y"]["repair"]["y_repair_load_balance"].weight),
+                3.0,
+            )
         if "x_destroy_order_repartition" in arms["X"]["destroy"]:
             arms["X"]["destroy"]["x_destroy_order_repartition"].weight = 3.0
         for name in ("x_repair_partition_dp", "x_repair_station_balanced_partition"):
@@ -937,6 +1022,7 @@ class ResourceTimeALNSEngine:
             "XYZ" in all_layers
             and bool(getattr(self.cfg, "resource_xyz_stagnation_gate", True))
             and "XYZ" not in configured_revolving_order
+            and not bool(dict(getattr(self.cfg, "gurobi_structure_seed_payload", {}) or {}) and int(getattr(self, "_structure_seed_xyz_attempted", 0) or 0) <= 0)
             and not (
                 bool(getattr(self.cfg, "resource_global_decomp_repair_enabled", False))
                 and not bool(getattr(self, "global_decomp_repair_used", False))
@@ -1781,6 +1867,227 @@ class ResourceTimeALNSEngine:
             "local_release_retry_count": int(local_release_retry_count),
         }
 
+    def _build_structure_seed_config(self) -> Optional[ResourceConfig]:
+        payload = dict(getattr(self.cfg, "gurobi_structure_seed_payload", {}) or {})
+        fixed_units = dict(payload.get("fixed_work_units_by_order_slot") or {})
+        fixed_y = dict(payload.get("fixed_station_rank_by_order_slot") or {})
+        fixed_z = dict(payload.get("fixed_z_descriptors_by_order_slot") or {})
+        if not fixed_units or not fixed_y or not fixed_z:
+            return None
+
+        by_order_sku: Dict[Tuple[int, int], deque] = defaultdict(deque)
+        for work_unit_id, unit in sorted(self.current_config.work_units.items()):
+            by_order_sku[(int(unit.order_id), int(unit.sku_id))].append(str(work_unit_id))
+
+        subtasks: Dict[int, ResourceSubtask] = {}
+        next_subtask_id = 0
+        next_task_id = 1
+        seed_stacks: Dict[int, set] = defaultdict(set)
+        seed_subtask_id_by_order_slot: Dict[Tuple[int, int], int] = {}
+        for raw_order_id, unit_rows in sorted(dict(fixed_units).items(), key=lambda item: int(item[0])):
+            order_id = int(raw_order_id)
+            y_rows = list(dict(fixed_y).get(raw_order_id, dict(fixed_y).get(order_id, [])) or [])
+            z_rows = list(dict(fixed_z).get(raw_order_id, dict(fixed_z).get(order_id, [])) or [])
+            for local_idx, slot_units in enumerate(list(unit_rows or [])):
+                work_unit_ids: List[str] = []
+                for unit_key in list(slot_units or []):
+                    parts = str(unit_key).split(":")
+                    if len(parts) < 2:
+                        continue
+                    sku_id = int(parts[1])
+                    queue = by_order_sku.get((int(order_id), int(sku_id)))
+                    if not queue:
+                        return None
+                    work_unit_ids.append(str(queue.popleft()))
+                if not work_unit_ids:
+                    return None
+                y_row = y_rows[int(local_idx)] if int(local_idx) < len(y_rows) else (-1, -1)
+                station_id, station_rank = int(y_row[0]), int(y_row[1])
+                descriptors: List[ZTaskDescriptor] = []
+                for raw_desc in list(z_rows[int(local_idx)] if int(local_idx) < len(z_rows) else []):
+                    desc = dict(raw_desc or {})
+                    stack_id = int(desc.get("stack_id", -1))
+                    if stack_id >= 0:
+                        seed_stacks[int(order_id)].add(int(stack_id))
+                    sort_range = desc.get("sort_layer_range", None)
+                    descriptor_task_id = int(desc.get("task_id", next_task_id))
+                    if descriptor_task_id < 0:
+                        descriptor_task_id = int(next_task_id)
+                    descriptors.append(
+                        ZTaskDescriptor(
+                            task_id=int(descriptor_task_id),
+                            stack_id=int(stack_id),
+                            mode=str(desc.get("mode", "FLIP")).upper(),
+                            target_tote_ids=tuple(int(x) for x in (desc.get("target_tote_ids", []) or [])),
+                            hit_tote_ids=tuple(int(x) for x in (desc.get("hit_tote_ids", []) or [])),
+                            noise_tote_ids=tuple(int(x) for x in (desc.get("noise_tote_ids", []) or [])),
+                            sort_layer_range=None
+                            if sort_range is None
+                            else (int(sort_range[0]), int(sort_range[1])),
+                        )
+                    )
+                    next_task_id = max(int(next_task_id), int(descriptor_task_id) + 1)
+                subtasks[int(next_subtask_id)] = ResourceSubtask(
+                    subtask_id=int(next_subtask_id),
+                    order_id=int(order_id),
+                    work_unit_ids=tuple(sorted(work_unit_ids)),
+                    station_id=int(station_id),
+                    station_rank=int(station_rank),
+                    z_tasks=descriptors,
+                    origin_group_ids=(f"structure_seed:{int(order_id)}:{int(local_idx)}",),
+                )
+                seed_subtask_id_by_order_slot[(int(order_id), int(local_idx))] = int(next_subtask_id)
+                next_subtask_id += 1
+
+        candidate = ResourceConfig(
+            work_units=self.current_config.work_units,
+            subtasks=subtasks,
+            capacity_limits=self.current_config.capacity_limits,
+            next_subtask_id=int(next_subtask_id),
+            next_task_id=int(max(next_task_id, 1)),
+            metadata=copy.deepcopy(self.current_config.metadata),
+        ).rebuild_indices()
+        candidate.metadata.pop("fixed_route_task_sequence_by_robot", None)
+        candidate.metadata.pop("fixed_route_node_sequence_by_robot", None)
+        if seed_stacks:
+            candidate.metadata["structure_seed_stack_ids_by_order"] = {
+                int(order_id): sorted(int(x) for x in stack_ids)
+                for order_id, stack_ids in sorted(seed_stacks.items())
+            }
+        seed_scope = str(getattr(self.cfg, "gurobi_structure_seed_scope", "XYZU") or "XYZU").strip().upper()
+        route_tasks = dict(payload.get("fixed_route_task_sequence_by_robot") or {})
+        route_nodes = dict(payload.get("fixed_route_node_sequence_by_robot") or {})
+        if seed_scope not in {"XYZU", "U", "ROUTE"}:
+            route_tasks = {}
+            route_nodes = {}
+        if route_nodes:
+            # Match the replay path: when a full node sequence is exported, use it as
+            # the route seed and do not also constrain the derived task sequence.
+            route_tasks = {}
+        elif route_tasks:
+            normalized_route_tasks: Dict[int, List[Dict[str, object]]] = {}
+            for raw_robot_id, rows in sorted(route_tasks.items(), key=lambda item: int(item[0])):
+                normalized_rows: List[Dict[str, object]] = []
+                for raw_row in list(rows or []):
+                    row = dict(raw_row or {})
+                    order_id = int(row.get("order_id", -1))
+                    local_idx = int(row.get("local_slot_index", -1))
+                    mapped_subtask_id = seed_subtask_id_by_order_slot.get((int(order_id), int(local_idx)))
+                    if mapped_subtask_id is not None:
+                        row["subtask_id"] = int(mapped_subtask_id)
+                    normalized_rows.append(row)
+                normalized_route_tasks[int(raw_robot_id)] = normalized_rows
+            route_tasks = normalized_route_tasks
+            rebuilt_nodes: Dict[int, List[Dict[str, object]]] = {}
+            for raw_robot_id, rows in sorted(route_tasks.items(), key=lambda item: int(item[0])):
+                events: List[Tuple[float, int, int, Dict[str, object]]] = []
+                for raw_row in list(rows or []):
+                    row = dict(raw_row or {})
+                    task_id = int(row.get("task_id", -1))
+                    if task_id < 0:
+                        continue
+                    events.append((float(row.get("arrival_stack", 0.0) or 0.0), 0, task_id, row))
+                    events.append((float(row.get("arrival_station", 0.0) or 0.0), 1, task_id, row))
+                events.sort(key=lambda item: (float(item[0]), int(item[1]), int(item[2])))
+                nodes: List[Dict[str, object]] = [{"kind": "start"}]
+                for event_time, event_type, task_id, row in events:
+                    nodes.append(
+                        {
+                            "kind": "pickup" if int(event_type) == 0 else "delivery",
+                            "task_id": int(task_id),
+                            "order_id": int(row.get("order_id", -1)),
+                            "local_slot_index": int(row.get("local_slot_index", -1)),
+                            "subtask_id": int(row.get("subtask_id", -1)),
+                            "stack_id": int(row.get("stack_id", -1)),
+                            "station_id": int(row.get("station_id", -1)),
+                            "time": float(event_time),
+                        }
+                    )
+                nodes.append({"kind": "end"})
+                rebuilt_nodes[int(raw_robot_id)] = nodes
+            route_nodes = rebuilt_nodes
+        if route_tasks:
+            candidate.metadata["fixed_route_task_sequence_by_robot"] = copy.deepcopy(route_tasks)
+        if route_nodes:
+            candidate.metadata["fixed_route_node_sequence_by_robot"] = copy.deepcopy(route_nodes)
+        candidate.metadata["structure_seed_xyz_candidate"] = True
+        return candidate
+
+    def _build_structure_seed_xyz_candidate(self, iter_id: int) -> Optional[Dict[str, object]]:
+        if int(getattr(self, "_structure_seed_xyz_attempted", 0) or 0) > 0:
+            return None
+        self._structure_seed_xyz_attempted = 1
+        candidate = self._build_structure_seed_config()
+        if candidate is None:
+            return None
+        touched_ids = set(int(x) for x in candidate.subtasks.keys())
+        has_route_seed = bool(
+            (candidate.metadata or {}).get("fixed_route_node_sequence_by_robot")
+            or (candidate.metadata or {}).get("fixed_route_task_sequence_by_robot")
+        )
+        seed_layer = "XYZU" if bool(has_route_seed) else "XYZ"
+        seed_operator = "structure_seed_xyzu" if bool(has_route_seed) else "structure_seed_xyz"
+        candidate_eval = self._evaluate_config(
+            config=candidate,
+            layer=seed_layer,
+            score_cache=None,
+            affected_subtask_ids=touched_ids,
+            fallback_penalty=0.0,
+            iterations_since_last_validation=int(iter_id) - int(self.last_validation_iter),
+            distance_to_last_validated=config_distance(candidate, self.last_validated_config),
+            bypass_cache=True,
+        )
+        candidate_signature = candidate.validation_signature()
+        return {
+            "iter": int(iter_id),
+            "layer": seed_layer,
+            "candidate_stage": "exact",
+            "candidate_rank": -1,
+            "destroy_operator": "structure_seed",
+            "repair_operator": seed_operator,
+            "fallback_used": False,
+            "projection_mode": "structure_seed",
+            "projection_repaired_subtask_count": 0,
+            "F_raw": float(candidate_eval.F_raw),
+            "F_cal": float(candidate_eval.F_cal),
+            "eval_backend": str(candidate_eval.metadata.get("eval_backend", "surrogate")),
+            "fixgurobi_status": str(candidate_eval.metadata.get("fixgurobi_status", "")),
+            "fixgurobi_obj": candidate_eval.metadata.get("fixgurobi_obj", ""),
+            "fixgurobi_bound": candidate_eval.metadata.get("fixgurobi_bound", ""),
+            "fixgurobi_gap": candidate_eval.metadata.get("fixgurobi_gap", ""),
+            "fixgurobi_solve_time": candidate_eval.metadata.get("fixgurobi_solve_time", ""),
+            "fixgurobi_fixed_scope": str(candidate_eval.metadata.get("fixgurobi_fixed_scope", "")),
+            "fixgurobi_infeasible_reason": str(candidate_eval.metadata.get("fixgurobi_infeasible_reason", "")),
+            "duplicate_tote_count": int(candidate_eval.duplicate_tote_count),
+            "duplicate_tote_penalty": float(candidate_eval.duplicate_tote_penalty),
+            "candidate_signature": self._candidate_signature_text((seed_operator, candidate_signature)),
+            "candidate_signature_tuple": candidate_signature,
+            "candidate_payload": {
+                "config": candidate,
+                "score_cache": None,
+                "affected_ids": touched_ids,
+                "fallback_used": False,
+                "projection_mode": "structure_seed",
+                "projection_repaired_subtask_count": 0,
+            },
+            "candidate_eval": candidate_eval,
+            "selected_for_sa": False,
+            "action_signature": self._action_signature_text((seed_operator, candidate_signature)),
+            "coverage_feasible": bool(candidate_eval.coverage_feasible),
+            "unmet_sku_total": int(candidate_eval.unmet_sku_total),
+            "xyz_x_operator": "structure_seed",
+            "xyz_y_operator": "structure_seed",
+            "xyz_z_operator": "structure_seed",
+            "u_operator": "structure_seed_route" if bool(has_route_seed) else "",
+            "repartition_mode": True,
+            "critical_path_operator_used": False,
+            "critical_path_subtask_ids": [],
+            "coverage_issue_subtask_ids": [],
+            "local_release_subtask_count": int(len(touched_ids)),
+            "local_release_initial_count": int(len(touched_ids)),
+            "local_release_retry_count": 0,
+        }
+
     def _build_global_decomp_repair_candidate(self, iter_id: int) -> Optional[Dict[str, object]]:
         if self.global_decomp_repair_used:
             return None
@@ -2545,6 +2852,50 @@ class ResourceTimeALNSEngine:
         coverage_hard_reject_count = 0
         duplicate_hard_reject_count = 0
         seen_validation_signatures = set()
+        seed_row = self._build_structure_seed_xyz_candidate(int(iter_id))
+        if seed_row is not None:
+            generated_count += 1
+            fixed_scope = str(seed_row.get("fixgurobi_fixed_scope", "") or "").upper()
+            row_fixes_z = "Z" in fixed_scope and fixed_scope not in {"LOCALXYZ", "LOCALYZ"}
+            if bool(row_fixes_z) and (not bool(seed_row.get("coverage_feasible", True)) or int(seed_row.get("unmet_sku_total", 0) or 0) > 0):
+                coverage_hard_reject_count += 1
+                seed_row["candidate_stage"] = "exact_reject"
+                seed_row["exact_fail_reason"] = "coverage_hard_reject"
+                candidate_rows.append(seed_row)
+            elif bool(row_fixes_z) and int(seed_row["duplicate_tote_count"]) > 0:
+                duplicate_hard_reject_count += 1
+                seed_row["candidate_stage"] = "exact_reject"
+                seed_row["exact_fail_reason"] = "duplicate_tote_hard_reject"
+                candidate_rows.append(seed_row)
+            else:
+                seen_validation_signatures.add(seed_row["candidate_signature_tuple"])
+                candidate_rows.append(seed_row)
+                pool.append(seed_row)
+        if len(pool) >= target:
+            selected = self._select_best_candidate(pool)
+            if selected is not None:
+                selected["selected_for_sa"] = True
+                selected_signature = selected.get("candidate_signature_tuple", None)
+                for row in candidate_rows:
+                    if row.get("candidate_signature_tuple") == selected_signature and str(row.get("candidate_stage", "")) == "exact":
+                        row["selected_for_sa"] = True
+                        break
+            return {
+                "target_size": int(target),
+                "attempt_count": int(attempts),
+                "generated_count": int(generated_count),
+                "unique_count": int(len(pool)),
+                "exact_count": int(len(pool)),
+                "rows": candidate_rows,
+                "selected": selected,
+                "hard_reject_reason": "",
+                "attempted_pairs": attempted_pairs,
+                "penalized_pairs": [],
+                "coverage_hard_reject_count": int(coverage_hard_reject_count),
+                "exact_fail_count": 0,
+                "exact_fail_reasons": {},
+                "duplicate_hard_reject_count": int(duplicate_hard_reject_count),
+            }
         if bool(getattr(self.cfg, "resource_global_decomp_repair_enabled", False)):
             row = self._build_global_decomp_repair_candidate(int(iter_id))
             if row is not None:
@@ -3262,12 +3613,16 @@ class ResourceTimeALNSEngine:
 
     def _record_reward(self, layer: str, destroy_name: str, repair_name: str, reward: float, fallback_used: bool, iter_id: int) -> None:
         layer_name = str(layer).upper()
-        self.operator_arms[layer_name]["destroy"][str(destroy_name)].record(float(reward), int(iter_id))
-        self.operator_arms[layer_name]["repair"][str(repair_name)].record(float(reward), int(iter_id))
+        destroy_arms = self.operator_arms.get(layer_name, {}).get("destroy", {})
+        repair_arms = self.operator_arms.get(layer_name, {}).get("repair", {})
+        if str(destroy_name) in destroy_arms:
+            destroy_arms[str(destroy_name)].record(float(reward), int(iter_id))
+        if str(repair_name) in repair_arms:
+            repair_arms[str(repair_name)].record(float(reward), int(iter_id))
         if bool(fallback_used):
             fallback_name = {"X": X_FALLBACK_OPERATOR, "Y": Y_FALLBACK_OPERATOR, "Z": Z_FALLBACK_OPERATOR}.get(layer_name)
-            if fallback_name is not None and str(fallback_name) in self.operator_arms[layer_name]["repair"]:
-                self.operator_arms[layer_name]["repair"][str(fallback_name)].record(float(reward), int(iter_id))
+            if fallback_name is not None and str(fallback_name) in repair_arms:
+                repair_arms[str(fallback_name)].record(float(reward), int(iter_id))
         self.layer_exec_since_update[layer_name] = int(self.layer_exec_since_update[layer_name]) + 1
 
     def _apply_empty_candidate_failure(self, layer: str, attempted_pairs: List[Tuple[str, str]], iter_id: int) -> bool:
@@ -3543,6 +3898,15 @@ class ResourceTimeALNSEngine:
             t_iter0 = time.perf_counter()
             best_z_before_iter = float(self.best_validated.makespan)
             layer, force_rotate_used = self._select_layer(iter_id)
+            target_cmax_for_layer = float(getattr(self.cfg, "resource_target_cmax", float("nan")))
+            if (
+                bool(getattr(self.cfg, "resource_skip_xyz_after_target", False))
+                and str(layer).upper() == "XYZ"
+                and math.isfinite(target_cmax_for_layer)
+                and float(self.best_validated.makespan) <= float(target_cmax_for_layer) + 1e-9
+            ):
+                layer = ["Y", "Z", "X"][int(iter_id) % 3]
+                self.last_selected_layer_source = f"{getattr(self, 'last_selected_layer_source', '')}|post_target_skip_xyz"
             effective_destroy_mu, heavy_destroy_active, destroy_tier = self._current_destroy_mu()
             effective_destroy_budget = self._effective_destroy_budget(layer, effective_destroy_mu)
             prev_f_raw = float(self.current_eval.F_raw)
@@ -3715,17 +4079,33 @@ class ResourceTimeALNSEngine:
                                     materialized_snapshot.iter_id = int(iter_id)
                                 except Exception:
                                     pass
-                                materialized_config = build_resource_config_from_problem(self.opt, materialized_snapshot)
-                                self.current_config = materialized_config.clone()
-                                self.last_validated_config = materialized_config.clone()
-                                self.last_validated_signature = materialized_config.validation_signature()
-                            self.best_validated = ValidatedIncumbent(
-                                config=(materialized_config.clone() if materialized_config is not None else self.current_config.clone()),
-                                makespan=float(validated_makespan),
-                                iter_id=int(iter_id),
-                                snapshot=materialized_snapshot,
-                            )
-                            if materialized_snapshot is not None:
+                                unreasonable = self._rebuilt_unreasonable_summary(materialized_snapshot)
+                                if bool(unreasonable.get("has_unreasonable_solution", False)):
+                                    candidate_eval.metadata["unreasonable_solution_summary"] = dict(unreasonable or {})
+                                    candidate_eval.metadata["verification_failures"] = list(unreasonable.get("verification_failures", []) or [])
+                                    candidate_eval.metadata["has_unreasonable_solution"] = True
+                                    materialized_snapshot = None
+                                else:
+                                    materialized_config = build_resource_config_from_problem(self.opt, materialized_snapshot)
+                                    materialized_config.metadata.update(copy.deepcopy(getattr(candidate_config, "metadata", {}) or {}))
+                                    self.current_config = materialized_config.clone()
+                                    self.last_validated_config = materialized_config.clone()
+                                    self.last_validated_signature = materialized_config.validation_signature()
+                            if materialized_snapshot is None:
+                                candidate_hard_reject_reason = str(
+                                    candidate_hard_reject_reason
+                                    or ("unreasonable_solution_hard_reject" if bool(candidate_eval.metadata.get("has_unreasonable_solution", False)) else "missing_fixgurobi_materialized_problem")
+                                )
+                                reward = -6.0
+                                accepted = False
+                                validated_makespan = float("inf")
+                            else:
+                                self.best_validated = ValidatedIncumbent(
+                                    config=materialized_config.clone(),
+                                    makespan=float(validated_makespan),
+                                    iter_id=int(iter_id),
+                                    snapshot=materialized_snapshot,
+                                )
                                 self.opt.problem = copy.deepcopy(materialized_snapshot)
                                 self.opt._rebuild_solvers()
                                 if getattr(self.opt, "best", None) is not None:
@@ -3735,10 +4115,8 @@ class ResourceTimeALNSEngine:
                                     self.opt.work.problem_state = copy.deepcopy(materialized_snapshot)
                                     self.opt.work.subtask_state = None
                                 self.opt.work_z = float(validated_makespan)
-                            else:
-                                self._sync_fixgurobi_best_snapshot(float(validated_makespan), int(iter_id))
-                            improved_best = True
-                            reward = 8.0
+                                improved_best = True
+                                reward = 8.0
                         else:
                             reward = 6.0
                     else:
@@ -4019,6 +4397,14 @@ class ResourceTimeALNSEngine:
                 self.validated_best_no_change_rounds = int(self.validated_best_no_change_rounds) + 1
             target_cmax = float(getattr(self.cfg, "resource_target_cmax", float("nan")))
             if math.isfinite(target_cmax) and float(self.best_validated.makespan) <= float(target_cmax) + 1e-9:
+                min_target_runtime = float(getattr(self.cfg, "resource_min_runtime_after_target_sec", 0.0) or 0.0)
+                min_target_iters = int(getattr(self.cfg, "resource_min_iters_after_target", 0) or 0)
+                elapsed_after_target = float(self.opt._runtime_elapsed_sec())
+                if elapsed_after_target + 1e-9 < min_target_runtime or int(iter_id) < int(min_target_iters):
+                    self.opt.stop_reason = (
+                        f"target_reached_continue_search_{elapsed_after_target:.3f}s_iter_{int(iter_id)}"
+                    )
+                    continue
                 self.opt.stop_reason = "target_reached"
                 break
             hard_stop_rounds = int(getattr(
@@ -4072,6 +4458,30 @@ class ResourceTimeALNSEngine:
                     self.opt.work.problem_state = copy.deepcopy(snapshot)
                     self.opt.work.subtask_state = None
             self.opt.work_z = float(self.best_validated.makespan)
+            verify_method = getattr(self.opt, "_verify_makespan_breakdown", None)
+            if callable(verify_method):
+                final_verification = dict(verify_method("") or {})
+                final_failures = list(final_verification.get("failures", []) or [])
+                if final_failures and bool(getattr(self.cfg, "resource_hard_reject_unreasonable_solution", True)):
+                    self.best_validated.makespan = float("inf")
+                    self.best_validated.snapshot = None
+                    self.opt.work_z = float("inf")
+                    for attr in ("best", "work"):
+                        row = getattr(self.opt, attr, None)
+                        if row is not None:
+                            try:
+                                row.z = float("inf")
+                            except Exception:
+                                pass
+                    self.opt.stop_reason = f"{self.opt.stop_reason}+unreasonable_solution_hard_reject"
+        elif not math.isfinite(float(self.best_validated.makespan)):
+            for attr in ("best", "work"):
+                snapshot = getattr(self.opt, attr, None)
+                if snapshot is not None:
+                    try:
+                        snapshot.z = float("inf")
+                    except Exception:
+                        pass
+            self.opt.work_z = float("inf")
         self.opt._write_logs()
         return float(self.best_validated.makespan)
-

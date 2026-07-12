@@ -1,4 +1,4 @@
-﻿import math
+import math
 import gurobipy as gp
 from gurobipy import GRB
 from typing import Any, List, Dict, Tuple, Set, Optional
@@ -16,6 +16,7 @@ from entity.robot import Robot
 from entity.point import Point
 from problemDto.ofs_problem_dto import OFSProblemDTO
 from config.ofs_config import OFSConfig
+from Gurobi.resource_time_alns.route_edge_audit import local_route_node_key, subtask_slot_lookup_from_rows
 
 
 class SP4RoutingInfeasibleError(RuntimeError):
@@ -85,6 +86,165 @@ class SP4_Robot_Router:
         if normalized == "conditional":
             return int(pickup_count) <= max(0, int(threshold))
         return True
+
+    def _build_baseline_pruned_lkh_arcs(
+        self,
+        nodes_info: List[Tuple[Any, Any, str]],
+        num_tasks: int,
+        route_arc_prune: bool,
+        pickup_neighbor_limit: int,
+    ) -> Tuple[Set[Tuple[int, int]], Dict[str, Any]]:
+        """Mirror GlobalXYZU's U-graph pruning on the local OR-Tools nodes."""
+        route_arcs: List[Tuple[int, int]] = []
+        route_tau: Dict[Tuple[int, int], float] = {}
+        route_load_by_node: Dict[int, int] = {}
+        for idx, (_pt, task_obj, node_type) in enumerate(nodes_info):
+            if str(node_type) == "pickup" and task_obj is not None:
+                route_load_by_node[int(idx)] = int(max(1, getattr(task_obj, "total_load_count", 1) or 1))
+
+        def _kind(node_idx: int) -> str:
+            node_type = str(nodes_info[int(node_idx)][2])
+            return "start" if node_type == "depot" else node_type
+
+        def _slot(node_idx: int) -> int:
+            task_obj = nodes_info[int(node_idx)][1]
+            if task_obj is None:
+                return -1
+            return int(getattr(task_obj, "sub_task_id", -1))
+
+        def _station(node_idx: int) -> int:
+            task_obj = nodes_info[int(node_idx)][1]
+            if task_obj is None:
+                return -1
+            return int(getattr(task_obj, "target_station_id", -1))
+
+        def _load(node_idx: int) -> int:
+            if _kind(int(node_idx)) == "delivery":
+                pickup_idx = int(node_idx) - int(num_tasks)
+                return int(route_load_by_node.get(int(pickup_idx), 1))
+            return int(route_load_by_node.get(int(node_idx), 0))
+
+        def _arc_allowed(i: int, j: int) -> bool:
+            i = int(i)
+            j = int(j)
+            if i == j:
+                return _kind(i) == "start"
+            src_kind = _kind(i)
+            dst_kind = _kind(j)
+            if src_kind == "start":
+                return dst_kind in {"pickup", "start"}
+            if dst_kind == "start":
+                return src_kind == "delivery"
+            cross_slot = _slot(i) >= 0 and _slot(j) >= 0 and _slot(i) != _slot(j)
+            affinity_arc = (src_kind, dst_kind) in {("pickup", "pickup"), ("pickup", "delivery"), ("delivery", "delivery")}
+            if bool(route_arc_prune) and cross_slot and affinity_arc and _station(i) != _station(j):
+                return False
+            if src_kind == "pickup" and dst_kind == "pickup":
+                same_station = _station(i) >= 0 and _station(i) == _station(j)
+                if bool(route_arc_prune) and _slot(i) != _slot(j) and not same_station:
+                    return False
+                return _load(i) + _load(j) <= int(self.robot_capacity)
+            if src_kind == "pickup" and dst_kind == "delivery":
+                same_station = _station(i) >= 0 and _station(i) == _station(j)
+                return (not bool(route_arc_prune)) or _slot(i) == _slot(j) or same_station
+            if src_kind == "delivery" and dst_kind == "pickup":
+                return True
+            if src_kind == "delivery" and dst_kind == "delivery":
+                same_station = _station(i) >= 0 and _station(i) == _station(j)
+                return (not bool(route_arc_prune)) or _slot(i) == _slot(j) or same_station
+            return False
+
+        for i, (pt_i, _task_i, _type_i) in enumerate(nodes_info):
+            for j, (pt_j, _task_j, _type_j) in enumerate(nodes_info):
+                if not _arc_allowed(int(i), int(j)):
+                    continue
+                route_arcs.append((int(i), int(j)))
+                route_tau[(int(i), int(j))] = (abs(float(pt_i.x) - float(pt_j.x)) + abs(float(pt_i.y) - float(pt_j.y))) / float(self.robot_speed)
+
+        limit = int(pickup_neighbor_limit)
+        if limit <= 0:
+            return set(route_arcs), {
+                "enabled": True,
+                "u_legal_arc_count_before_knn": int(len(route_arcs)),
+                "u_arc_count_after_knn": int(len(route_arcs)),
+                "u_knn_pruned_arc_count": 0,
+                "u_pickup_neighbor_limit": int(limit),
+            }
+
+        kept: Set[Tuple[int, int]] = set()
+        pickup_successors_by_src: Dict[int, List[Tuple[float, int]]] = defaultdict(list)
+        special_predecessors_by_pickup: Dict[int, List[Tuple[float, int]]] = defaultdict(list)
+        for i, j in route_arcs:
+            src_kind = _kind(int(i))
+            dst_kind = _kind(int(j))
+            if src_kind == "start" or dst_kind in {"delivery", "start"}:
+                kept.add((int(i), int(j)))
+                continue
+            if dst_kind == "pickup":
+                travel = float(route_tau.get((int(i), int(j)), float("inf")))
+                pickup_successors_by_src[int(i)].append((travel, int(j)))
+                if src_kind in {"start", "delivery"}:
+                    special_predecessors_by_pickup[int(j)].append((travel, int(i)))
+        for src_id, rows in pickup_successors_by_src.items():
+            rows.sort(key=lambda row: (float(row[0]), int(row[1])))
+            for _travel, dst_id in rows[:limit]:
+                kept.add((int(src_id), int(dst_id)))
+        for node_id in range(1, int(num_tasks) + 1):
+            has_special_inbound = any(
+                int(dst_id) == int(node_id) and _kind(int(src_id)) in {"start", "delivery"}
+                for src_id, dst_id in kept
+            )
+            if has_special_inbound:
+                continue
+            fallback_rows = sorted(
+                special_predecessors_by_pickup.get(int(node_id), []),
+                key=lambda row: (float(row[0]), int(row[1])),
+            )
+            if fallback_rows:
+                _travel, src_id = fallback_rows[0]
+                kept.add((int(src_id), int(node_id)))
+        return kept, {
+            "enabled": True,
+            "u_legal_arc_count_before_knn": int(len(route_arcs)),
+            "u_arc_count_after_knn": int(len(kept)),
+            "u_knn_pruned_arc_count": int(max(0, len(route_arcs) - len(kept))),
+            "u_pickup_neighbor_limit": int(limit),
+        }
+
+    def _build_lkh_arcs_from_global_route_graph(
+        self,
+        nodes_info: List[Tuple[Any, Any, str]],
+        baseline_route_allowed_arcs: Set[Tuple[Any, Any]],
+        subtask_slot_lookup: Optional[Dict[int, Tuple[int, int]]] = None,
+    ) -> Tuple[Set[Tuple[int, int]], Dict[str, Any]]:
+        allowed_arc_keys = set(baseline_route_allowed_arcs or set())
+
+        kept: Set[Tuple[int, int]] = set()
+        for i in range(len(nodes_info)):
+            for j in range(len(nodes_info)):
+                edge = (
+                    local_route_node_key(
+                        nodes_info,
+                        int(i),
+                        is_destination=False,
+                        subtask_slot_lookup=subtask_slot_lookup,
+                    ),
+                    local_route_node_key(
+                        nodes_info,
+                        int(j),
+                        is_destination=True,
+                        subtask_slot_lookup=subtask_slot_lookup,
+                    ),
+                )
+                if edge in allowed_arc_keys:
+                    kept.add((int(i), int(j)))
+        return kept, {
+            "enabled": True,
+            "source": "global_route_tau",
+            "u_arc_count_after_global_sync": int(len(kept)),
+            "u_global_allowed_arc_key_count": int(len(allowed_arc_keys)),
+            "u_global_missing_local_arc_key_count": int(max(0, len(allowed_arc_keys) - len(kept))),
+        }
 
     def _build_route_failure_summary(
         self,
@@ -307,6 +467,10 @@ class SP4_Robot_Router:
         enable_guided_local_search: bool = True,
         same_subtask_vehicle_mode: str = "strict",
         same_subtask_vehicle_threshold: int = 2,
+        sync_baseline_pruned_graph: bool = False,
+        route_arc_prune: bool = True,
+        route_pickup_neighbor_limit: int = 0,
+        baseline_route_allowed_arcs: Optional[Set[Tuple[Any, Any]]] = None,
     ) -> Tuple[Dict[int, float], Dict[int, int]]:
         print(f"  >>> [SP4] Starting LKH-based Routing (OR-Tools)...")
         quiet_mode = os.environ.get("OFS_BATCH_SILENT", "0") == "1"
@@ -315,6 +479,7 @@ class SP4_Robot_Router:
         valid_tasks = [st for st in sub_tasks if st.execution_tasks]
         if not valid_tasks:
             return {}, {}
+        subtask_slot_lookup = subtask_slot_lookup_from_rows(valid_tasks)
         num_vehicles = len(self.problem.robot_list)
         depot_pt = self.problem.robot_list[0].start_point
         # 2. 构建节点映射 (Node Mapping)
@@ -361,6 +526,7 @@ class SP4_Robot_Router:
         distance_matrix = [[0] * num_nodes for _ in range(num_nodes)]
         demands = [0] * num_nodes
         service_times = [0] * num_nodes
+        service_times_exact = [0.0] * num_nodes
 
         for i in range(num_nodes):
             pt_i, task_i, type_i = nodes_info[i]
@@ -369,15 +535,40 @@ class SP4_Robot_Router:
             if type_i == 'pickup':
                 demands[i] = task_i.total_load_count
                 service_times[i] = int(task_i.robot_service_time)
+                service_times_exact[i] = float(task_i.robot_service_time)
             elif type_i == 'delivery':
                 demands[i] = -task_i.total_load_count
                 service_times[i] = 0  # 卸货耗时
+                service_times_exact[i] = 0.0
 
             for j in range(num_nodes):
                 pt_j, _, _ = nodes_info[j]
                 # 计算曼哈顿距离耗时 (放大10倍转为整数，OR-Tools 需要整数)
                 dist_time = (abs(pt_i.x - pt_j.x) + abs(pt_i.y - pt_j.y)) / self.robot_speed
                 distance_matrix[i][j] = int(dist_time * 10)
+
+        def exact_travel_time(from_node: int, to_node: int) -> float:
+            pt_i, _, _ = nodes_info[int(from_node)]
+            pt_j, _, _ = nodes_info[int(to_node)]
+            return float((abs(float(pt_i.x) - float(pt_j.x)) + abs(float(pt_i.y) - float(pt_j.y))) / self.robot_speed)
+        allowed_lkh_arcs: Optional[Set[Tuple[int, int]]] = None
+        if bool(sync_baseline_pruned_graph):
+            if baseline_route_allowed_arcs:
+                allowed_lkh_arcs, graph_sync_diag = self._build_lkh_arcs_from_global_route_graph(
+                    nodes_info=nodes_info,
+                    baseline_route_allowed_arcs=set(baseline_route_allowed_arcs),
+                    subtask_slot_lookup=subtask_slot_lookup,
+                )
+            else:
+                allowed_lkh_arcs, graph_sync_diag = self._build_baseline_pruned_lkh_arcs(
+                    nodes_info=nodes_info,
+                    num_tasks=num_tasks,
+                    route_arc_prune=bool(route_arc_prune),
+                    pickup_neighbor_limit=int(route_pickup_neighbor_limit),
+                )
+            self.problem.sp4_graph_sync_diagnostics = dict(graph_sync_diag)
+        else:
+            self.problem.sp4_graph_sync_diagnostics = {"enabled": False}
 
         # 4. 初始化 OR-Tools Routing Model
         manager = pywrapcp.RoutingIndexManager(num_nodes, num_vehicles, 0)
@@ -397,6 +588,8 @@ class SP4_Robot_Router:
         def time_callback(from_index, to_index):
             from_node = manager.IndexToNode(from_index)
             to_node = manager.IndexToNode(to_index)
+            if allowed_lkh_arcs is not None and (int(from_node), int(to_node)) not in allowed_lkh_arcs:
+                return 10**9
             # 时间 = 行驶时间 + 节点服务时间
             return distance_matrix[from_node][to_node] + (service_times[from_node] * 10)
 
@@ -469,6 +662,34 @@ class SP4_Robot_Router:
                 pass
     
         solver = routing.solver()
+        if allowed_lkh_arcs is not None:
+            blocked_arc_count = 0
+            for vehicle_id in range(num_vehicles):
+                start_index = routing.Start(vehicle_id)
+                end_index = routing.End(vehicle_id)
+                if (0, 0) not in allowed_lkh_arcs:
+                    solver.Add(routing.NextVar(start_index) != end_index)
+                    blocked_arc_count += 1
+                for node_id in range(1, num_nodes):
+                    to_index = manager.NodeToIndex(node_id)
+                    if (0, int(node_id)) not in allowed_lkh_arcs:
+                        solver.Add(routing.NextVar(start_index) != to_index)
+                        blocked_arc_count += 1
+                    from_index = manager.NodeToIndex(node_id)
+                    if (int(node_id), 0) not in allowed_lkh_arcs:
+                        solver.Add(routing.NextVar(from_index) != end_index)
+                        blocked_arc_count += 1
+            for from_node in range(1, num_nodes):
+                from_index = manager.NodeToIndex(from_node)
+                for to_node in range(1, num_nodes):
+                    if int(from_node) == int(to_node):
+                        continue
+                    if (int(from_node), int(to_node)) not in allowed_lkh_arcs:
+                        solver.Add(routing.NextVar(from_index) != manager.NodeToIndex(to_node))
+                        blocked_arc_count += 1
+            diag = dict(getattr(self.problem, "sp4_graph_sync_diagnostics", {}) or {})
+            diag["ortools_blocked_successor_count"] = int(blocked_arc_count)
+            self.problem.sp4_graph_sync_diagnostics = diag
 
         # 7.1 取送货成对，且 P 在 D 前面
         for p_idx, d_idx in pair_map:
@@ -596,13 +817,15 @@ class SP4_Robot_Router:
                     index = routing.Start(vehicle_id)
                     step_count = 0
                     route_seq = 0
+                    exact_route_time = 0.0
 
                     while not routing.IsEnd(index):
                         node_index = manager.IndexToNode(index)
                         pt, task_obj, n_type = nodes_info[node_index]
 
-                        # 从解中提取时间和载重 (除以 10 还原真实时间)
-                        arr_time = solution.Value(time_dimension.CumulVar(index)) / 10.0
+                        # OR-Tools uses integer-scaled time internally; replay the selected
+                        # node order with GlobalXYZU's exact floating route_tau semantics.
+                        arr_time = float(exact_route_time)
                         current_load = solution.Value(capacity_dimension.CumulVar(index))
 
                         # 提取坐标
@@ -666,7 +889,10 @@ class SP4_Robot_Router:
                         f_log.write(line + "\n")
 
                         # 步进到下一个节点
-                        index = solution.Value(routing.NextVar(index))
+                        next_index = solution.Value(routing.NextVar(index))
+                        next_node = manager.IndexToNode(next_index)
+                        exact_route_time += float(service_times_exact[int(node_index)]) + exact_travel_time(int(node_index), int(next_node))
+                        index = next_index
                         step_count += 1
                         route_seq += 1
 
@@ -674,7 +900,7 @@ class SP4_Robot_Router:
                     node_index = manager.IndexToNode(index)
                     pt, _, _ = nodes_info[node_index]
                     coord = f"({pt.x:.1f}, {pt.y:.1f})"
-                    end_time = solution.Value(time_dimension.CumulVar(index)) / 10.0
+                    end_time = float(exact_route_time)
                     final_load = solution.Value(capacity_dimension.CumulVar(index))
                     route_sequences.append({
                         "robot_id": int(robot_id),
@@ -732,7 +958,11 @@ class SP4_Robot_Router:
               same_subtask_vehicle_mode: str = "strict",
               same_subtask_vehicle_threshold: int = 2,
               enable_greedy_fallback: bool = False,
-              raise_on_no_solution: bool = False) -> Tuple[Dict[int, float], Dict[int, int]]:
+              raise_on_no_solution: bool = False,
+              sync_baseline_pruned_graph: bool = False,
+              route_arc_prune: bool = True,
+              route_pickup_neighbor_limit: int = 0,
+              baseline_route_allowed_arcs: Optional[Set[Tuple[Any, Any]]] = None) -> Tuple[Dict[int, float], Dict[int, int]]:
         """
         执行求解
 
@@ -767,6 +997,10 @@ class SP4_Robot_Router:
                     enable_guided_local_search=enable_guided_local_search,
                     same_subtask_vehicle_mode=same_subtask_vehicle_mode,
                     same_subtask_vehicle_threshold=same_subtask_vehicle_threshold,
+                    sync_baseline_pruned_graph=bool(sync_baseline_pruned_graph),
+                    route_arc_prune=bool(route_arc_prune),
+                    route_pickup_neighbor_limit=int(route_pickup_neighbor_limit),
+                    baseline_route_allowed_arcs=baseline_route_allowed_arcs,
                 )
             except SP4RoutingInfeasibleError:
                 if bool(enable_greedy_fallback):
@@ -1940,5 +2174,3 @@ if __name__ == "__main__":
     for st_id, r_id in robot_assign.items():
         st = next(t for t in sub_tasks if t.id == st_id)
         print(f"SubTask {st_id} -> Robot {r_id} | Tasks: {len(st.execution_tasks)}")
-
-

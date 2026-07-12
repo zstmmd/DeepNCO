@@ -118,12 +118,27 @@ class CreateOFSProblem:
             if deficit <= 0:
                 continue
             candidate_totes = totes_by_sku.get(int(sku_id), [])
-            if not candidate_totes:
-                continue
-            tote = sorted(candidate_totes, key=lambda item: int(getattr(item, "id", 0)))[0]
             sku = sku_by_id.get(int(sku_id))
             if sku is None:
                 continue
+            if not candidate_totes:
+                available_totes = [
+                    item for item in (tote_list or [])
+                    if getattr(item, "store_point", None) is not None
+                ]
+                if not available_totes:
+                    continue
+                tote = sorted(
+                    available_totes,
+                    key=lambda item: (
+                        len(getattr(item, "skus_list", []) or []),
+                        int(getattr(getattr(item, "store_point", None), "idx", 0)),
+                        int(getattr(item, "id", 0)),
+                    ),
+                )[0]
+                candidate_totes = [tote]
+            else:
+                tote = sorted(candidate_totes, key=lambda item: int(getattr(item, "id", 0)))[0]
             old_qty = int((getattr(tote, "sku_quantity_map", {}) or {}).get(int(sku_id), 0))
             new_qty = int(old_qty + deficit)
             tote.sku_quantity_map[int(sku_id)] = int(new_qty)
@@ -135,10 +150,15 @@ class CreateOFSProblem:
                 tote.skus_list.append(sku)
                 tote.capacity.append(int(new_qty))
             sku.tote_quantity_map[int(tote.id)] = int(new_qty)
+            found_store_tote = False
             for idx, tote_id in enumerate(list(getattr(sku, "storeToteList", []) or [])):
                 if int(tote_id) == int(tote.id) and idx < len(sku.storeQuantityList):
                     sku.storeQuantityList[idx] = int(new_qty)
+                    found_store_tote = True
                     break
+            if not found_store_tote:
+                sku.storeToteList.append(int(tote.id))
+                sku.storeQuantityList.append(int(new_qty))
 
     @staticmethod
     def generate_problem_by_scale(scale: str = "SMALL", seed: int = OFSConfig.RANDOM_SEED) -> OFSProblemDTO:
@@ -207,6 +227,9 @@ class CreateOFSProblem:
         ord_n, sku_n = cfg["data"]
         bom_types, bom_qty = cfg["bom_complexity"]
         warehouse_block_height = int(cfg.get("warehouse_block_height", OFSConfig.WAREHOUSE_BLOCK_HEIGHT))
+        map_layout_mode = str(cfg.get("map_layout_mode", "classic") or "classic")
+        middle_stack_shape = tuple(int(v) for v in (cfg.get("middle_stack_shape", ()) or ()))
+        storage_gap_rows = int(cfg.get("storage_gap_rows", 0) or 0)
         CreateOFSProblem.CURRENT_MAP_SIZE_SUM = int(map_L) + int(map_W)
         exact_bom_sku_count = int(cfg.get("exact_bom_sku_count", 0))
         exact_shared_bom_sku_count = int(cfg.get("exact_shared_bom_sku_count", 0))
@@ -239,7 +262,10 @@ class CreateOFSProblem:
         bom_colocated_chunked_by_stack = bool(cfg.get("bom_colocated_chunked_by_stack", False))
 
         print(f">>> 生成 [{scale}] 规模实例 | Seed: {seed}")
-        print(f"    Map: {map_L}x{map_W} blocks | Robots: {rob_n} | Stations: {st_n}")
+        map_label = f"{map_L}x{map_W} blocks"
+        if map_layout_mode.lower() in {"middle_stack_grid", "stack_grid"} and len(middle_stack_shape) >= 2:
+            map_label = f"{int(middle_stack_shape[0])}x{int(middle_stack_shape[1])} stack-grid"
+        print(f"    Map: {map_label} | Robots: {rob_n} | Stations: {st_n}")
         print(f"    Orders: {ord_n} | SKUs: {sku_n} | Totes: {tote_n}")
 
         problem = CreateOFSProblem.create_ofs_problem(
@@ -284,6 +310,9 @@ class CreateOFSProblem:
             bom_colocated_sku_copy_count=int(bom_colocated_sku_copy_count),
             bom_colocated_chunked_by_stack=bool(bom_colocated_chunked_by_stack),
             base_seed=int(seed),
+            map_layout_mode=map_layout_mode,
+            middle_stack_shape=middle_stack_shape,
+            storage_gap_rows=storage_gap_rows,
         )
         problem.scale_name = scale_upper
         problem.generator_profile = imbalance_profile or "default"
@@ -341,6 +370,9 @@ class CreateOFSProblem:
             bom_colocated_chunked_by_stack: bool = False,
             base_seed: int = OFSConfig.RANDOM_SEED,
             warehouse_block_height: int = None,
+            map_layout_mode: str = "classic",
+            middle_stack_shape: Tuple[int, ...] = (),
+            storage_gap_rows: int = 0,
     ) -> OFSProblemDTO:
         """
         构造并返回一个 OFSProblemDTO 实例。
@@ -356,6 +388,9 @@ class CreateOFSProblem:
             warehouse_width_block_number,
             station_num,
             workstation_rows,
+            layout_mode=map_layout_mode,
+            stack_grid_shape=tuple(int(v) for v in (middle_stack_shape or ())),
+            storage_gap_rows=int(storage_gap_rows),
         )
         ofs_problem_dto.map = map_
 
@@ -368,17 +403,26 @@ class CreateOFSProblem:
         ofs_problem_dto.robot_num = robot_num
         robots: List[Robot] = []
         map_length = map_.warehouse_length
-        robot_start_x = 1
         robot_start_y = 0
+        middle_layout = str(getattr(map_, "layout_mode", "") or "").lower() in {"middle_stack_grid", "stack_grid"}
+        robot_x_coords = map_.robot_start_x_coords(int(robot_num)) if bool(middle_layout) else []
+        robot_start_x = 1
         for i in range(robot_num):
             start_point = None
-            while robot_start_x < map_length:
-                start_idx = Point.get_idx_by_xy(map_length, robot_start_x, robot_start_y)
-                if start_idx >= len(map_.point_list):
+            if bool(middle_layout):
+                robot_start_y = int(getattr(map_, "robot_row", 1))
+                start_x = int(robot_x_coords[i]) if i < len(robot_x_coords) else int((map_length - 1) // 2)
+                start_idx = Point.get_idx_by_xy(map_length, start_x, robot_start_y)
+                if 0 <= start_idx < len(map_.point_list):
+                    start_point = map_.point_list[start_idx]
+            else:
+                while robot_start_x < map_length:
+                    start_idx = Point.get_idx_by_xy(map_length, robot_start_x, robot_start_y)
+                    if start_idx >= len(map_.point_list):
+                        break
+                    start_point = map_.point_list[start_idx]
+                    robot_start_x += 2
                     break
-                start_point = map_.point_list[start_idx]
-                robot_start_x += 2
-                break
             if start_point is None:
                 start_point = map_.point_list[0]
             robots.append(Robot(robot_id=i, start_point=start_point, max_stack_height=OFSConfig.ROBOT_CAPACITY))

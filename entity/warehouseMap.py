@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Tuple
 
 from entity.station import Station
 from entity.point import Point
@@ -20,7 +20,9 @@ class WarehouseMap:
 
     def __init__(self, warehouse_block_width: int, warehouse_block_length: int,
                  warehouse_block_height: int, warehouse_length_block_number: int,
-                 warehouse_width_block_number: int, workstation_num, workstation_rows: int = 3):
+                 warehouse_width_block_number: int, workstation_num, workstation_rows: int = 3,
+                 layout_mode: str = "classic", stack_grid_shape: Tuple[int, int] = (0, 0),
+                 storage_gap_rows: int = 0):
         """
         构造函数
         :param warehouse_block_width: 仓库块的宽度(块内 stack 行数)
@@ -35,6 +37,8 @@ class WarehouseMap:
         self.warehouse_length_block_number = warehouse_length_block_number
         self.warehouse_width_block_number = warehouse_width_block_number
         self.workstation_rows = workstation_rows
+        self.layout_mode = str(layout_mode or "classic").lower()
+        self.stack_grid_shape = tuple(int(v) for v in (stack_grid_shape or (0, 0)))
 
         # 经典 picker 块内列结构固定为:
         #   pick | rack | rack | pick | rack | rack | pick
@@ -45,24 +49,37 @@ class WarehouseMap:
         self.block_rack_columns = 4
         self.block_internal_length = self.block_pick_aisles + self.block_rack_columns
 
-        # 工作区高度: y=0 工作站行, y=1 机器人行, 机器人行到首行 stack 的间距 = 配置之和.
-        # 即首行 stack 位于 y = robot_row(=1) + (length_block_number + width_block_number).
         self.robot_row = 1
-        self.work_to_stack_gap = (self.warehouse_length_block_number
-                                  + self.warehouse_width_block_number)
-        self.storage_start_y = self.robot_row + self.work_to_stack_gap
-        self.work_zone_rows = self.storage_start_y
+        if self.layout_mode in {"middle_stack_grid", "stack_grid"}:
+            stack_cols = max(1, int(self.stack_grid_shape[0] or warehouse_length_block_number))
+            stack_rows = max(1, int(self.stack_grid_shape[1] or warehouse_width_block_number))
+            self.stack_grid_shape = (int(stack_cols), int(stack_rows))
+            self.work_to_stack_gap = int(storage_gap_rows)
+            # station y=0, robot y=1, then fixed empty aisle rows before storage.
+            self.storage_start_y = int(self.robot_row + 1 + self.work_to_stack_gap)
+            self.work_zone_rows = int(self.storage_start_y)
+            self.warehouse_length = int(stack_cols + ((stack_cols + 1) // 2) + 1)
+            self.storage_area_width = int(stack_rows)
+            self.warehouse_width = int(self.work_zone_rows + self.storage_area_width)
+            self.middle_stack_x_positions = self._build_middle_stack_x_positions(stack_cols)
+        else:
+            # 工作区高度: y=0 工作站行, y=1 机器人行, 机器人行到首行 stack 的 y 间距 = 仓库配置之和.
+            # 即首行 stack 位于 y = robot_row(=1) + (length_block_number + width_block_number).
+            self.work_to_stack_gap = (self.warehouse_length_block_number
+                                      + self.warehouse_width_block_number)
+            self.storage_start_y = self.robot_row + self.work_to_stack_gap
+            self.work_zone_rows = self.storage_start_y
 
-        # 存储区尺寸: 行方向 = width_block_number 个块(每块 block_width 行) + 块间/首尾 cross aisle.
-        # cross aisle 数量 = width_block_number + 1 (块前各 1 行).
-        self.storage_area_width = ((self.warehouse_block_width + 1)
-                                   * self.warehouse_width_block_number + 1)
-        # 列方向 = length_block_number 段, 每段内固定 7 列
-        # (3 条 pick aisle + 4 列货架), 段间/首尾 1 列纵向主通道.
-        self.warehouse_length = ((self.block_internal_length + 1)
-                                 * self.warehouse_length_block_number + 1)
-        # 总高度(y) = 工作区行数 + 存储区行数
-        self.warehouse_width = self.work_zone_rows + self.storage_area_width
+            # 存储区尺寸: 行方向 = width_block_number 个块(每块 block_width 行) + 块间/首尾 cross aisle.
+            # cross aisle 数量 = width_block_number + 1 (块前各 1 行).
+            self.storage_area_width = ((self.warehouse_block_width + 1)
+                                       * self.warehouse_width_block_number + 1)
+            # 列方向 = length_block_number 段, 每段内固定 7 列
+            # (3 条 pick aisle + 4 列货架), 段间/首尾 1 列纵向主通道.
+            self.warehouse_length = ((self.block_internal_length + 1)
+                                     * self.warehouse_length_block_number + 1)
+            # 总高度(y) = 工作区行数 + 存储区行数
+            self.warehouse_width = self.work_zone_rows + self.storage_area_width
         self.warehouse_node_number = self.warehouse_width * self.warehouse_length
 
         # 初始化节点列表
@@ -76,8 +93,21 @@ class WarehouseMap:
         self._initialize_nodes()
         self._initialize_node_distance_matrix()
 
+    @staticmethod
+    def _build_middle_stack_x_positions(stack_cols: int) -> List[int]:
+        positions: List[int] = []
+        x = 1
+        for col in range(max(0, int(stack_cols))):
+            positions.append(int(x))
+            x += 1
+            if col % 2 == 1:
+                x += 1
+        return positions
+
     def _column_kind(self, x: int) -> str:
         """返回某列在存储区的角色: 'vert'(纵向主通道) / 'pick'(块内拣选通道) / 'rack'(货架列)."""
+        if self.layout_mode in {"middle_stack_grid", "stack_grid"}:
+            return "rack" if int(x) in set(getattr(self, "middle_stack_x_positions", []) or []) else "pick"
         seg = self.block_internal_length + 1
         # 主通道: 每段边界(x % seg == 0)
         if x % seg == 0:
@@ -93,6 +123,8 @@ class WarehouseMap:
         """返回某行的角色: 'work'(工作区) / 'cross'(横向通道) / 'rack'(货架行)."""
         if y < self.work_zone_rows:
             return "work"
+        if self.layout_mode in {"middle_stack_grid", "stack_grid"}:
+            return "rack"
         ry = y - self.work_zone_rows
         # 存储区行方向按 "cross + block_width 行" 周期, cross 在每块之前
         if ry % (self.warehouse_block_width + 1) == 0:
@@ -139,6 +171,25 @@ class WarehouseMap:
                 self.workPoint.append(point)
             self.point_list.append(point)
         self.id_to_Point = {i: point for i, point in enumerate(self.point_list)}
+
+    def robot_start_x_coords(self, robot_num: int) -> List[int]:
+        count = max(0, int(robot_num))
+        if count <= 0:
+            return []
+        if count == 1:
+            return [int((self.warehouse_length - 1) // 2)]
+        spacing = float(self.warehouse_length - 1) / float(count - 1)
+        coords: List[int] = []
+        for k in range(count):
+            x = int(round(k * spacing))
+            if x not in coords:
+                coords.append(x)
+        while len(coords) < count:
+            for x in range(self.warehouse_length):
+                if x not in coords:
+                    coords.append(int(x))
+                    break
+        return coords[:count]
 
     def _initialize_node_distance_matrix(self):
         """初始化节点距离矩阵"""

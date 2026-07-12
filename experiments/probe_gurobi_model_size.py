@@ -38,6 +38,7 @@ def _sum_dict_values(value: Any) -> int:
 
 def _row_from_diag(case: str, cfg_name: str, diag: Dict[str, Any], cfg: GlobalXYZUConfig) -> Dict[str, Any]:
     var_by_type = dict(diag.get("model_var_count_by_type", {}) or {})
+    constr_by_type = dict(diag.get("model_constr_count_by_type", {}) or {})
     return {
         "case": case,
         "config_name": cfg_name,
@@ -48,6 +49,11 @@ def _row_from_diag(case: str, cfg_name: str, diag: Dict[str, Any], cfg: GlobalXY
         "support_tote_total": _sum_dict_values(diag.get("support_tote_count_by_order")),
         "demand_hit_tote_total": _sum_dict_values(diag.get("demand_hit_tote_count_by_order")),
         "model_var_count_total": int(diag.get("model_var_count_total", 0) or 0),
+        "model_constr_count_total": int(diag.get("model_constr_count_total", 0) or 0),
+        "model_linear_constr_count_total": int(diag.get("model_linear_constr_count_total", 0) or 0),
+        "model_general_constr_count_total": int(diag.get("model_general_constr_count_total", 0) or 0),
+        "slot_load_lex_count": int(constr_by_type.get("SlotLoadLex", 0) or diag.get("slot_load_lex_count", 0) or 0),
+        "slot_station_lex_count": int(constr_by_type.get("SlotStationLex", 0) or diag.get("slot_station_lex_count", 0) or 0),
         "route_arc": int(var_by_type.get("route_arc", 0) or 0),
         "passX": int(var_by_type.get("passX", 0) or 0),
         "x": int(var_by_type.get("x", 0) or 0),
@@ -75,6 +81,7 @@ def _row_from_diag(case: str, cfg_name: str, diag: Dict[str, Any], cfg: GlobalXY
         "enable_route_time_window_arc_prune": bool(getattr(cfg, "enable_route_time_window_arc_prune", False)),
         "enable_route_load_interval_arc_prune": bool(getattr(cfg, "enable_route_load_interval_arc_prune", False)),
         "model_var_count_by_type_json": json.dumps(var_by_type, ensure_ascii=False, sort_keys=True),
+        "model_constr_count_by_type_json": json.dumps(constr_by_type, ensure_ascii=False, sort_keys=True),
     }
 
 
@@ -112,6 +119,82 @@ def _build_cfg(args, config_name: str) -> GlobalXYZUConfig:
         cfg = _build_cfg(args, "no_warm_no_tw_wide")
         cfg.candidate_stack_topk = 3
         cfg.route_pickup_neighbor_limit = 5
+        return cfg
+    if config_name == "run_like_slotlex":
+        return GlobalXYZUConfig(
+            time_limit_sec=float(args.time_limit),
+            mip_gap=float(args.mip_gap),
+            candidate_stack_topk=999,
+            max_candidate_stacks_per_order=0,
+            candidate_station_topk_per_stack=999,
+            route_pickup_neighbor_limit=0,
+            enable_warm_start=True,
+            warm_start_use_sp4=True,
+            enable_sp4_fallback=False,
+            integrate_u_route=True,
+            u_same_slot_same_robot=True,
+            route_arc_prune=True,
+            enable_route_time_window_arc_prune=True,
+            enable_route_load_interval_arc_prune=True,
+            enable_slot_lex_symmetry=True,
+            enable_resource_lex_symmetry=False,
+            enable_order_time_windows=False,
+            write_lp=False,
+            gurobi_output=False,
+        )
+    if config_name in {
+        "run_like_slotlex_stationtop1",
+        "run_like_slotlex_stationtop2",
+        "run_like_slotlex_stationtop1_route10",
+        "run_like_slotlex_stationtop1_route5",
+        "run_like_slotlex_stationtop1_route3",
+        "run_like_slotlex_stationtop1_stacktop5",
+        "run_like_slotlex_stationtop1_stacktop4",
+        "run_like_slotlex_stationtop1_stacktop5_route10",
+        "run_like_slotlex_stationtop1_stacktop5_route5",
+        "run_like_slotlex_stationtop1_stacktop4_route10",
+        "run_like_slotlex_stationtop1_stacktop4_route5",
+    }:
+        cfg = _build_cfg(args, "run_like_slotlex")
+        if "_stationtop1" in config_name:
+            cfg.candidate_station_topk_per_stack = 1
+        elif "_stationtop2" in config_name:
+            cfg.candidate_station_topk_per_stack = 2
+        if "_stacktop5" in config_name:
+            cfg.candidate_stack_topk = 5
+            cfg.max_candidate_stacks_per_order = 5
+        elif "_stacktop4" in config_name:
+            cfg.candidate_stack_topk = 4
+            cfg.max_candidate_stacks_per_order = 4
+        if "_route10" in config_name:
+            cfg.route_pickup_neighbor_limit = 10
+        elif "_route5" in config_name:
+            cfg.route_pickup_neighbor_limit = 5
+        elif "_route3" in config_name:
+            cfg.route_pickup_neighbor_limit = 3
+        return cfg
+    if config_name in {
+        "run_like_slotlex_nointegratedu",
+        "run_like_slotlex_nointegratedu_stationtop1",
+        "run_like_slotlex_nointegratedu_stationtop2",
+        "run_like_slotlex_nointegratedu_stationclock",
+        "run_like_slotlex_nointegratedu_stacktop5",
+        "run_like_slotlex_nointegratedu_stacktop4",
+    }:
+        cfg = _build_cfg(args, "run_like_slotlex")
+        cfg.integrate_u_route = False
+        if config_name.endswith("_stationtop1"):
+            cfg.candidate_station_topk_per_stack = 1
+        elif config_name.endswith("_stationtop2"):
+            cfg.candidate_station_topk_per_stack = 2
+        elif config_name.endswith("_stationclock"):
+            cfg.enable_station_clock_linear = True
+        elif config_name.endswith("_stacktop5"):
+            cfg.candidate_stack_topk = 5
+            cfg.max_candidate_stacks_per_order = 5
+        elif config_name.endswith("_stacktop4"):
+            cfg.candidate_stack_topk = 4
+            cfg.max_candidate_stacks_per_order = 4
         return cfg
     raise ValueError(f"unknown config_name={config_name}")
 
@@ -152,8 +235,10 @@ def main() -> None:
             row = _row_from_diag(case, config_name.lower(), dict(compiled.diagnostics or {}), cfg)
             rows.append(row)
             print(
-                f"{case} {config_name}: vars={row['model_var_count_total']} route_arc={row['route_arc']} "
-                f"passX={row['passX']} compile={row['compile_time_sec']:.2f}s"
+                f"{case} {config_name}: vars={row['model_var_count_total']} "
+                f"constrs={row['model_constr_count_total']} "
+                f"slot_load_lex={row['slot_load_lex_count']} slot_station_lex={row['slot_station_lex_count']} "
+                f"route_arc={row['route_arc']} passX={row['passX']} compile={row['compile_time_sec']:.2f}s"
             )
             try:
                 compiled.model.dispose()

@@ -7,6 +7,7 @@ import re
 import sys
 import time
 from datetime import datetime
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -15,6 +16,7 @@ if ROOT_DIR not in sys.path:
 
 from problemDto.createInstance import CreateOFSProblem
 from Gurobi.global_xyzu import GlobalXYZUConfig, GlobalXYZUSolver
+from Gurobi.resource_time_alns.route_edge_audit import allowed_route_edges_from_global_payload, audit_fixed_route_edges
 
 
 KNOWN_GUROBI_EXPORT_DIRS = {
@@ -298,6 +300,7 @@ def build_fixed_payload(parsed: Dict[str, Any]) -> Dict[str, Any]:
                     used_stack_ids.add(stack_id)
                 descriptors.append(
                     {
+                        "task_id": int(task.get("task_id", -1)),
                         "stack_id": stack_id,
                         "mode": str(task.get("mode", "FLIP")).upper(),
                         "target_tote_ids": [int(v) for v in task.get("target_tote_ids", []) or []],
@@ -390,6 +393,8 @@ def _cfg_for_phase(args, phase: str, payload: Dict[str, Any], case_name: str = "
     command_text = str(case_run.get("command", "") or "")
     candidate_stack_topk = int(case_run.get("candidate_stack_topk", _cmd_int(command_text, "--candidate-stack-topk", 999)) or 999) if use_case_prune else 999
     candidate_station_topk = int(case_run.get("gurobi_station_topk", 999) or 999) if use_case_prune else 999
+    if phase == "XYZ_USED_STACK_ROUTE":
+        candidate_station_topk = 999
     route_neighbor = int(case_run.get("route_pickup_neighbor_limit", _cmd_int(command_text, "--route-pickup-neighbor-limit", 0)) or 0) if use_case_prune else 0
     max_candidate = 0 if (not use_case_prune or disable_all_prune) else int(getattr(args, "case_run_max_candidate_stacks_per_order", 8) or 8)
     cfg = GlobalXYZUConfig(
@@ -424,6 +429,8 @@ def _cfg_for_phase(args, phase: str, payload: Dict[str, Any], case_name: str = "
         node_sequence = payload.get("fixed_route_node_sequence_by_robot")
         cfg.fixed_route_node_sequence_by_robot = node_sequence
         cfg.fixed_route_task_sequence_by_robot = None if node_sequence else payload.get("fixed_route_task_sequence_by_robot")
+        cfg.enable_resource_lex_symmetry = False
+        cfg.enable_robot_finish_lex_symmetry = False
     return cfg
 
 
@@ -436,6 +443,23 @@ def _mismatch_reason(row: Dict[str, Any], target_cmax: float) -> str:
     if bool(row.get("warm_start_applied", False)):
         return "warm_start_applied"
     return ""
+
+
+def _fixed_route_edge_audit(problem: Any, cfg: GlobalXYZUConfig, payload: Dict[str, Any]) -> Dict[str, Any]:
+    if not (payload.get("fixed_route_node_sequence_by_robot") or payload.get("fixed_route_task_sequence_by_robot")):
+        return {"ok": True, "enabled": False, "reason": "empty_route_sequence"}
+    try:
+        compiled = GlobalXYZUSolver().compile_model(problem, cfg)
+        allowed_edges = allowed_route_edges_from_global_payload(getattr(compiled, "vars_payload", {}) or {})
+        audit = audit_fixed_route_edges(
+            allowed_edges,
+            route_task_sequence=payload.get("fixed_route_task_sequence_by_robot"),
+            route_node_sequence=payload.get("fixed_route_node_sequence_by_robot"),
+        )
+        audit.update({"enabled": True, "source": "fixed_replay_global_compile"})
+        return audit
+    except Exception as exc:
+        return {"ok": False, "enabled": True, "reason": "audit_exception", "error": str(exc)}
 
 
 def run_case(args, case_name: str, out_dir: str) -> List[Dict[str, Any]]:
@@ -466,8 +490,21 @@ def run_case(args, case_name: str, out_dir: str) -> List[Dict[str, Any]]:
             cfg.route_arc_prune = False
             cfg.enable_route_time_window_arc_prune = False
             cfg.enable_route_load_interval_arc_prune = False
+        route_edge_audit = (
+            _fixed_route_edge_audit(problem, cfg, payload)
+            if phase == "XYZ_USED_STACK_ROUTE"
+            else {"ok": True, "enabled": False}
+        )
         t0 = time.perf_counter()
-        result = GlobalXYZUSolver().solve(problem, cfg=cfg)
+        if not bool(route_edge_audit.get("ok", True)):
+            result = SimpleNamespace(
+                status="ROUTE_EDGE_AUDIT_FAILED",
+                diagnostics={"fallback_reason": "full_global_route_edge_missing"},
+                gap=float("nan"),
+                objective=float("nan"),
+            )
+        else:
+            result = GlobalXYZUSolver().solve(problem, cfg=cfg)
         runtime = float(time.perf_counter() - t0)
         diag = dict(getattr(result, "diagnostics", {}) or {})
         model_cmax = _safe_float(diag.get("model_cmax", diag.get("validated_global_makespan", float("nan"))))
@@ -488,6 +525,9 @@ def run_case(args, case_name: str, out_dir: str) -> List[Dict[str, Any]]:
             "fixed_constraint_count": int(diag.get("fixgurobi_fixed_constraint_count", 0) or 0),
             "invalid_fix_count": int(diag.get("fixgurobi_invalid_fix_count", 0) or 0),
             "route_sequence_missing_count": int(diag.get("fixgurobi_fixed_route_sequence_missing_count", 0) or 0),
+            "route_edge_audit_ok": bool(route_edge_audit.get("ok", True)),
+            "route_edge_audit_missing_count": int(route_edge_audit.get("missing_edge_count", 0) or 0),
+            "route_edge_audit": json.dumps(route_edge_audit, ensure_ascii=False, default=str),
             "tra_baseline_cmax": float(CURRENT_TRA_BASELINE_CMAX.get(case_name, float("nan"))),
             "gap_vs_global": float(model_cmax - target_cmax) if math.isfinite(model_cmax) and math.isfinite(target_cmax) else float("nan"),
             "gap_vs_tra": float(model_cmax - CURRENT_TRA_BASELINE_CMAX.get(case_name, float("nan"))) if math.isfinite(model_cmax) else float("nan"),
@@ -551,7 +591,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
-
-

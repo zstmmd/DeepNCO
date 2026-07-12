@@ -1,0 +1,2221 @@
+{
+  "scale": "M4",
+  "seed": 42,
+  "status": "TIME_LIMIT",
+  "objective": 881.218,
+  "gap": 0.12987614869419337,
+  "runtime_sec": 135.91051424993202,
+  "gurobi_solve_time_sec": 120.01910470798612,
+  "gurobi_runtime_sec": 120.0196897983551,
+  "subtask_count": 19,
+  "task_count": 19,
+  "global_makespan": 1217.0,
+  "true_global_makespan": 1217.0,
+  "total_span_overrun": 0.0,
+  "total_deadline_overrun": 0.0,
+  "station_schedule": {
+    "0": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "1": [
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12
+    ],
+    "2": [
+      13,
+      14,
+      15,
+      16,
+      17,
+      18
+    ]
+  },
+  "robot_routes": {
+    "0": [
+      {
+        "task_id": 0,
+        "subtask_id": 0,
+        "stack_id": 496,
+        "station_id": 0,
+        "arrival_time_at_stack": 55.0,
+        "arrival_time_at_station": 114.0
+      },
+      {
+        "task_id": 5,
+        "subtask_id": 5,
+        "stack_id": 500,
+        "station_id": 0,
+        "arrival_time_at_stack": 174.0,
+        "arrival_time_at_station": 237.0
+      },
+      {
+        "task_id": 11,
+        "subtask_id": 11,
+        "stack_id": 488,
+        "station_id": 1,
+        "arrival_time_at_stack": 293.0,
+        "arrival_time_at_station": 352.0
+      },
+      {
+        "task_id": 15,
+        "subtask_id": 15,
+        "stack_id": 491,
+        "station_id": 2,
+        "arrival_time_at_stack": 407.0,
+        "arrival_time_at_station": 467.0
+      }
+    ],
+    "1": [
+      {
+        "task_id": 1,
+        "subtask_id": 1,
+        "stack_id": 497,
+        "station_id": 0,
+        "arrival_time_at_stack": 55.0,
+        "arrival_time_at_station": 115.0
+      },
+      {
+        "task_id": 6,
+        "subtask_id": 6,
+        "stack_id": 473,
+        "station_id": 1,
+        "arrival_time_at_stack": 172.0,
+        "arrival_time_at_station": 228.0
+      },
+      {
+        "task_id": 9,
+        "subtask_id": 9,
+        "stack_id": 499,
+        "station_id": 1,
+        "arrival_time_at_stack": 283.0,
+        "arrival_time_at_station": 341.0
+      },
+      {
+        "task_id": 13,
+        "subtask_id": 13,
+        "stack_id": 472,
+        "station_id": 2,
+        "arrival_time_at_stack": 393.0,
+        "arrival_time_at_station": 452.0
+      },
+      {
+        "task_id": 17,
+        "subtask_id": 17,
+        "stack_id": 475,
+        "station_id": 2,
+        "arrival_time_at_stack": 505.0,
+        "arrival_time_at_station": 561.0
+      }
+    ],
+    "2": [
+      {
+        "task_id": 2,
+        "subtask_id": 2,
+        "stack_id": 470,
+        "station_id": 0,
+        "arrival_time_at_stack": 54.0,
+        "arrival_time_at_station": 111.0
+      },
+      {
+        "task_id": 4,
+        "subtask_id": 4,
+        "stack_id": 478,
+        "station_id": 0,
+        "arrival_time_at_stack": 165.0,
+        "arrival_time_at_station": 222.0
+      },
+      {
+        "task_id": 8,
+        "subtask_id": 8,
+        "stack_id": 490,
+        "station_id": 1,
+        "arrival_time_at_stack": 280.0,
+        "arrival_time_at_station": 337.0
+      },
+      {
+        "task_id": 12,
+        "subtask_id": 12,
+        "stack_id": 482,
+        "station_id": 1,
+        "arrival_time_at_stack": 391.0,
+        "arrival_time_at_station": 448.0
+      },
+      {
+        "task_id": 16,
+        "subtask_id": 16,
+        "stack_id": 502,
+        "station_id": 2,
+        "arrival_time_at_stack": 506.0,
+        "arrival_time_at_station": 565.0
+      }
+    ],
+    "3": [
+      {
+        "task_id": 3,
+        "subtask_id": 3,
+        "stack_id": 479,
+        "station_id": 0,
+        "arrival_time_at_stack": 58.0,
+        "arrival_time_at_station": 116.0
+      },
+      {
+        "task_id": 7,
+        "subtask_id": 7,
+        "stack_id": 481,
+        "station_id": 1,
+        "arrival_time_at_stack": 173.0,
+        "arrival_time_at_station": 229.0
+      },
+      {
+        "task_id": 10,
+        "subtask_id": 10,
+        "stack_id": 488,
+        "station_id": 1,
+        "arrival_time_at_stack": 285.0,
+        "arrival_time_at_station": 344.0
+      },
+      {
+        "task_id": 14,
+        "subtask_id": 14,
+        "stack_id": 484,
+        "station_id": 2,
+        "arrival_time_at_stack": 400.0,
+        "arrival_time_at_station": 457.0
+      },
+      {
+        "task_id": 18,
+        "subtask_id": 18,
+        "stack_id": 493,
+        "station_id": 2,
+        "arrival_time_at_stack": 512.0,
+        "arrival_time_at_station": 570.0
+      }
+    ]
+  },
+  "diagnostics": {
+    "solver": "GlobalXYZUSolver",
+    "stage": "optimize",
+    "supported_scale": false,
+    "u_candidate_task_count": 0,
+    "u_node_count": 0,
+    "u_arc_count": 0,
+    "u_active_task_count": 0,
+    "u_integrated_route_used": false,
+    "u_fallback_reason": "integrated_route_disabled_or_no_active_route_tasks",
+    "gurobi_solve_time_sec": 120.01910470798612,
+    "gurobi_runtime_sec": 120.0196897983551,
+    "route_lazy_constraint": false,
+    "route_lazy_level": 1,
+    "fixgurobi_warm_start_disabled": false,
+    "fixgurobi_warm_start_applied": false,
+    "fixgurobi_warm_bound_only": false,
+    "scale_adaptive_candidate_prune_enabled": false,
+    "scale_adaptive_candidate_prune_applied": false,
+    "scale_adaptive_reason": "",
+    "scale_adaptive_original_candidate_stack_topk": 999,
+    "scale_adaptive_original_max_candidate_stacks_per_order": 0,
+    "scale_adaptive_original_candidate_station_topk_per_stack": 1,
+    "scale_adaptive_original_route_pickup_neighbor_limit": 0,
+    "gurobi_scale_index": 0,
+    "scale_adaptive_effective_candidate_stack_topk": 999,
+    "scale_adaptive_effective_max_candidate_stacks_per_order": 0,
+    "scale_adaptive_effective_candidate_station_topk_per_stack": 1,
+    "scale_adaptive_effective_route_pickup_neighbor_limit": 0,
+    "warning": "scale=M4 is outside the intended SMALL/SMALL2/TINY3/GUROBI-S scope",
+    "work_unit_count": 102,
+    "slot_count": 19,
+    "slot_count_by_order": {
+      "0": 4,
+      "1": 3,
+      "2": 3,
+      "3": 3,
+      "4": 3,
+      "5": 3
+    },
+    "candidate_stack_count_by_order": {
+      "0": 3,
+      "1": 3,
+      "2": 3,
+      "3": 3,
+      "4": 3,
+      "5": 3
+    },
+    "candidate_stack_count_before_by_order": {
+      "0": 3,
+      "1": 3,
+      "2": 3,
+      "3": 3,
+      "4": 3,
+      "5": 3
+    },
+    "candidate_stack_dominated_pruned_count_by_order": {
+      "0": 0,
+      "1": 0,
+      "2": 0,
+      "3": 0,
+      "4": 0,
+      "5": 0
+    },
+    "candidate_stack_warm_neighbor_count_by_order": {
+      "0": 0,
+      "1": 0,
+      "2": 0,
+      "3": 0,
+      "4": 0,
+      "5": 0
+    },
+    "demand_hit_tote_count_by_order": {
+      "0": 4,
+      "1": 3,
+      "2": 3,
+      "3": 3,
+      "4": 3,
+      "5": 3
+    },
+    "support_tote_count_by_order": {
+      "0": 24,
+      "1": 19,
+      "2": 19,
+      "3": 19,
+      "4": 19,
+      "5": 19
+    },
+    "warm_start_makespan": 909.0,
+    "warm_start_sp2_mode": "heuristic_default",
+    "warm_start_sp4_mode": "lkh",
+    "warm_start_sp4_error": "",
+    "warm_start_sp4_runtime_sec": 15.745625165756792,
+    "auto_max_rank": 11,
+    "effective_max_rank": 11,
+    "u_legal_arc_count_before_knn": 0,
+    "u_arc_count_after_knn": 0,
+    "u_knn_pruned_arc_count": 0,
+    "u_capacity_pruned_pickup_pickup_arc_count": 0,
+    "u_time_window_pruned_arc_count": 0,
+    "u_load_interval_pruned_arc_count": 0,
+    "u_directional_pruned_arc_count": 0,
+    "u_directional_protected_kept_count": 0,
+    "u_protected_arc_kept_after_prune_count": 0,
+    "u_resource_pruned_arc_count": 0,
+    "u_arc_count_after_resource_prune": 0,
+    "u_sec_cut_count": 0,
+    "slot_time_ub": 2727.0,
+    "slot_time_ub_source": "max_cfg_big_m_time_3x_warm_start_makespan",
+    "route_big_m": 276.0,
+    "route_big_m_source": "3x_warm_start_route_end",
+    "warm_makespan": 909.0,
+    "warm_route_end": 138.0,
+    "route_big_m_max_arc": 62.0,
+    "route_big_m_max_robot_service": 3.0,
+    "route_big_m_candidate_route_task_count": 0,
+    "legacy_cfg_big_m_time": 2000.0,
+    "route_node_time_ub": {},
+    "route_arc_time_m": {},
+    "route_node_time_ub_max": 0.0,
+    "route_arc_time_m_max": 0.0,
+    "pickup_service_ub_by_node": {},
+    "service_lb_total": 0.0,
+    "min_trip_travel_time": 0.0,
+    "global_robot_service_only_lb": 0.0,
+    "global_robot_capacity_trip_lb": 0.0,
+    "route_lazy_time_count": 0,
+    "route_lazy_load_count": 0,
+    "enable_uz_lb_cuts": true,
+    "enable_sku_cover_cuts": true,
+    "enable_slot_min_arrival_lb": true,
+    "enable_route_incident_travel_lb": true,
+    "enable_route_pair_service_travel_lb": true,
+    "enable_route_slot_stack_count_lb": true,
+    "enable_route_finish_cmax_lb": true,
+    "enable_global_arrival_workload_lb": true,
+    "enable_route_time_window_arc_prune": true,
+    "enable_route_load_interval_arc_prune": true,
+    "enable_route_directional_arc_prune": false,
+    "enable_route_service_sec_cuts": false,
+    "enable_tight_slot_upper_bound": true,
+    "enable_warm_candidate_stack_prune": false,
+    "enable_slot_lex_symmetry": true,
+    "enable_tote_equivalence_symmetry": true,
+    "enable_station_global_lex_symmetry": true,
+    "enable_robot_finish_lex_symmetry": true,
+    "candidate_station_topk_per_stack": 1,
+    "candidate_stack_topk": 999,
+    "max_candidate_stacks_per_order": 0,
+    "route_pickup_neighbor_limit": 0,
+    "enable_scale_adaptive_candidate_prune": false,
+    "enable_resource_lex_symmetry": false,
+    "enable_anchor_first_order_robot": false,
+    "enable_selected_workload_lbs": true,
+    "enable_route_arrival_slot_linear": true,
+    "enable_station_clock_linear": false,
+    "kitting_span_penalty_weight": 5.0,
+    "uz_lb_cut_count": 1,
+    "sku_cover_cut_count": 430,
+    "slot_min_arrival_lb_count": 0,
+    "station_release_workload_lb_count": 0,
+    "route_incident_travel_lb_count": 0,
+    "route_pair_service_travel_lb_count": 0,
+    "route_slot_stack_count_lb_count": 19,
+    "route_finish_cmax_lb_count": 0,
+    "global_arrival_workload_lb_count": 0,
+    "route_arrival_slot_linear_count": 0,
+    "station_clock_linear_count": 0,
+    "sort_hit_tote_threshold": 3,
+    "sort_hit_tote_threshold_count": 114,
+    "global_selected_route_workload_lb_count": 0,
+    "global_selected_station_workload_lb_count": 1,
+    "order_workload_lb_count": 6,
+    "required_slot_active_lb_count": 19,
+    "slot_min_pick_workload_lb_count": 19,
+    "order_deadline_intrinsic_lb_count": 0,
+    "station_rank_prefix_process_lb_count": 33,
+    "robot_task_count_lex_count": 0,
+    "robot_finish_lex_count": 0,
+    "station_slot_count_lex_count": 0,
+    "station_global_lex_count": 0,
+    "stack_equivalence_lex_count": 0,
+    "slot_load_lex_count": 13,
+    "slot_station_lex_count": 13,
+    "tote_equivalence_lex_count": 0,
+    "global_routing_workload_cut_count": 0,
+    "anchor_first_order_robot_count": 0,
+    "fixgurobi_fixed_constraint_count": 0,
+    "fixgurobi_invalid_fix_count": 0,
+    "model_var_count_total": 4044,
+    "model_var_count_by_type": {
+      "Cmax": 1,
+      "a": 19,
+      "arrival": 19,
+      "carry": 381,
+      "finish": 19,
+      "flip": 57,
+      "flip_hit": 61,
+      "hit": 61,
+      "noise": 381,
+      "order_arrival_lb": 6,
+      "order_arrival_ub": 6,
+      "order_deadline_overrun": 6,
+      "order_span_overrun": 6,
+      "pair_act": 171,
+      "sku_use": 328,
+      "sort": 1482,
+      "start": 19,
+      "station_arrival_clock": 33,
+      "station_finish_clock": 33,
+      "x": 328,
+      "y": 627
+    },
+    "model_constr_count_total": 7481,
+    "model_linear_constr_count_total": 5049,
+    "model_general_constr_count_total": 2432,
+    "model_constr_count_by_type": {
+      "ActiveStackNeedsLoad": 57,
+      "ArrivalBind": 19,
+      "ArrivalProxy": 19,
+      "Assign_0:0": 1,
+      "Assign_0:1": 1,
+      "Assign_0:10": 1,
+      "Assign_0:11": 1,
+      "Assign_0:12": 1,
+      "Assign_0:13": 1,
+      "Assign_0:14": 1,
+      "Assign_0:15": 1,
+      "Assign_0:16": 1,
+      "Assign_0:17": 1,
+      "Assign_0:18": 1,
+      "Assign_0:19": 1,
+      "Assign_0:2": 1,
+      "Assign_0:20": 1,
+      "Assign_0:21": 1,
+      "Assign_0:3": 1,
+      "Assign_0:4": 1,
+      "Assign_0:5": 1,
+      "Assign_0:6": 1,
+      "Assign_0:7": 1,
+      "Assign_0:8": 1,
+      "Assign_0:9": 1,
+      "Assign_1:22": 1,
+      "Assign_1:23": 1,
+      "Assign_1:24": 1,
+      "Assign_1:25": 1,
+      "Assign_1:26": 1,
+      "Assign_1:27": 1,
+      "Assign_1:28": 1,
+      "Assign_1:29": 1,
+      "Assign_1:30": 1,
+      "Assign_1:31": 1,
+      "Assign_1:32": 1,
+      "Assign_1:33": 1,
+      "Assign_1:34": 1,
+      "Assign_1:35": 1,
+      "Assign_1:36": 1,
+      "Assign_1:37": 1,
+      "Assign_2:38": 1,
+      "Assign_2:39": 1,
+      "Assign_2:40": 1,
+      "Assign_2:41": 1,
+      "Assign_2:42": 1,
+      "Assign_2:43": 1,
+      "Assign_2:44": 1,
+      "Assign_2:45": 1,
+      "Assign_2:46": 1,
+      "Assign_2:47": 1,
+      "Assign_2:48": 1,
+      "Assign_2:49": 1,
+      "Assign_2:50": 1,
+      "Assign_2:51": 1,
+      "Assign_2:52": 1,
+      "Assign_2:53": 1,
+      "Assign_3:54": 1,
+      "Assign_3:55": 1,
+      "Assign_3:56": 1,
+      "Assign_3:57": 1,
+      "Assign_3:58": 1,
+      "Assign_3:59": 1,
+      "Assign_3:60": 1,
+      "Assign_3:61": 1,
+      "Assign_3:62": 1,
+      "Assign_3:63": 1,
+      "Assign_3:64": 1,
+      "Assign_3:65": 1,
+      "Assign_3:66": 1,
+      "Assign_3:67": 1,
+      "Assign_3:68": 1,
+      "Assign_3:69": 1,
+      "Assign_4:70": 1,
+      "Assign_4:71": 1,
+      "Assign_4:72": 1,
+      "Assign_4:73": 1,
+      "Assign_4:74": 1,
+      "Assign_4:75": 1,
+      "Assign_4:76": 1,
+      "Assign_4:77": 1,
+      "Assign_4:78": 1,
+      "Assign_4:79": 1,
+      "Assign_4:80": 1,
+      "Assign_4:81": 1,
+      "Assign_4:82": 1,
+      "Assign_4:83": 1,
+      "Assign_4:84": 1,
+      "Assign_4:85": 1,
+      "Assign_5:100": 1,
+      "Assign_5:101": 1,
+      "Assign_5:86": 1,
+      "Assign_5:87": 1,
+      "Assign_5:88": 1,
+      "Assign_5:89": 1,
+      "Assign_5:90": 1,
+      "Assign_5:91": 1,
+      "Assign_5:92": 1,
+      "Assign_5:93": 1,
+      "Assign_5:94": 1,
+      "Assign_5:95": 1,
+      "Assign_5:96": 1,
+      "Assign_5:97": 1,
+      "Assign_5:98": 1,
+      "Assign_5:99": 1,
+      "CarryCap": 19,
+      "CarryHitLB": 61,
+      "CarryHitUB": 61,
+      "CarryMode": 61,
+      "CarrySortOnly": 320,
+      "CarryStackBind": 57,
+      "Cmax": 19,
+      "DemandCover": 328,
+      "FinishBind": 19,
+      "FinishDef": 19,
+      "FlipHitFlip": 61,
+      "FlipHitHit": 61,
+      "FlipHitLB2": 61,
+      "GlobalSelectedStationWorkloadLB": 1,
+      "Global_Station_Workload_Bound": 1,
+      "HitMode": 61,
+      "NoiseCarry": 381,
+      "NoiseHitExclusive": 61,
+      "NoiseLB": 61,
+      "NoiseOnlyLB": 320,
+      "NoiseSortOnly": 381,
+      "OrderArrivalBounds": 6,
+      "OrderArrivalLBLink": 19,
+      "OrderArrivalUBLink": 19,
+      "OrderDeadline": 6,
+      "OrderSelectedStationWorkloadLB": 6,
+      "OrderSkuStackCover": 102,
+      "OrderSpan": 6,
+      "PairNeedsLoad": 171,
+      "PairUseLB": 171,
+      "PairUseStack": 171,
+      "PairUseStation": 171,
+      "RankNoHole": 30,
+      "RankUnique": 33,
+      "RequiredSlotActive": 19,
+      "SkuUseLB": 328,
+      "SkuUseUB": 328,
+      "SlotCap": 19,
+      "SlotLoadLex": 13,
+      "SlotMinPickWorkloadLB": 19,
+      "SlotNonEmpty": 19,
+      "SlotSkuHitCover": 328,
+      "SlotStackCapacityCoverLB": 19,
+      "SlotStationLex": 13,
+      "SlotSym": 13,
+      "SlotYAssign": 19,
+      "SortByHitThresholdLB": 57,
+      "SortByHitThresholdUB": 57,
+      "StackUse": 57,
+      "StartAfterArrival": 19,
+      "StartBind": 19,
+      "StationArrivalClockBind": 33,
+      "StationArrivalClockEq": 627,
+      "StationArrivalMonotone": 570,
+      "StationFinishClockBind": 33,
+      "StationFinishClockEq": 627,
+      "StationRankPrefixProcessLB": 33,
+      "StationStartAfterPrev": 570,
+      "ToteUnique": 119,
+      "UZStackServiceWorkloadLB": 1
+    },
+    "model_linear_constr_count_by_type": {
+      "ActiveStackNeedsLoad": 57,
+      "ArrivalBind": 19,
+      "ArrivalProxy": 19,
+      "Assign_0:0": 1,
+      "Assign_0:1": 1,
+      "Assign_0:10": 1,
+      "Assign_0:11": 1,
+      "Assign_0:12": 1,
+      "Assign_0:13": 1,
+      "Assign_0:14": 1,
+      "Assign_0:15": 1,
+      "Assign_0:16": 1,
+      "Assign_0:17": 1,
+      "Assign_0:18": 1,
+      "Assign_0:19": 1,
+      "Assign_0:2": 1,
+      "Assign_0:20": 1,
+      "Assign_0:21": 1,
+      "Assign_0:3": 1,
+      "Assign_0:4": 1,
+      "Assign_0:5": 1,
+      "Assign_0:6": 1,
+      "Assign_0:7": 1,
+      "Assign_0:8": 1,
+      "Assign_0:9": 1,
+      "Assign_1:22": 1,
+      "Assign_1:23": 1,
+      "Assign_1:24": 1,
+      "Assign_1:25": 1,
+      "Assign_1:26": 1,
+      "Assign_1:27": 1,
+      "Assign_1:28": 1,
+      "Assign_1:29": 1,
+      "Assign_1:30": 1,
+      "Assign_1:31": 1,
+      "Assign_1:32": 1,
+      "Assign_1:33": 1,
+      "Assign_1:34": 1,
+      "Assign_1:35": 1,
+      "Assign_1:36": 1,
+      "Assign_1:37": 1,
+      "Assign_2:38": 1,
+      "Assign_2:39": 1,
+      "Assign_2:40": 1,
+      "Assign_2:41": 1,
+      "Assign_2:42": 1,
+      "Assign_2:43": 1,
+      "Assign_2:44": 1,
+      "Assign_2:45": 1,
+      "Assign_2:46": 1,
+      "Assign_2:47": 1,
+      "Assign_2:48": 1,
+      "Assign_2:49": 1,
+      "Assign_2:50": 1,
+      "Assign_2:51": 1,
+      "Assign_2:52": 1,
+      "Assign_2:53": 1,
+      "Assign_3:54": 1,
+      "Assign_3:55": 1,
+      "Assign_3:56": 1,
+      "Assign_3:57": 1,
+      "Assign_3:58": 1,
+      "Assign_3:59": 1,
+      "Assign_3:60": 1,
+      "Assign_3:61": 1,
+      "Assign_3:62": 1,
+      "Assign_3:63": 1,
+      "Assign_3:64": 1,
+      "Assign_3:65": 1,
+      "Assign_3:66": 1,
+      "Assign_3:67": 1,
+      "Assign_3:68": 1,
+      "Assign_3:69": 1,
+      "Assign_4:70": 1,
+      "Assign_4:71": 1,
+      "Assign_4:72": 1,
+      "Assign_4:73": 1,
+      "Assign_4:74": 1,
+      "Assign_4:75": 1,
+      "Assign_4:76": 1,
+      "Assign_4:77": 1,
+      "Assign_4:78": 1,
+      "Assign_4:79": 1,
+      "Assign_4:80": 1,
+      "Assign_4:81": 1,
+      "Assign_4:82": 1,
+      "Assign_4:83": 1,
+      "Assign_4:84": 1,
+      "Assign_4:85": 1,
+      "Assign_5:100": 1,
+      "Assign_5:101": 1,
+      "Assign_5:86": 1,
+      "Assign_5:87": 1,
+      "Assign_5:88": 1,
+      "Assign_5:89": 1,
+      "Assign_5:90": 1,
+      "Assign_5:91": 1,
+      "Assign_5:92": 1,
+      "Assign_5:93": 1,
+      "Assign_5:94": 1,
+      "Assign_5:95": 1,
+      "Assign_5:96": 1,
+      "Assign_5:97": 1,
+      "Assign_5:98": 1,
+      "Assign_5:99": 1,
+      "CarryCap": 19,
+      "CarryHitLB": 61,
+      "CarryHitUB": 61,
+      "CarryMode": 61,
+      "CarrySortOnly": 320,
+      "CarryStackBind": 57,
+      "Cmax": 19,
+      "DemandCover": 328,
+      "FinishBind": 19,
+      "FinishDef": 19,
+      "FlipHitFlip": 61,
+      "FlipHitHit": 61,
+      "FlipHitLB2": 61,
+      "GlobalSelectedStationWorkloadLB": 1,
+      "Global_Station_Workload_Bound": 1,
+      "HitMode": 61,
+      "NoiseCarry": 381,
+      "NoiseHitExclusive": 61,
+      "NoiseLB": 61,
+      "NoiseOnlyLB": 320,
+      "NoiseSortOnly": 381,
+      "OrderArrivalBounds": 6,
+      "OrderDeadline": 6,
+      "OrderSelectedStationWorkloadLB": 6,
+      "OrderSkuStackCover": 102,
+      "OrderSpan": 6,
+      "PairNeedsLoad": 171,
+      "PairUseLB": 171,
+      "PairUseStack": 171,
+      "PairUseStation": 171,
+      "RankNoHole": 30,
+      "RankUnique": 33,
+      "RequiredSlotActive": 19,
+      "SkuUseLB": 328,
+      "SkuUseUB": 328,
+      "SlotCap": 19,
+      "SlotLoadLex": 13,
+      "SlotMinPickWorkloadLB": 19,
+      "SlotNonEmpty": 19,
+      "SlotSkuHitCover": 328,
+      "SlotStackCapacityCoverLB": 19,
+      "SlotStationLex": 13,
+      "SlotSym": 13,
+      "SlotYAssign": 19,
+      "SortByHitThresholdLB": 57,
+      "SortByHitThresholdUB": 57,
+      "StackUse": 57,
+      "StartAfterArrival": 19,
+      "StartBind": 19,
+      "StationArrivalClockBind": 33,
+      "StationFinishClockBind": 33,
+      "StationRankPrefixProcessLB": 33,
+      "ToteUnique": 119,
+      "UZStackServiceWorkloadLB": 1
+    },
+    "model_general_constr_count_by_type": {
+      "OrderArrivalLBLink": 19,
+      "OrderArrivalUBLink": 19,
+      "StationArrivalClockEq": 627,
+      "StationArrivalMonotone": 570,
+      "StationFinishClockEq": 627,
+      "StationStartAfterPrev": 570
+    },
+    "model_var_count_by_type_json": "{\"Cmax\": 1, \"a\": 19, \"arrival\": 19, \"carry\": 381, \"finish\": 19, \"flip\": 57, \"flip_hit\": 61, \"hit\": 61, \"noise\": 381, \"order_arrival_lb\": 6, \"order_arrival_ub\": 6, \"order_deadline_overrun\": 6, \"order_span_overrun\": 6, \"pair_act\": 171, \"sku_use\": 328, \"sort\": 1482, \"start\": 19, \"station_arrival_clock\": 33, \"station_finish_clock\": 33, \"x\": 328, \"y\": 627}",
+    "model_constr_count_by_type_json": "{\"ActiveStackNeedsLoad\": 57, \"ArrivalBind\": 19, \"ArrivalProxy\": 19, \"Assign_0:0\": 1, \"Assign_0:1\": 1, \"Assign_0:10\": 1, \"Assign_0:11\": 1, \"Assign_0:12\": 1, \"Assign_0:13\": 1, \"Assign_0:14\": 1, \"Assign_0:15\": 1, \"Assign_0:16\": 1, \"Assign_0:17\": 1, \"Assign_0:18\": 1, \"Assign_0:19\": 1, \"Assign_0:2\": 1, \"Assign_0:20\": 1, \"Assign_0:21\": 1, \"Assign_0:3\": 1, \"Assign_0:4\": 1, \"Assign_0:5\": 1, \"Assign_0:6\": 1, \"Assign_0:7\": 1, \"Assign_0:8\": 1, \"Assign_0:9\": 1, \"Assign_1:22\": 1, \"Assign_1:23\": 1, \"Assign_1:24\": 1, \"Assign_1:25\": 1, \"Assign_1:26\": 1, \"Assign_1:27\": 1, \"Assign_1:28\": 1, \"Assign_1:29\": 1, \"Assign_1:30\": 1, \"Assign_1:31\": 1, \"Assign_1:32\": 1, \"Assign_1:33\": 1, \"Assign_1:34\": 1, \"Assign_1:35\": 1, \"Assign_1:36\": 1, \"Assign_1:37\": 1, \"Assign_2:38\": 1, \"Assign_2:39\": 1, \"Assign_2:40\": 1, \"Assign_2:41\": 1, \"Assign_2:42\": 1, \"Assign_2:43\": 1, \"Assign_2:44\": 1, \"Assign_2:45\": 1, \"Assign_2:46\": 1, \"Assign_2:47\": 1, \"Assign_2:48\": 1, \"Assign_2:49\": 1, \"Assign_2:50\": 1, \"Assign_2:51\": 1, \"Assign_2:52\": 1, \"Assign_2:53\": 1, \"Assign_3:54\": 1, \"Assign_3:55\": 1, \"Assign_3:56\": 1, \"Assign_3:57\": 1, \"Assign_3:58\": 1, \"Assign_3:59\": 1, \"Assign_3:60\": 1, \"Assign_3:61\": 1, \"Assign_3:62\": 1, \"Assign_3:63\": 1, \"Assign_3:64\": 1, \"Assign_3:65\": 1, \"Assign_3:66\": 1, \"Assign_3:67\": 1, \"Assign_3:68\": 1, \"Assign_3:69\": 1, \"Assign_4:70\": 1, \"Assign_4:71\": 1, \"Assign_4:72\": 1, \"Assign_4:73\": 1, \"Assign_4:74\": 1, \"Assign_4:75\": 1, \"Assign_4:76\": 1, \"Assign_4:77\": 1, \"Assign_4:78\": 1, \"Assign_4:79\": 1, \"Assign_4:80\": 1, \"Assign_4:81\": 1, \"Assign_4:82\": 1, \"Assign_4:83\": 1, \"Assign_4:84\": 1, \"Assign_4:85\": 1, \"Assign_5:100\": 1, \"Assign_5:101\": 1, \"Assign_5:86\": 1, \"Assign_5:87\": 1, \"Assign_5:88\": 1, \"Assign_5:89\": 1, \"Assign_5:90\": 1, \"Assign_5:91\": 1, \"Assign_5:92\": 1, \"Assign_5:93\": 1, \"Assign_5:94\": 1, \"Assign_5:95\": 1, \"Assign_5:96\": 1, \"Assign_5:97\": 1, \"Assign_5:98\": 1, \"Assign_5:99\": 1, \"CarryCap\": 19, \"CarryHitLB\": 61, \"CarryHitUB\": 61, \"CarryMode\": 61, \"CarrySortOnly\": 320, \"CarryStackBind\": 57, \"Cmax\": 19, \"DemandCover\": 328, \"FinishBind\": 19, \"FinishDef\": 19, \"FlipHitFlip\": 61, \"FlipHitHit\": 61, \"FlipHitLB2\": 61, \"GlobalSelectedStationWorkloadLB\": 1, \"Global_Station_Workload_Bound\": 1, \"HitMode\": 61, \"NoiseCarry\": 381, \"NoiseHitExclusive\": 61, \"NoiseLB\": 61, \"NoiseOnlyLB\": 320, \"NoiseSortOnly\": 381, \"OrderArrivalBounds\": 6, \"OrderArrivalLBLink\": 19, \"OrderArrivalUBLink\": 19, \"OrderDeadline\": 6, \"OrderSelectedStationWorkloadLB\": 6, \"OrderSkuStackCover\": 102, \"OrderSpan\": 6, \"PairNeedsLoad\": 171, \"PairUseLB\": 171, \"PairUseStack\": 171, \"PairUseStation\": 171, \"RankNoHole\": 30, \"RankUnique\": 33, \"RequiredSlotActive\": 19, \"SkuUseLB\": 328, \"SkuUseUB\": 328, \"SlotCap\": 19, \"SlotLoadLex\": 13, \"SlotMinPickWorkloadLB\": 19, \"SlotNonEmpty\": 19, \"SlotSkuHitCover\": 328, \"SlotStackCapacityCoverLB\": 19, \"SlotStationLex\": 13, \"SlotSym\": 13, \"SlotYAssign\": 19, \"SortByHitThresholdLB\": 57, \"SortByHitThresholdUB\": 57, \"StackUse\": 57, \"StartAfterArrival\": 19, \"StartBind\": 19, \"StationArrivalClockBind\": 33, \"StationArrivalClockEq\": 627, \"StationArrivalMonotone\": 570, \"StationFinishClockBind\": 33, \"StationFinishClockEq\": 627, \"StationRankPrefixProcessLB\": 33, \"StationStartAfterPrev\": 570, \"ToteUnique\": 119, \"UZStackServiceWorkloadLB\": 1}",
+    "warm_start_u_applied": false,
+    "warm_start_u_skipped_reason": "integrated_u_disabled_or_no_route_rows",
+    "warm_start_robot_id_swapped": false,
+    "warm_start_robot_id_map": {
+      "0": 0,
+      "1": 1,
+      "2": 2,
+      "3": 3
+    },
+    "warm_start_robot_path_duration": {
+      "0": 0.0,
+      "1": 0.0,
+      "2": 0.0,
+      "3": 0.0
+    },
+    "warm_start_model_cmax": 909.0,
+    "warm_start_route_end_max": 0.0,
+    "warm_start_route_end_gap": 0.0,
+    "warm_start_continuous_time_start": true,
+    "warm_start_route_rebuild_ok": true,
+    "warm_start_slot_time_rebuild_ok": true,
+    "warm_start_mip_start_ready": true,
+    "warm_start_missing_arc_count": 0,
+    "warm_start_capacity_violation_count": 0,
+    "warm_start_time_inconsistency_count": 0,
+    "warm_start_filtered_tote_count": 0,
+    "warm_start_skipped_mode_count": 0,
+    "warm_start_uncovered_sku_start_skipped_count": 0,
+    "warm_start_route_steps": {},
+    "warm_start_slot_times": [
+      {
+        "slot_id": 0,
+        "station_id": 0,
+        "rank": 0,
+        "arrival_lower": 135.0,
+        "arrival": 135.0,
+        "start": 135.0,
+        "finish": 261.0,
+        "unit_count": 42,
+        "noise_count": 0,
+        "slot_time_ub": 2727.0
+      },
+      {
+        "slot_id": 3,
+        "station_id": 0,
+        "rank": 1,
+        "arrival_lower": 135.0,
+        "arrival": 135.0,
+        "start": 261.0,
+        "finish": 342.0,
+        "unit_count": 27,
+        "noise_count": 0,
+        "slot_time_ub": 2727.0
+      },
+      {
+        "slot_id": 6,
+        "station_id": 0,
+        "rank": 2,
+        "arrival_lower": 135.0,
+        "arrival": 135.0,
+        "start": 342.0,
+        "finish": 432.0,
+        "unit_count": 30,
+        "noise_count": 0,
+        "slot_time_ub": 2727.0
+      },
+      {
+        "slot_id": 9,
+        "station_id": 0,
+        "rank": 3,
+        "arrival_lower": 135.0,
+        "arrival": 135.0,
+        "start": 432.0,
+        "finish": 531.0,
+        "unit_count": 33,
+        "noise_count": 0,
+        "slot_time_ub": 2727.0
+      },
+      {
+        "slot_id": 12,
+        "station_id": 0,
+        "rank": 4,
+        "arrival_lower": 136.0,
+        "arrival": 136.0,
+        "start": 531.0,
+        "finish": 621.0,
+        "unit_count": 30,
+        "noise_count": 0,
+        "slot_time_ub": 2727.0
+      },
+      {
+        "slot_id": 13,
+        "station_id": 0,
+        "rank": 5,
+        "arrival_lower": 135.0,
+        "arrival": 136.0,
+        "start": 621.0,
+        "finish": 774.0,
+        "unit_count": 51,
+        "noise_count": 0,
+        "slot_time_ub": 2727.0
+      },
+      {
+        "slot_id": 16,
+        "station_id": 0,
+        "rank": 6,
+        "arrival_lower": 135.0,
+        "arrival": 136.0,
+        "start": 774.0,
+        "finish": 909.0,
+        "unit_count": 45,
+        "noise_count": 0,
+        "slot_time_ub": 2727.0
+      },
+      {
+        "slot_id": 1,
+        "station_id": 1,
+        "rank": 0,
+        "arrival_lower": 131.0,
+        "arrival": 131.0,
+        "start": 131.0,
+        "finish": 275.0,
+        "unit_count": 48,
+        "noise_count": 0,
+        "slot_time_ub": 2727.0
+      },
+      {
+        "slot_id": 4,
+        "station_id": 1,
+        "rank": 1,
+        "arrival_lower": 131.0,
+        "arrival": 131.0,
+        "start": 275.0,
+        "finish": 383.0,
+        "unit_count": 36,
+        "noise_count": 0,
+        "slot_time_ub": 2727.0
+      },
+      {
+        "slot_id": 7,
+        "station_id": 1,
+        "rank": 2,
+        "arrival_lower": 131.0,
+        "arrival": 131.0,
+        "start": 383.0,
+        "finish": 518.0,
+        "unit_count": 45,
+        "noise_count": 0,
+        "slot_time_ub": 2727.0
+      },
+      {
+        "slot_id": 10,
+        "station_id": 1,
+        "rank": 3,
+        "arrival_lower": 131.0,
+        "arrival": 131.0,
+        "start": 518.0,
+        "finish": 653.0,
+        "unit_count": 45,
+        "noise_count": 0,
+        "slot_time_ub": 2727.0
+      },
+      {
+        "slot_id": 14,
+        "station_id": 1,
+        "rank": 4,
+        "arrival_lower": 125.0,
+        "arrival": 131.0,
+        "start": 653.0,
+        "finish": 797.0,
+        "unit_count": 48,
+        "noise_count": 0,
+        "slot_time_ub": 2727.0
+      },
+      {
+        "slot_id": 18,
+        "station_id": 1,
+        "rank": 5,
+        "arrival_lower": 132.0,
+        "arrival": 132.0,
+        "start": 797.0,
+        "finish": 896.0,
+        "unit_count": 33,
+        "noise_count": 0,
+        "slot_time_ub": 2727.0
+      },
+      {
+        "slot_id": 2,
+        "station_id": 2,
+        "rank": 0,
+        "arrival_lower": 128.0,
+        "arrival": 128.0,
+        "start": 128.0,
+        "finish": 263.0,
+        "unit_count": 45,
+        "noise_count": 0,
+        "slot_time_ub": 2727.0
+      },
+      {
+        "slot_id": 5,
+        "station_id": 2,
+        "rank": 1,
+        "arrival_lower": 129.0,
+        "arrival": 129.0,
+        "start": 263.0,
+        "finish": 398.0,
+        "unit_count": 45,
+        "noise_count": 0,
+        "slot_time_ub": 2727.0
+      },
+      {
+        "slot_id": 8,
+        "station_id": 2,
+        "rank": 2,
+        "arrival_lower": 129.0,
+        "arrival": 129.0,
+        "start": 398.0,
+        "finish": 524.0,
+        "unit_count": 42,
+        "noise_count": 0,
+        "slot_time_ub": 2727.0
+      },
+      {
+        "slot_id": 11,
+        "station_id": 2,
+        "rank": 3,
+        "arrival_lower": 128.0,
+        "arrival": 129.0,
+        "start": 524.0,
+        "finish": 668.0,
+        "unit_count": 48,
+        "noise_count": 0,
+        "slot_time_ub": 2727.0
+      },
+      {
+        "slot_id": 15,
+        "station_id": 2,
+        "rank": 4,
+        "arrival_lower": 129.0,
+        "arrival": 129.0,
+        "start": 668.0,
+        "finish": 758.0,
+        "unit_count": 30,
+        "noise_count": 0,
+        "slot_time_ub": 2727.0
+      },
+      {
+        "slot_id": 17,
+        "station_id": 2,
+        "rank": 5,
+        "arrival_lower": 128.0,
+        "arrival": 129.0,
+        "start": 758.0,
+        "finish": 884.0,
+        "unit_count": 42,
+        "noise_count": 0,
+        "slot_time_ub": 2727.0
+      }
+    ],
+    "warm_start_time_violations": [],
+    "warm_start_order_time_windows": [
+      {
+        "order_id": 0,
+        "lst_sec": 785.0,
+        "unique_sku_count": 22,
+        "kitting_span_limit_sec": 176.0,
+        "effective_window_sec": 330.0,
+        "arrival_lb": 128.0,
+        "arrival_ub": 135.0,
+        "span_overrun": 0.0,
+        "deadline_overrun": 0.0,
+        "has_violation": false
+      },
+      {
+        "order_id": 1,
+        "lst_sec": 643.0,
+        "unique_sku_count": 16,
+        "kitting_span_limit_sec": 128.0,
+        "effective_window_sec": 240.0,
+        "arrival_lb": 129.0,
+        "arrival_ub": 135.0,
+        "span_overrun": 0.0,
+        "deadline_overrun": 0.0,
+        "has_violation": false
+      },
+      {
+        "order_id": 2,
+        "lst_sec": 655.0,
+        "unique_sku_count": 16,
+        "kitting_span_limit_sec": 128.0,
+        "effective_window_sec": 240.0,
+        "arrival_lb": 129.0,
+        "arrival_ub": 135.0,
+        "span_overrun": 0.0,
+        "deadline_overrun": 0.0,
+        "has_violation": false
+      },
+      {
+        "order_id": 3,
+        "lst_sec": 658.0,
+        "unique_sku_count": 16,
+        "kitting_span_limit_sec": 128.0,
+        "effective_window_sec": 240.0,
+        "arrival_lb": 129.0,
+        "arrival_ub": 136.0,
+        "span_overrun": 0.0,
+        "deadline_overrun": 0.0,
+        "has_violation": false
+      },
+      {
+        "order_id": 4,
+        "lst_sec": 667.0,
+        "unique_sku_count": 16,
+        "kitting_span_limit_sec": 128.0,
+        "effective_window_sec": 240.0,
+        "arrival_lb": 129.0,
+        "arrival_ub": 136.0,
+        "span_overrun": 0.0,
+        "deadline_overrun": 0.0,
+        "has_violation": false
+      },
+      {
+        "order_id": 5,
+        "lst_sec": 651.0,
+        "unique_sku_count": 16,
+        "kitting_span_limit_sec": 128.0,
+        "effective_window_sec": 240.0,
+        "arrival_lb": 129.0,
+        "arrival_ub": 136.0,
+        "span_overrun": 0.0,
+        "deadline_overrun": 0.0,
+        "has_violation": false
+      }
+    ],
+    "warm_start_total_span_overrun": 0.0,
+    "warm_start_total_deadline_overrun": 0.0,
+    "warm_start_time_window_penalty": 0.0,
+    "warm_start_estimated_objective": 909.095,
+    "warm_start_route_repair_enabled": true,
+    "warm_start_route_repair_attempted": false,
+    "warm_start_route_repair_accepted": false,
+    "warm_start_route_repair_reason": "",
+    "warm_start_route_repair_original_route_end_max": 0.0,
+    "warm_start_route_repair_repaired_route_end_max": 0.0,
+    "warm_start_route_repair_original_used_robot_count": 0,
+    "warm_start_route_repair_repaired_used_robot_count": 0,
+    "warm_start_profile_repaired_empty_count": 0,
+    "warm_start_profile_donor_move_count": 0,
+    "warm_start_profile_unrepaired_empty_slots": [],
+    "warm_start_robot_prefix_normalized": false,
+    "warm_start_robot_prefix_id_map": {},
+    "warm_start_station_rank_reordered": true,
+    "warm_start_slot_lex_checked": true,
+    "warm_start_slot_load_lex_violation_count": 0,
+    "warm_start_slot_station_lex_violation_count": 0,
+    "warm_start_slot_load_lex_violations": [],
+    "warm_start_slot_station_lex_violations": [],
+    "warm_start_slot_lex_rows": [
+      {
+        "order_id": 0,
+        "slot_id": 0,
+        "active": 0,
+        "load": 0,
+        "station_rank_code": 0
+      },
+      {
+        "order_id": 0,
+        "slot_id": 1,
+        "active": 0,
+        "load": 0,
+        "station_rank_code": 0
+      },
+      {
+        "order_id": 0,
+        "slot_id": 2,
+        "active": 0,
+        "load": 0,
+        "station_rank_code": 0
+      },
+      {
+        "order_id": 0,
+        "slot_id": 3,
+        "active": 0,
+        "load": 0,
+        "station_rank_code": 0
+      },
+      {
+        "order_id": 1,
+        "slot_id": 4,
+        "active": 0,
+        "load": 0,
+        "station_rank_code": 0
+      },
+      {
+        "order_id": 1,
+        "slot_id": 5,
+        "active": 0,
+        "load": 0,
+        "station_rank_code": 0
+      },
+      {
+        "order_id": 1,
+        "slot_id": 6,
+        "active": 0,
+        "load": 0,
+        "station_rank_code": 0
+      },
+      {
+        "order_id": 2,
+        "slot_id": 7,
+        "active": 0,
+        "load": 0,
+        "station_rank_code": 0
+      },
+      {
+        "order_id": 2,
+        "slot_id": 8,
+        "active": 0,
+        "load": 0,
+        "station_rank_code": 0
+      },
+      {
+        "order_id": 2,
+        "slot_id": 9,
+        "active": 0,
+        "load": 0,
+        "station_rank_code": 0
+      },
+      {
+        "order_id": 3,
+        "slot_id": 10,
+        "active": 0,
+        "load": 0,
+        "station_rank_code": 0
+      },
+      {
+        "order_id": 3,
+        "slot_id": 11,
+        "active": 0,
+        "load": 0,
+        "station_rank_code": 0
+      },
+      {
+        "order_id": 3,
+        "slot_id": 12,
+        "active": 0,
+        "load": 0,
+        "station_rank_code": 0
+      },
+      {
+        "order_id": 4,
+        "slot_id": 13,
+        "active": 0,
+        "load": 0,
+        "station_rank_code": 0
+      },
+      {
+        "order_id": 4,
+        "slot_id": 14,
+        "active": 0,
+        "load": 0,
+        "station_rank_code": 0
+      },
+      {
+        "order_id": 4,
+        "slot_id": 15,
+        "active": 0,
+        "load": 0,
+        "station_rank_code": 0
+      },
+      {
+        "order_id": 5,
+        "slot_id": 16,
+        "active": 0,
+        "load": 0,
+        "station_rank_code": 0
+      },
+      {
+        "order_id": 5,
+        "slot_id": 17,
+        "active": 0,
+        "load": 0,
+        "station_rank_code": 0
+      },
+      {
+        "order_id": 5,
+        "slot_id": 18,
+        "active": 0,
+        "load": 0,
+        "station_rank_code": 0
+      }
+    ],
+    "warm_start_tie_break_slot": 0.095,
+    "warm_start_tie_break_route": 0.0,
+    "warm_start_time_window_violation_source": "u_injection_failed",
+    "model_status_code": 9,
+    "model_sol_count": 9,
+    "model_best_bound": 766.7688000000003,
+    "model_gap": 0.12987614869419337,
+    "model_node_count": 450592.0,
+    "model_root_relax_bound": 766.7688000000003,
+    "model_objective": 881.218,
+    "objective_value": 881.218,
+    "proxy_objective": 881.218,
+    "active_slot_count": 19,
+    "active_slot_count_by_order": {
+      "0": 4,
+      "1": 3,
+      "2": 3,
+      "3": 3,
+      "4": 3,
+      "5": 3
+    },
+    "model_cmax": 879.0,
+    "relay_tote_count": 0,
+    "relay_tote_rows": [],
+    "route_finish_lb_by_robot": {
+      "0": 0.0,
+      "1": 0.0,
+      "2": 0.0,
+      "3": 0.0
+    },
+    "order_time_windows": [
+      {
+        "order_id": 0,
+        "lst_sec": 785.0,
+        "unique_sku_count": 22,
+        "kitting_span_limit_sec": 176.0,
+        "effective_window_sec": 330.0,
+        "arrival_lb": 0.0,
+        "arrival_ub": 330.0,
+        "span_overrun": 0.0,
+        "deadline_overrun": 0.0
+      },
+      {
+        "order_id": 1,
+        "lst_sec": 643.0,
+        "unique_sku_count": 16,
+        "kitting_span_limit_sec": 128.0,
+        "effective_window_sec": 240.0,
+        "arrival_lb": 110.0,
+        "arrival_ub": 350.0,
+        "span_overrun": 0.0,
+        "deadline_overrun": 0.0
+      },
+      {
+        "order_id": 2,
+        "lst_sec": 655.0,
+        "unique_sku_count": 16,
+        "kitting_span_limit_sec": 128.0,
+        "effective_window_sec": 240.0,
+        "arrival_lb": 114.0,
+        "arrival_ub": 354.0,
+        "span_overrun": 0.0,
+        "deadline_overrun": 0.0
+      },
+      {
+        "order_id": 3,
+        "lst_sec": 658.0,
+        "unique_sku_count": 16,
+        "kitting_span_limit_sec": 128.0,
+        "effective_window_sec": 240.0,
+        "arrival_lb": 114.0,
+        "arrival_ub": 354.0,
+        "span_overrun": 0.0,
+        "deadline_overrun": 0.0
+      },
+      {
+        "order_id": 4,
+        "lst_sec": 667.0,
+        "unique_sku_count": 16,
+        "kitting_span_limit_sec": 128.0,
+        "effective_window_sec": 240.0,
+        "arrival_lb": 114.0,
+        "arrival_ub": 354.0,
+        "span_overrun": 0.0,
+        "deadline_overrun": 0.0
+      },
+      {
+        "order_id": 5,
+        "lst_sec": 651.0,
+        "unique_sku_count": 16,
+        "kitting_span_limit_sec": 128.0,
+        "effective_window_sec": 240.0,
+        "arrival_lb": 110.0,
+        "arrival_ub": 350.0,
+        "span_overrun": 0.0,
+        "deadline_overrun": 0.0
+      }
+    ],
+    "total_span_overrun": 0.0,
+    "total_deadline_overrun": 0.0,
+    "u_route_stage": "greedy_fallback",
+    "u_route_fallback": "sp4_disabled",
+    "u_route_point_arrival_count": 0,
+    "u_route_robot_assign_count": 19,
+    "validated_global_makespan": 1217.0,
+    "true_global_makespan": 1217.0
+  },
+  "config": {
+    "time_limit_sec": 120.0,
+    "mip_gap": 0.01,
+    "candidate_stack_topk": 999,
+    "max_rank": 0,
+    "enable_warm_start": true,
+    "write_lp": false,
+    "gurobi_output": false,
+    "integer_cmax": false,
+    "slot_slack_per_order": 1,
+    "enable_tight_slot_upper_bound": true,
+    "max_candidate_stacks_per_order": 0,
+    "enable_warm_candidate_stack_prune": false,
+    "candidate_station_topk_per_stack": 1,
+    "warm_start_sp4_time_limit_sec": 15,
+    "warm_start_subtask_ordering": "default",
+    "warm_start_use_sp2_mip_initial": false,
+    "warm_start_sp2_mip_time_limit_sec": 30.0,
+    "warm_start_refine_sp2_after_sp4": false,
+    "u_route_use_mip": true,
+    "big_m_time": 2000.0,
+    "integrate_u_route": false,
+    "route_arc_prune": true,
+    "u_same_slot_same_robot": true,
+    "route_big_m_time": null,
+    "route_lazy_constraint": false,
+    "route_lazy_level": 1,
+    "bom_arrival_window_sec": 60.0,
+    "warm_start_use_sp4": true,
+    "enable_sp4_fallback": false,
+    "enable_order_time_windows": true,
+    "kitting_span_penalty_weight": 5.0,
+    "deadline_penalty_weight": 1000.0,
+    "release_time_hard": true,
+    "gurobi_method": 1,
+    "gurobi_node_method": 1,
+    "gurobi_crossover": null,
+    "gurobi_mip_focus": 1,
+    "gurobi_start_node_limit": null,
+    "gurobi_mem_limit_gb": null,
+    "gurobi_nodefile_start_gb": null,
+    "gurobi_threads": null,
+    "gurobi_cuts": 1,
+    "gurobi_cut_passes": 1,
+    "gurobi_presolve": 1,
+    "gurobi_heuristics": 0.3,
+    "enable_uz_lb_cuts": true,
+    "enable_sku_cover_cuts": true,
+    "enable_slot_min_arrival_lb": true,
+    "enable_route_incident_travel_lb": true,
+    "enable_route_pair_service_travel_lb": true,
+    "enable_route_slot_stack_count_lb": true,
+    "enable_route_finish_cmax_lb": true,
+    "enable_global_arrival_workload_lb": true,
+    "enable_route_time_window_arc_prune": true,
+    "enable_route_load_interval_arc_prune": true,
+    "enable_route_directional_arc_prune": false,
+    "enable_route_service_sec_cuts": false,
+    "enable_resource_lex_symmetry": false,
+    "enable_slot_lex_symmetry": true,
+    "enable_tote_equivalence_symmetry": true,
+    "enable_station_global_lex_symmetry": true,
+    "enable_robot_finish_lex_symmetry": true,
+    "enable_anchor_first_order_robot": false,
+    "enable_selected_workload_lbs": true,
+    "enable_route_arrival_slot_linear": true,
+    "enable_station_clock_linear": false,
+    "enable_warm_prune_bound_repair": false,
+    "enable_warm_start_route_repair": true,
+    "enable_scale_adaptive_candidate_prune": false,
+    "sort_hit_tote_threshold": 3,
+    "route_pickup_neighbor_limit": 0,
+    "audit_warm_start_fixed_iis": false,
+    "audit_warm_start_iis_path": "",
+    "audit_warm_start_time_limit_sec": 120.0,
+    "forced_candidate_stacks_by_order": null,
+    "fixed_slot_count_by_order": null,
+    "fixed_work_units_by_order_slot": null,
+    "fixed_station_rank_by_order_slot": null,
+    "fixed_z_descriptors_by_order_slot": null,
+    "fixed_used_stack_ids_by_order": null,
+    "fixed_route_arcs_by_robot": null,
+    "fixed_route_task_sequence_by_robot": null,
+    "fixed_route_node_sequence_by_robot": null,
+    "extra_protected_route_edges": null,
+    "fixed_route_arc_fix_nonselected": true,
+    "fixgurobi_relax_sort_tote_fix": false,
+    "fixgurobi_no_warm_start": false,
+    "fixgurobi_allow_warm_start_fallback": true,
+    "fixgurobi_warm_bound_only": false,
+    "gurobi_cutoff": null,
+    "gurobi_best_obj_stop": null
+  },
+  "orders": [
+    {
+      "order_id": 0,
+      "est_sec": 0.0,
+      "kitting_span_limit_sec": 176.0,
+      "lst_sec": 785.0,
+      "total_qty": 162,
+      "unique_sku_count": 22,
+      "deadline_buffer_sec": 15.0
+    },
+    {
+      "order_id": 1,
+      "est_sec": 0.0,
+      "kitting_span_limit_sec": 128.0,
+      "lst_sec": 643.0,
+      "total_qty": 111,
+      "unique_sku_count": 16,
+      "deadline_buffer_sec": 23.0
+    },
+    {
+      "order_id": 2,
+      "est_sec": 0.0,
+      "kitting_span_limit_sec": 128.0,
+      "lst_sec": 655.0,
+      "total_qty": 120,
+      "unique_sku_count": 16,
+      "deadline_buffer_sec": 17.0
+    },
+    {
+      "order_id": 3,
+      "est_sec": 0.0,
+      "kitting_span_limit_sec": 128.0,
+      "lst_sec": 658.0,
+      "total_qty": 123,
+      "unique_sku_count": 16,
+      "deadline_buffer_sec": 14.0
+    },
+    {
+      "order_id": 4,
+      "est_sec": 0.0,
+      "kitting_span_limit_sec": 128.0,
+      "lst_sec": 667.0,
+      "total_qty": 129,
+      "unique_sku_count": 16,
+      "deadline_buffer_sec": 11.0
+    },
+    {
+      "order_id": 5,
+      "est_sec": 0.0,
+      "kitting_span_limit_sec": 128.0,
+      "lst_sec": 651.0,
+      "total_qty": 120,
+      "unique_sku_count": 16,
+      "deadline_buffer_sec": 13.0
+    }
+  ],
+  "subtasks": [
+    {
+      "subtask_id": 0,
+      "order_id": 4,
+      "sku_list": [
+        "SKUs(id=82)",
+        "SKUs(id=83)",
+        "SKUs(id=84)",
+        "SKUs(id=85)"
+      ],
+      "assigned_station_id": 0,
+      "station_sequence_rank": 0,
+      "assigned_robot_id": 0,
+      "execution_task_ids": [
+        0
+      ]
+    },
+    {
+      "subtask_id": 1,
+      "order_id": 4,
+      "sku_list": [
+        "SKUs(id=70)",
+        "SKUs(id=71)",
+        "SKUs(id=72)",
+        "SKUs(id=73)",
+        "SKUs(id=74)",
+        "SKUs(id=75)"
+      ],
+      "assigned_station_id": 0,
+      "station_sequence_rank": 1,
+      "assigned_robot_id": 1,
+      "execution_task_ids": [
+        1
+      ]
+    },
+    {
+      "subtask_id": 2,
+      "order_id": 5,
+      "sku_list": [
+        "SKUs(id=86)",
+        "SKUs(id=87)",
+        "SKUs(id=88)",
+        "SKUs(id=89)",
+        "SKUs(id=90)",
+        "SKUs(id=91)"
+      ],
+      "assigned_station_id": 0,
+      "station_sequence_rank": 2,
+      "assigned_robot_id": 2,
+      "execution_task_ids": [
+        2
+      ]
+    },
+    {
+      "subtask_id": 3,
+      "order_id": 3,
+      "sku_list": [
+        "SKUs(id=54)",
+        "SKUs(id=55)",
+        "SKUs(id=56)",
+        "SKUs(id=57)",
+        "SKUs(id=58)",
+        "SKUs(id=59)"
+      ],
+      "assigned_station_id": 0,
+      "station_sequence_rank": 3,
+      "assigned_robot_id": 3,
+      "execution_task_ids": [
+        3
+      ]
+    },
+    {
+      "subtask_id": 4,
+      "order_id": 4,
+      "sku_list": [
+        "SKUs(id=76)",
+        "SKUs(id=77)",
+        "SKUs(id=78)",
+        "SKUs(id=79)",
+        "SKUs(id=80)",
+        "SKUs(id=81)"
+      ],
+      "assigned_station_id": 0,
+      "station_sequence_rank": 4,
+      "assigned_robot_id": 2,
+      "execution_task_ids": [
+        4
+      ]
+    },
+    {
+      "subtask_id": 5,
+      "order_id": 1,
+      "sku_list": [
+        "SKUs(id=28)",
+        "SKUs(id=29)",
+        "SKUs(id=30)",
+        "SKUs(id=31)",
+        "SKUs(id=32)",
+        "SKUs(id=33)"
+      ],
+      "assigned_station_id": 0,
+      "station_sequence_rank": 5,
+      "assigned_robot_id": 0,
+      "execution_task_ids": [
+        5
+      ]
+    },
+    {
+      "subtask_id": 6,
+      "order_id": 0,
+      "sku_list": [
+        "SKUs(id=6)",
+        "SKUs(id=7)",
+        "SKUs(id=8)",
+        "SKUs(id=9)",
+        "SKUs(id=10)",
+        "SKUs(id=11)"
+      ],
+      "assigned_station_id": 1,
+      "station_sequence_rank": 0,
+      "assigned_robot_id": 1,
+      "execution_task_ids": [
+        6
+      ]
+    },
+    {
+      "subtask_id": 7,
+      "order_id": 5,
+      "sku_list": [
+        "SKUs(id=98)",
+        "SKUs(id=99)",
+        "SKUs(id=100)",
+        "SKUs(id=101)"
+      ],
+      "assigned_station_id": 1,
+      "station_sequence_rank": 1,
+      "assigned_robot_id": 3,
+      "execution_task_ids": [
+        7
+      ]
+    },
+    {
+      "subtask_id": 8,
+      "order_id": 2,
+      "sku_list": [
+        "SKUs(id=50)",
+        "SKUs(id=51)",
+        "SKUs(id=52)",
+        "SKUs(id=53)"
+      ],
+      "assigned_station_id": 1,
+      "station_sequence_rank": 2,
+      "assigned_robot_id": 2,
+      "execution_task_ids": [
+        8
+      ]
+    },
+    {
+      "subtask_id": 9,
+      "order_id": 2,
+      "sku_list": [
+        "SKUs(id=44)",
+        "SKUs(id=45)",
+        "SKUs(id=46)",
+        "SKUs(id=47)",
+        "SKUs(id=48)",
+        "SKUs(id=49)"
+      ],
+      "assigned_station_id": 1,
+      "station_sequence_rank": 3,
+      "assigned_robot_id": 1,
+      "execution_task_ids": [
+        9
+      ]
+    },
+    {
+      "subtask_id": 10,
+      "order_id": 0,
+      "sku_list": [
+        "SKUs(id=18)",
+        "SKUs(id=19)",
+        "SKUs(id=20)",
+        "SKUs(id=21)"
+      ],
+      "assigned_station_id": 1,
+      "station_sequence_rank": 4,
+      "assigned_robot_id": 3,
+      "execution_task_ids": [
+        10
+      ]
+    },
+    {
+      "subtask_id": 11,
+      "order_id": 0,
+      "sku_list": [
+        "SKUs(id=12)",
+        "SKUs(id=13)",
+        "SKUs(id=14)",
+        "SKUs(id=15)",
+        "SKUs(id=16)",
+        "SKUs(id=17)"
+      ],
+      "assigned_station_id": 1,
+      "station_sequence_rank": 5,
+      "assigned_robot_id": 0,
+      "execution_task_ids": [
+        11
+      ]
+    },
+    {
+      "subtask_id": 12,
+      "order_id": 3,
+      "sku_list": [
+        "SKUs(id=66)",
+        "SKUs(id=67)",
+        "SKUs(id=68)",
+        "SKUs(id=69)"
+      ],
+      "assigned_station_id": 1,
+      "station_sequence_rank": 6,
+      "assigned_robot_id": 2,
+      "execution_task_ids": [
+        12
+      ]
+    },
+    {
+      "subtask_id": 13,
+      "order_id": 1,
+      "sku_list": [
+        "SKUs(id=22)",
+        "SKUs(id=23)",
+        "SKUs(id=24)",
+        "SKUs(id=25)",
+        "SKUs(id=26)",
+        "SKUs(id=27)"
+      ],
+      "assigned_station_id": 2,
+      "station_sequence_rank": 0,
+      "assigned_robot_id": 1,
+      "execution_task_ids": [
+        13
+      ]
+    },
+    {
+      "subtask_id": 14,
+      "order_id": 0,
+      "sku_list": [
+        "SKUs(id=0)",
+        "SKUs(id=1)",
+        "SKUs(id=2)",
+        "SKUs(id=3)",
+        "SKUs(id=4)",
+        "SKUs(id=5)"
+      ],
+      "assigned_station_id": 2,
+      "station_sequence_rank": 1,
+      "assigned_robot_id": 3,
+      "execution_task_ids": [
+        14
+      ]
+    },
+    {
+      "subtask_id": 15,
+      "order_id": 5,
+      "sku_list": [
+        "SKUs(id=92)",
+        "SKUs(id=93)",
+        "SKUs(id=94)",
+        "SKUs(id=95)",
+        "SKUs(id=96)",
+        "SKUs(id=97)"
+      ],
+      "assigned_station_id": 2,
+      "station_sequence_rank": 2,
+      "assigned_robot_id": 0,
+      "execution_task_ids": [
+        15
+      ]
+    },
+    {
+      "subtask_id": 16,
+      "order_id": 1,
+      "sku_list": [
+        "SKUs(id=34)",
+        "SKUs(id=35)",
+        "SKUs(id=36)",
+        "SKUs(id=37)"
+      ],
+      "assigned_station_id": 2,
+      "station_sequence_rank": 3,
+      "assigned_robot_id": 2,
+      "execution_task_ids": [
+        16
+      ]
+    },
+    {
+      "subtask_id": 17,
+      "order_id": 3,
+      "sku_list": [
+        "SKUs(id=60)",
+        "SKUs(id=61)",
+        "SKUs(id=62)",
+        "SKUs(id=63)",
+        "SKUs(id=64)",
+        "SKUs(id=65)"
+      ],
+      "assigned_station_id": 2,
+      "station_sequence_rank": 4,
+      "assigned_robot_id": 1,
+      "execution_task_ids": [
+        17
+      ]
+    },
+    {
+      "subtask_id": 18,
+      "order_id": 2,
+      "sku_list": [
+        "SKUs(id=38)",
+        "SKUs(id=39)",
+        "SKUs(id=40)",
+        "SKUs(id=41)",
+        "SKUs(id=42)",
+        "SKUs(id=43)"
+      ],
+      "assigned_station_id": 2,
+      "station_sequence_rank": 5,
+      "assigned_robot_id": 3,
+      "execution_task_ids": [
+        18
+      ]
+    }
+  ],
+  "tasks": [
+    {
+      "task_id": 0,
+      "subtask_id": 0,
+      "assigned_robot_id": 0,
+      "target_stack_id": 496,
+      "target_station_id": 0,
+      "operation_mode": "FLIP",
+      "target_tote_ids": [
+        81
+      ],
+      "hit_tote_ids": [
+        81
+      ],
+      "noise_tote_ids": [],
+      "sort_layer_range": [],
+      "arrival_time_at_stack": 55.0,
+      "arrival_time_at_station": 114.0,
+      "start_process_time": 114.0,
+      "end_process_time": 204.0
+    },
+    {
+      "task_id": 1,
+      "subtask_id": 1,
+      "assigned_robot_id": 1,
+      "target_stack_id": 497,
+      "target_station_id": 0,
+      "operation_mode": "FLIP",
+      "target_tote_ids": [
+        83
+      ],
+      "hit_tote_ids": [
+        83
+      ],
+      "noise_tote_ids": [],
+      "sort_layer_range": [],
+      "arrival_time_at_stack": 55.0,
+      "arrival_time_at_station": 115.0,
+      "start_process_time": 204.0,
+      "end_process_time": 348.0
+    },
+    {
+      "task_id": 2,
+      "subtask_id": 2,
+      "assigned_robot_id": 2,
+      "target_stack_id": 470,
+      "target_station_id": 0,
+      "operation_mode": "FLIP",
+      "target_tote_ids": [
+        101
+      ],
+      "hit_tote_ids": [
+        101
+      ],
+      "noise_tote_ids": [],
+      "sort_layer_range": [],
+      "arrival_time_at_stack": 54.0,
+      "arrival_time_at_station": 111.0,
+      "start_process_time": 348.0,
+      "end_process_time": 474.0
+    },
+    {
+      "task_id": 3,
+      "subtask_id": 3,
+      "assigned_robot_id": 3,
+      "target_stack_id": 479,
+      "target_station_id": 0,
+      "operation_mode": "FLIP",
+      "target_tote_ids": [
+        64
+      ],
+      "hit_tote_ids": [
+        64
+      ],
+      "noise_tote_ids": [],
+      "sort_layer_range": [],
+      "arrival_time_at_stack": 58.0,
+      "arrival_time_at_station": 116.0,
+      "start_process_time": 474.0,
+      "end_process_time": 618.0
+    },
+    {
+      "task_id": 4,
+      "subtask_id": 4,
+      "assigned_robot_id": 2,
+      "target_stack_id": 478,
+      "target_station_id": 0,
+      "operation_mode": "FLIP",
+      "target_tote_ids": [
+        82
+      ],
+      "hit_tote_ids": [
+        82
+      ],
+      "noise_tote_ids": [],
+      "sort_layer_range": [],
+      "arrival_time_at_stack": 165.0,
+      "arrival_time_at_station": 222.0,
+      "start_process_time": 618.0,
+      "end_process_time": 771.0
+    },
+    {
+      "task_id": 5,
+      "subtask_id": 5,
+      "assigned_robot_id": 0,
+      "target_stack_id": 500,
+      "target_station_id": 0,
+      "operation_mode": "FLIP",
+      "target_tote_ids": [
+        26
+      ],
+      "hit_tote_ids": [
+        26
+      ],
+      "noise_tote_ids": [],
+      "sort_layer_range": [],
+      "arrival_time_at_stack": 174.0,
+      "arrival_time_at_station": 237.0,
+      "start_process_time": 771.0,
+      "end_process_time": 879.0
+    },
+    {
+      "task_id": 6,
+      "subtask_id": 6,
+      "assigned_robot_id": 1,
+      "target_stack_id": 473,
+      "target_station_id": 1,
+      "operation_mode": "FLIP",
+      "target_tote_ids": [
+        0
+      ],
+      "hit_tote_ids": [
+        0
+      ],
+      "noise_tote_ids": [],
+      "sort_layer_range": [],
+      "arrival_time_at_stack": 172.0,
+      "arrival_time_at_station": 228.0,
+      "start_process_time": 228.0,
+      "end_process_time": 372.0
+    },
+    {
+      "task_id": 7,
+      "subtask_id": 7,
+      "assigned_robot_id": 3,
+      "target_stack_id": 481,
+      "target_station_id": 1,
+      "operation_mode": "FLIP",
+      "target_tote_ids": [
+        100
+      ],
+      "hit_tote_ids": [
+        100
+      ],
+      "noise_tote_ids": [],
+      "sort_layer_range": [],
+      "arrival_time_at_stack": 173.0,
+      "arrival_time_at_station": 229.0,
+      "start_process_time": 372.0,
+      "end_process_time": 471.0
+    },
+    {
+      "task_id": 8,
+      "subtask_id": 8,
+      "assigned_robot_id": 2,
+      "target_stack_id": 490,
+      "target_station_id": 1,
+      "operation_mode": "FLIP",
+      "target_tote_ids": [
+        43
+      ],
+      "hit_tote_ids": [
+        43
+      ],
+      "noise_tote_ids": [],
+      "sort_layer_range": [],
+      "arrival_time_at_stack": 280.0,
+      "arrival_time_at_station": 337.0,
+      "start_process_time": 471.0,
+      "end_process_time": 570.0
+    },
+    {
+      "task_id": 9,
+      "subtask_id": 9,
+      "assigned_robot_id": 1,
+      "target_stack_id": 499,
+      "target_station_id": 1,
+      "operation_mode": "FLIP",
+      "target_tote_ids": [
+        45
+      ],
+      "hit_tote_ids": [
+        45
+      ],
+      "noise_tote_ids": [],
+      "sort_layer_range": [],
+      "arrival_time_at_stack": 283.0,
+      "arrival_time_at_station": 341.0,
+      "start_process_time": 570.0,
+      "end_process_time": 696.0
+    },
+    {
+      "task_id": 10,
+      "subtask_id": 10,
+      "assigned_robot_id": 3,
+      "target_stack_id": 488,
+      "target_station_id": 1,
+      "operation_mode": "FLIP",
+      "target_tote_ids": [
+        3
+      ],
+      "hit_tote_ids": [
+        3
+      ],
+      "noise_tote_ids": [],
+      "sort_layer_range": [],
+      "arrival_time_at_stack": 285.0,
+      "arrival_time_at_station": 344.0,
+      "start_process_time": 696.0,
+      "end_process_time": 777.0
+    },
+    {
+      "task_id": 11,
+      "subtask_id": 11,
+      "assigned_robot_id": 0,
+      "target_stack_id": 488,
+      "target_station_id": 1,
+      "operation_mode": "FLIP",
+      "target_tote_ids": [
+        2
+      ],
+      "hit_tote_ids": [
+        2
+      ],
+      "noise_tote_ids": [],
+      "sort_layer_range": [],
+      "arrival_time_at_stack": 293.0,
+      "arrival_time_at_station": 352.0,
+      "start_process_time": 777.0,
+      "end_process_time": 903.0
+    },
+    {
+      "task_id": 12,
+      "subtask_id": 12,
+      "assigned_robot_id": 2,
+      "target_stack_id": 482,
+      "target_station_id": 1,
+      "operation_mode": "FLIP",
+      "target_tote_ids": [
+        62
+      ],
+      "hit_tote_ids": [
+        62
+      ],
+      "noise_tote_ids": [],
+      "sort_layer_range": [],
+      "arrival_time_at_stack": 391.0,
+      "arrival_time_at_station": 448.0,
+      "start_process_time": 903.0,
+      "end_process_time": 993.0
+    },
+    {
+      "task_id": 13,
+      "subtask_id": 13,
+      "assigned_robot_id": 1,
+      "target_stack_id": 472,
+      "target_station_id": 2,
+      "operation_mode": "FLIP",
+      "target_tote_ids": [
+        25
+      ],
+      "hit_tote_ids": [
+        25
+      ],
+      "noise_tote_ids": [],
+      "sort_layer_range": [],
+      "arrival_time_at_stack": 393.0,
+      "arrival_time_at_station": 452.0,
+      "start_process_time": 452.0,
+      "end_process_time": 587.0
+    },
+    {
+      "task_id": 14,
+      "subtask_id": 14,
+      "assigned_robot_id": 3,
+      "target_stack_id": 484,
+      "target_station_id": 2,
+      "operation_mode": "FLIP",
+      "target_tote_ids": [
+        1
+      ],
+      "hit_tote_ids": [
+        1
+      ],
+      "noise_tote_ids": [],
+      "sort_layer_range": [],
+      "arrival_time_at_stack": 400.0,
+      "arrival_time_at_station": 457.0,
+      "start_process_time": 587.0,
+      "end_process_time": 722.0
+    },
+    {
+      "task_id": 15,
+      "subtask_id": 15,
+      "assigned_robot_id": 0,
+      "target_stack_id": 491,
+      "target_station_id": 2,
+      "operation_mode": "FLIP",
+      "target_tote_ids": [
+        102
+      ],
+      "hit_tote_ids": [
+        102
+      ],
+      "noise_tote_ids": [],
+      "sort_layer_range": [],
+      "arrival_time_at_stack": 407.0,
+      "arrival_time_at_station": 467.0,
+      "start_process_time": 722.0,
+      "end_process_time": 857.0
+    },
+    {
+      "task_id": 16,
+      "subtask_id": 16,
+      "assigned_robot_id": 2,
+      "target_stack_id": 502,
+      "target_station_id": 2,
+      "operation_mode": "FLIP",
+      "target_tote_ids": [
+        24
+      ],
+      "hit_tote_ids": [
+        24
+      ],
+      "noise_tote_ids": [],
+      "sort_layer_range": [],
+      "arrival_time_at_stack": 506.0,
+      "arrival_time_at_station": 565.0,
+      "start_process_time": 857.0,
+      "end_process_time": 947.0
+    },
+    {
+      "task_id": 17,
+      "subtask_id": 17,
+      "assigned_robot_id": 1,
+      "target_stack_id": 475,
+      "target_station_id": 2,
+      "operation_mode": "FLIP",
+      "target_tote_ids": [
+        63
+      ],
+      "hit_tote_ids": [
+        63
+      ],
+      "noise_tote_ids": [],
+      "sort_layer_range": [],
+      "arrival_time_at_stack": 505.0,
+      "arrival_time_at_station": 561.0,
+      "start_process_time": 947.0,
+      "end_process_time": 1082.0
+    },
+    {
+      "task_id": 18,
+      "subtask_id": 18,
+      "assigned_robot_id": 3,
+      "target_stack_id": 493,
+      "target_station_id": 2,
+      "operation_mode": "FLIP",
+      "target_tote_ids": [
+        44
+      ],
+      "hit_tote_ids": [
+        44
+      ],
+      "noise_tote_ids": [],
+      "sort_layer_range": [],
+      "arrival_time_at_stack": 512.0,
+      "arrival_time_at_station": 570.0,
+      "start_process_time": 1082.0,
+      "end_process_time": 1217.0
+    }
+  ]
+}

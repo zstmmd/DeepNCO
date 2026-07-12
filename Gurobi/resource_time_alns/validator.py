@@ -20,10 +20,12 @@ class ResourceValidator:
         self.validation_cache_miss_count = 0
 
     def _validation_cache_enabled(self) -> bool:
-        return bool(getattr(getattr(self, "opt", None), "cfg", None).resource_validation_cache_enabled)
+        cfg = getattr(getattr(self, "opt", None), "cfg", None)
+        return bool(getattr(cfg, "resource_validation_cache_enabled", False))
 
     def _validation_cache_size(self) -> int:
-        return max(1, int(getattr(getattr(self, "opt", None), "cfg", None).resource_validation_cache_size or 1024))
+        cfg = getattr(getattr(self, "opt", None), "cfg", None)
+        return max(1, int(getattr(cfg, "resource_validation_cache_size", 1024) or 1024))
 
     def _validation_cache_key(self, config: ResourceConfig) -> str:
         return repr(config.validation_signature())
@@ -129,6 +131,70 @@ class ResourceValidator:
             "resource_type": str(sp4_summary.get("resource_type", "robot_capacity") or "robot_capacity"),
         }
         return summary
+
+    def _unreasonable_solution_summary(self, problem=None) -> Dict[str, object]:
+        problem = problem if problem is not None else getattr(self.opt, "problem", None)
+        failures: List[str] = []
+        station_task_rows: List[Dict[str, float | int]] = []
+        all_tasks: List[Task] = []
+        station_tasks_by_id: Dict[int, List[Task]] = {}
+        for subtask in getattr(problem, "subtask_list", []) or []:
+            station_id = int(getattr(subtask, "assigned_station_id", -1))
+            for task in list(getattr(subtask, "execution_tasks", []) or []):
+                all_tasks.append(task)
+                station_tasks_by_id.setdefault(int(station_id), []).append(task)
+        station_ids = [int(getattr(station, "id", -1)) for station in getattr(problem, "station_list", []) or []]
+        for station_id in station_ids:
+            station_obj = next(
+                (station for station in getattr(problem, "station_list", []) or [] if int(getattr(station, "id", -1)) == int(station_id)),
+                None,
+            )
+            processed_seq = list(getattr(station_obj, "processed_tasks", []) or []) if station_obj is not None else []
+            seq_source = processed_seq if processed_seq else list(station_tasks_by_id.get(int(station_id), []) or [])
+            seq = sorted(
+                seq_source,
+                key=lambda task: (
+                    float(getattr(task, "start_process_time", 0.0) or 0.0),
+                    int(getattr(task, "task_id", -1)),
+                ),
+            )
+            prev_end = 0.0
+            for task in seq:
+                extra = float(getattr(task, "extra_service_used", 0.0) or 0.0)
+                start = float(getattr(task, "start_process_time", 0.0) or 0.0)
+                pick = float(getattr(task, "picking_duration", 0.0) or 0.0)
+                end = float(getattr(task, "end_process_time", 0.0) or 0.0)
+                expected_end = start + pick + extra
+                if abs(expected_end - end) > 1e-6:
+                    failures.append(
+                        f"Task {int(getattr(task, 'task_id', -1))}: end mismatch expected={expected_end:.6f}, actual={end:.6f}"
+                    )
+                if start + 1e-6 < prev_end:
+                    failures.append(
+                        f"Station {int(station_id)}: FCFS violation at task {int(getattr(task, 'task_id', -1))}, start={start:.6f} < prev_end={prev_end:.6f}"
+                    )
+                prev_end = end
+                station_task_rows.append(
+                    {
+                        "station_id": int(station_id),
+                        "task_id": int(getattr(task, "task_id", -1)),
+                        "start": start,
+                        "end": end,
+                        "pick": pick,
+                        "extra": extra,
+                    }
+                )
+        max_end = max((float(getattr(task, "end_process_time", 0.0) or 0.0) for task in all_tasks), default=0.0)
+        global_makespan = float(getattr(problem, "global_makespan", 0.0) or 0.0)
+        if abs(max_end - global_makespan) > 1e-6:
+            failures.append(f"Global makespan mismatch: max_task_end={max_end:.6f}, global_makespan={global_makespan:.6f}")
+        return {
+            "has_unreasonable_solution": bool(failures),
+            "verification_failures": failures,
+            "station_task_rows": station_task_rows,
+            "max_task_end": float(max_end),
+            "global_makespan": float(global_makespan),
+        }
 
     def materialize(self, config: ResourceConfig) -> None:
         problem = self.opt.problem
@@ -276,7 +342,69 @@ class ResourceValidator:
             return result
         bom_arrival_window = self.opt._evaluate_bom_arrival_window()
         time_window_metrics = self.opt._evaluate_order_time_window_metrics()
+        if not bool(bom_arrival_window.get("feasible", True)):
+            result = {
+                "makespan": float("inf"),
+                "snapshot": None,
+                "coverage_hard_reject": False,
+                "hard_reject_reason": "bom_arrival_window_hard_reject",
+                "conflict_summary": {},
+                "unmet_sku_total": int(coverage.get("unmet_sku_total", 0) or 0),
+                "unassigned_robot_task_count": 0,
+                "unassigned_robot_tasks": [],
+                "bom_arrival_window_violating_order_count": int(bom_arrival_window.get("violating_order_count", 0) or 0),
+                "bom_arrival_window_violations": list(bom_arrival_window.get("violations", []) or []),
+                "order_time_window_metrics": dict(time_window_metrics or {}),
+                "lkh_call_count": 1,
+                "validation_call_count": 1,
+            }
+            self._store_validation_cache(config, result)
+            return result
+        span_overrun = float(time_window_metrics.get("span_overrun_total", 0.0) or 0.0)
+        deadline_overrun = float(time_window_metrics.get("deadline_overrun_total", 0.0) or 0.0)
+        if span_overrun > 1e-9 or deadline_overrun > 1e-9:
+            result = {
+                "makespan": float("inf"),
+                "snapshot": None,
+                "coverage_hard_reject": False,
+                "hard_reject_reason": "kitting_span_hard_reject" if span_overrun > 1e-9 else "order_time_window_hard_reject",
+                "conflict_summary": {},
+                "unmet_sku_total": int(coverage.get("unmet_sku_total", 0) or 0),
+                "unassigned_robot_task_count": 0,
+                "unassigned_robot_tasks": [],
+                "bom_arrival_window_violating_order_count": int(bom_arrival_window.get("violating_order_count", 0) or 0),
+                "bom_arrival_window_violations": list(bom_arrival_window.get("violations", []) or []),
+                "order_time_window_metrics": dict(time_window_metrics or {}),
+                "lkh_call_count": 1,
+                "validation_call_count": 1,
+            }
+            self._store_validation_cache(config, result)
+            return result
         makespan = float(self.opt.evaluate())
+        unreasonable_summary = self._unreasonable_solution_summary()
+        if bool(unreasonable_summary.get("has_unreasonable_solution", False)) and bool(
+            getattr(getattr(self.opt, "cfg", None), "resource_hard_reject_unreasonable_solution", True)
+        ):
+            result = {
+                "makespan": float("inf"),
+                "snapshot": None,
+                "coverage_hard_reject": False,
+                "hard_reject_reason": "unreasonable_solution_hard_reject",
+                "conflict_summary": {},
+                "unmet_sku_total": int(coverage.get("unmet_sku_total", 0) or 0),
+                "unassigned_robot_task_count": 0,
+                "unassigned_robot_tasks": [],
+                "bom_arrival_window_violating_order_count": int(bom_arrival_window.get("violating_order_count", 0) or 0),
+                "bom_arrival_window_violations": list(bom_arrival_window.get("violations", []) or []),
+                "order_time_window_metrics": dict(time_window_metrics or {}),
+                "has_unreasonable_solution": True,
+                "verification_failures": list(unreasonable_summary.get("verification_failures", []) or []),
+                "unreasonable_solution_summary": dict(unreasonable_summary or {}),
+                "lkh_call_count": 1,
+                "validation_call_count": 1,
+            }
+            self._store_validation_cache(config, result)
+            return result
         self.opt._harvest_station_start_times()
         self.opt._update_beta_from_station()
         snapshot = self.opt.snapshot(makespan, iter_id=int(iter_id), lightweight=True)
@@ -293,6 +421,9 @@ class ResourceValidator:
             "bom_arrival_window_violating_order_count": int(bom_arrival_window.get("violating_order_count", 0) or 0),
             "bom_arrival_window_violations": list(bom_arrival_window.get("violations", []) or []),
             "order_time_window_metrics": dict(time_window_metrics or {}),
+            "has_unreasonable_solution": False,
+            "verification_failures": [],
+            "unreasonable_solution_summary": dict(unreasonable_summary or {}),
             "lkh_call_count": 1,
             "validation_call_count": 1,
         }

@@ -16,9 +16,8 @@ from Gurobi.global_xyzu import GlobalXYZUConfig, GlobalXYZUSolver
 from experiments.run_global_xyzu import _write_gurobi_solution_export
 from problemDto.createInstance import CreateOFSProblem
 
+
 SMALL_CASES = [f"GUROBI-SM{i}" for i in range(1, 10)]
-GUROBI_STACK_CASES = [f"GUROBI-S{i}" for i in range(1, 10)]
-STACK_CASES = [f"STACK-S{i}" for i in range(1, 10)]
 
 SMALL_TARGETS: Dict[str, Dict[str, float]] = {}
 
@@ -26,11 +25,8 @@ SUMMARY_COLUMNS = [
     "case",
     "case_class",
     "orders",
-    "bom_count",
     "unique_sku_per_order",
-    "sku_per_bom",
     "skus",
-    "total_sku_count",
     "totes",
     "stations",
     "robots",
@@ -38,7 +34,6 @@ SUMMARY_COLUMNS = [
     "map_size",
     "demanded_sku_count",
     "total_order_qty",
-    "total_demand_qty",
     "min_order_sku_qty",
     "max_order_sku_qty",
     "min_demand_qty_per_unique_sku",
@@ -51,14 +46,6 @@ SUMMARY_COLUMNS = [
     "upper_bound",
     "lower_bound",
     "gap",
-    "cmax",
-    "var_count",
-    "constr_count",
-    "hit_stack_count",
-    "subtask_count",
-    "task_count",
-    "flip_tote_count",
-    "sort_tote_count",
     "model_objective",
     "model_cmax",
     "total_span_overrun",
@@ -73,6 +60,7 @@ SUMMARY_COLUMNS = [
     "calibration_note",
 ]
 
+
 def _finite_float(value: Any, default: float = float("nan")) -> float:
     try:
         out = float(value)
@@ -80,11 +68,30 @@ def _finite_float(value: Any, default: float = float("nan")) -> float:
         return float(default)
     return out if math.isfinite(out) else float(default)
 
+
 def _format_number(value: Any) -> str:
     val = _finite_float(value)
     if not math.isfinite(val):
         return ""
     return f"{val:.6f}"
+
+
+def _load_extra_route_edges(path: str) -> Dict[str, List[Dict[str, Any]]]:
+    if not str(path or "").strip():
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+    raw = payload.get("cases", payload) if isinstance(payload, dict) else {}
+    if not isinstance(raw, dict):
+        return {}
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    for case, edges in raw.items():
+        if isinstance(edges, dict):
+            edges = edges.get("edges", edges.get("missing_edges", []))
+        if isinstance(edges, list):
+            out[str(case).upper()] = [dict(edge) for edge in edges if isinstance(edge, dict)]
+    return out
+
 
 def _problem_summary(problem: Any, scale: str) -> Dict[str, Any]:
     map_obj = getattr(problem, "map", None)
@@ -113,26 +120,19 @@ def _problem_summary(problem: Any, scale: str) -> Dict[str, Any]:
     unique_sku_per_order = ""
     if unique_counts:
         unique_sku_per_order = str(unique_counts[0]) if len(set(unique_counts)) == 1 else ",".join(str(v) for v in unique_counts)
-    orders_count = int(getattr(problem, "order_num", len(orders)) or 0)
-    sku_count = int(getattr(problem, "skus_num", len(getattr(problem, "skus_list", []) or [])) or 0)
-    total_order_qty = int(sum(total_quantities))
     return {
         "case": str(scale).upper(),
         "case_class": "small" if str(scale).upper() in SMALL_CASES else "custom",
-        "orders": orders_count,
-        "bom_count": orders_count,
+        "orders": int(getattr(problem, "order_num", len(orders)) or 0),
         "unique_sku_per_order": unique_sku_per_order,
-        "sku_per_bom": unique_sku_per_order,
-        "skus": sku_count,
-        "total_sku_count": sku_count,
+        "skus": int(getattr(problem, "skus_num", len(getattr(problem, "skus_list", []) or [])) or 0),
         "totes": int(getattr(problem, "tote_num", len(getattr(problem, "tote_list", []) or [])) or 0),
         "stations": int(getattr(problem, "station_num", len(getattr(problem, "station_list", []) or [])) or 0),
         "robots": int(getattr(problem, "robot_num", len(getattr(problem, "robot_list", []) or [])) or 0),
         "stacks": int(len(getattr(problem, "stack_list", []) or [])),
         "map_size": map_size,
         "demanded_sku_count": int((getattr(problem, "generator_summary", {}) or {}).get("demanded_sku_count", 0) or 0),
-        "total_order_qty": total_order_qty,
-        "total_demand_qty": total_order_qty,
+        "total_order_qty": int(sum(total_quantities)),
         "min_order_sku_qty": int(min(total_quantities)) if total_quantities else 0,
         "max_order_sku_qty": int(max(total_quantities)) if total_quantities else 0,
         "min_demand_qty_per_unique_sku": int(min(demand_quantities_by_sku)) if demand_quantities_by_sku else 0,
@@ -142,31 +142,6 @@ def _problem_summary(problem: Any, scale: str) -> Dict[str, Any]:
         "max_distinct_stacks_per_demanded_sku": int((getattr(problem, "redundancy_summary", {}) or {}).get("max_distinct_stacks_per_demanded_sku", 0) or 0),
     }
 
-def _solution_structure_summary(problem: Any) -> Dict[str, Any]:
-    tasks: List[Any] = []
-    for st in getattr(problem, "subtask_list", []) or []:
-        tasks.extend(getattr(st, "execution_tasks", []) or [])
-    if not tasks:
-        tasks = list(getattr(problem, "task_list", []) or [])
-
-    hit_stack_ids = {
-        int(getattr(task, "target_stack_id", -1))
-        for task in tasks
-        if int(getattr(task, "target_stack_id", -1)) >= 0
-    }
-    mode_tote_counts = {"FLIP": 0, "SORT": 0}
-    for task in tasks:
-        mode = str(getattr(task, "operation_mode", "") or "").upper()
-        if mode in mode_tote_counts:
-            mode_tote_counts[mode] += len(list(getattr(task, "target_tote_ids", []) or []))
-
-    return {
-        "hit_stack_count": int(len(hit_stack_ids)),
-        "subtask_count": int(len(getattr(problem, "subtask_list", []) or [])),
-        "task_count": int(len(tasks)),
-        "flip_tote_count": int(mode_tote_counts["FLIP"]),
-        "sort_tote_count": int(mode_tote_counts["SORT"]),
-    }
 
 def _target_row(scale: str) -> Dict[str, Any]:
     target = SMALL_TARGETS.get(str(scale).upper(), {})
@@ -174,6 +149,7 @@ def _target_row(scale: str) -> Dict[str, Any]:
         "target_cmax_min": _format_number(target.get("target_cmax_min", float("nan"))),
         "target_cmax_max": _format_number(target.get("target_cmax_max", float("nan"))),
     }
+
 
 def _annotate_rows(rows: List[Dict[str, Any]], mip_gap: float) -> None:
     previous_cmax = float("-inf")
@@ -214,6 +190,7 @@ def _annotate_rows(rows: List[Dict[str, Any]], mip_gap: float) -> None:
         row["monotonic_ok"] = "PASS" if monotonic_ok else "FAIL"
         row["calibration_note"] = ",".join(notes)
 
+
 def _write_outputs(rows: List[Dict[str, Any]], output_dir: str, details: List[Dict[str, Any]], mip_gap: float) -> Dict[str, str]:
     os.makedirs(output_dir, exist_ok=True)
     _annotate_rows(rows, mip_gap=float(mip_gap))
@@ -240,6 +217,7 @@ def _write_outputs(rows: List[Dict[str, Any]], output_dir: str, details: List[Di
         json.dump(details, f, ensure_ascii=False, indent=2)
     return {"csv": csv_path, "markdown": md_path, "details": details_path, "table": markdown}
 
+
 def _load_runtime_configs(path: str) -> Dict[str, Dict[str, Any]]:
     if not str(path or "").strip():
         return {}
@@ -254,11 +232,13 @@ def _load_runtime_configs(path: str) -> Dict[str, Dict[str, Any]]:
             out[str(name).upper()] = dict(cfg)
     return out
 
+
 def _install_runtime_configs(path: str) -> None:
     configs = _load_runtime_configs(path)
     if configs:
         CreateOFSProblem.RUNTIME_SCALE_CONFIGS = dict(getattr(CreateOFSProblem, "RUNTIME_SCALE_CONFIGS", {}) or {})
         CreateOFSProblem.RUNTIME_SCALE_CONFIGS.update(configs)
+
 
 def _resolve_cases(case_set: str, scales: str) -> List[str]:
     if scales:
@@ -266,11 +246,8 @@ def _resolve_cases(case_set: str, scales: str) -> List[str]:
     normalized = str(case_set or "small").strip().lower()
     if normalized == "small":
         return list(SMALL_CASES)
-    if normalized in {"stack", "stacks", "stacked"}:
-        return list(STACK_CASES)
-    if normalized in {"gurobi", "gurobi-stack", "gurobi-stacks"}:
-        return list(GUROBI_STACK_CASES)
     raise ValueError(f"Unsupported case set: {case_set}")
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run calibrated Gurobi benchmark cases.")
@@ -296,11 +273,13 @@ def main() -> None:
     parser.add_argument("--deadline-penalty-weight", type=float, default=1000.0)
     parser.add_argument("--disable-order-time-windows", action="store_true", default=False)
     parser.add_argument("--disable-all-prune", action="store_true", help="Disable all arc and candidate pruning.")
+    parser.add_argument("--extra-protected-route-edges-json", type=str, default="", help="JSON mapping case to semantic route edges that should be added back to the route graph.")
     parser.add_argument("--dry-run", action="store_true", help="Generate cases and summaries without solving Gurobi.")
     parser.add_argument("--runtime-config-json", type=str, default="", help="Optional runtime scale config JSON.")
     parser.add_argument("--output-dir", type=str, default="")
     args = parser.parse_args()
     _install_runtime_configs(str(args.runtime_config_json or ""))
+    extra_route_edges_by_case = _load_extra_route_edges(str(args.extra_protected_route_edges_json or ""))
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir = args.output_dir or os.path.join(ROOT_DIR, "result", f"gurobi_small_calibration_{timestamp}")
@@ -350,13 +329,14 @@ def main() -> None:
                     u_same_slot_same_robot=True,
                     warm_start_use_sp4=not bool(args.disable_warm_start_sp4),
                     enable_sp4_fallback=False,
+                    extra_protected_route_edges=extra_route_edges_by_case.get(str(scale).upper(), []),
                     enable_order_time_windows=not bool(args.disable_order_time_windows),
                     kitting_span_penalty_weight=float(args.kitting_span_penalty_weight),
                     deadline_penalty_weight=float(args.deadline_penalty_weight),
                 )
                 result = GlobalXYZUSolver().solve(problem, cfg=cfg)
                 diag = dict(result.diagnostics or {})
-                upper = _finite_float(diag.get("model_objective", result.objective), _finite_float(result.objective))
+                upper = _finite_float(diag.get("model_cmax", result.objective), _finite_float(result.objective))
                 lower = _finite_float(diag.get("model_best_bound", float("nan")))
                 gap = _finite_float(diag.get("model_gap", result.gap), _finite_float(result.gap))
                 runtime = _finite_float(result.runtime_sec, time.perf_counter() - start)
@@ -381,10 +361,6 @@ def main() -> None:
                         "upper_bound": _format_number(upper),
                         "lower_bound": _format_number(lower),
                         "gap": _format_number(gap),
-                        "cmax": _format_number(diag.get("model_cmax", upper)),
-                        "var_count": int(diag.get("model_var_count_total", 0) or 0),
-                        "constr_count": int(diag.get("model_constr_count_total", 0) or 0),
-                        **_solution_structure_summary(problem),
                         "model_objective": _format_number(diag.get("model_objective", result.objective)),
                         "model_cmax": _format_number(diag.get("model_cmax", upper)),
                         "total_span_overrun": _format_number(diag.get("total_span_overrun", 0.0)),
@@ -409,13 +385,12 @@ def main() -> None:
                         "runtime_sec": runtime,
                         "u_arc_count": int(diag.get("u_arc_count", 0) or 0),
                         "u_time_window_pruned_arc_count": int(diag.get("u_time_window_pruned_arc_count", 0) or 0),
+                        "extra_protected_route_edge_count": int(diag.get("extra_protected_route_edge_count", 0) or 0),
+                        "extra_protected_route_arc_count": int(diag.get("extra_protected_route_arc_count", 0) or 0),
+                        "extra_protected_route_edge_missing_count": int(diag.get("extra_protected_route_edge_missing_count", 0) or 0),
                         "model_var_count_total": int(diag.get("model_var_count_total", 0) or 0),
-                        "model_constr_count_total": int(diag.get("model_constr_count_total", 0) or 0),
                         "model_var_count_by_type": dict(diag.get("model_var_count_by_type", {}) or {}),
-                        "model_constr_count_by_type": dict(diag.get("model_constr_count_by_type", {}) or {}),
                         "model_var_count_by_type_json": str(diag.get("model_var_count_by_type_json", "{}") or "{}"),
-                        "model_constr_count_by_type_json": str(diag.get("model_constr_count_by_type_json", "{}") or "{}"),
-                        "solution_structure": _solution_structure_summary(problem),
                         "solution_export_dir": solution_export_dir,
                     }
                 )
@@ -442,6 +417,7 @@ def main() -> None:
     print(f"summary_csv={outputs['csv']}")
     print(f"summary_md={outputs['markdown']}")
     print(f"run_details_json={outputs['details']}")
+
 
 if __name__ == "__main__":
     main()
