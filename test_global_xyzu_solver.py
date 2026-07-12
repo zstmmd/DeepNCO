@@ -435,6 +435,34 @@ class GlobalXYZUSolverTests(unittest.TestCase):
                 )
             )
 
+    def test_route_transition_knn_prunes_delivery_pickup_but_keeps_protected_and_inbound(self):
+        route_nodes = {
+            0: RouteNodeSpec(0, "start", -1, -1, -1, -1, 0.0, 0.0),
+            1: RouteNodeSpec(1, "pickup", 0, 10, 100, 0, 1.0, 0.0),
+            2: RouteNodeSpec(2, "pickup", 1, 11, 101, 0, 2.0, 0.0),
+            3: RouteNodeSpec(3, "pickup", 2, 12, 102, 0, 3.0, 0.0),
+            20: RouteNodeSpec(20, "delivery", 0, 10, 100, 0, 0.0, 1.0),
+            21: RouteNodeSpec(21, "delivery", 1, 11, 101, 0, 0.0, 2.0),
+            99: RouteNodeSpec(99, "end", -1, -1, -1, -1, 0.0, 0.0),
+        }
+        route_arcs = [(0, 1), (0, 2), (0, 3), (20, 1), (20, 2), (20, 3), (21, 1), (21, 2), (21, 3), (20, 99), (21, 99)]
+        route_tau = {arc: float(index + 1) for index, arc in enumerate(route_arcs)}
+        protected = {(20, 3)}
+        pruned_arcs, diag = GlobalXYZUSolver._prune_route_arcs_by_knn(
+            route_nodes=route_nodes,
+            route_arcs=route_arcs,
+            route_tau=route_tau,
+            route_start_node=0,
+            pickup_neighbor_limit=1,
+            protected_arcs=protected,
+            prune_delivery_pickup=True,
+        )
+        self.assertIn((20, 3), pruned_arcs)
+        self.assertEqual(len([(i, j) for i, j in pruned_arcs if i == 21 and route_nodes[j].kind == "pickup"]), 1)
+        self.assertTrue(bool(diag["u_transition_knn_prune_enabled"]))
+        for pickup_id in (1, 2, 3):
+            self.assertTrue(any(j == pickup_id for _i, j in pruned_arcs))
+
     def test_rebuild_warm_slot_continuous_start_projects_arrival(self):
         rebuilt = GlobalXYZUSolver._rebuild_warm_slot_continuous_start(
             active_slot_rows=[(1, 0, 0), (2, 0, 1), (3, 0, 2)],

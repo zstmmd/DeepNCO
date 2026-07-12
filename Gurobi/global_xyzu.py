@@ -153,6 +153,9 @@ class GlobalXYZUConfig:
     enable_scale_adaptive_candidate_prune: bool = False
     sort_hit_tote_threshold: int = 3
     route_pickup_neighbor_limit: int = 0
+    enable_route_transition_knn_prune: bool = False
+    enforce_safe_prune_audit: bool = False
+    enable_warm_incumbent_cmax_bound: bool = False
     audit_warm_start_fixed_iis: bool = False
     audit_warm_start_iis_path: str = ""
     audit_warm_start_time_limit_sec: float = 120.0
@@ -1807,6 +1810,8 @@ class GlobalXYZUSolver:
         tote_ids_by_order: Dict[int, List[int]] = {}
         demand_hit_totes_by_order: Dict[int, List[int]] = {}
         support_totes_by_order: Dict[int, List[int]] = {}
+        candidate_sku_shortfall_by_order: Dict[int, Dict[int, int]] = {}
+        candidate_warm_stack_missing_by_order: Dict[int, List[int]] = {}
         tote_to_stack: Dict[int, int] = {}
         tote_position_in_stack: Dict[int, int] = {}
         tote_sku_qty: Dict[Tuple[int, int], int] = {}
@@ -2038,6 +2043,12 @@ class GlobalXYZUSolver:
                 else:
                     stack_ids = list(protected_stack_ids)
             candidate_stacks_by_order[order_id] = list(dict.fromkeys(int(stack_id) for stack_id in stack_ids))
+            missing_warm_stack_ids = sorted(
+                int(stack_id)
+                for stack_id in warm_stack_set
+                if int(stack_id) not in set(candidate_stacks_by_order[order_id])
+            )
+            candidate_warm_stack_missing_by_order[int(order_id)] = list(missing_warm_stack_ids)
             candidate_stack_dominated_pruned_count_by_order[int(order_id)] = int(len(dominated_non_warm))
             candidate_stack_warm_neighbor_count_by_order[int(order_id)] = int(
                 len({int(stack_id) for stack_id in warm_neighbor_ids if int(stack_id) in candidate_stacks_by_order[order_id]})
@@ -2057,6 +2068,25 @@ class GlobalXYZUSolver:
             )
             support_totes_by_order[order_id] = sorted(int(tote_id) for tote_id in support_tote_ids)
             tote_ids_by_order[order_id] = list(support_totes_by_order[order_id])
+            sku_shortfalls: Dict[int, int] = {}
+            for sku_id in unique_skus_by_order.get(int(order_id), []):
+                required_qty = int(demand_qty_by_order_sku.get((int(order_id), int(sku_id)), 0) or 0)
+                available_qty = sum(
+                    int(tote_sku_qty.get((int(tote_id), int(sku_id)), 0) or 0)
+                    for tote_id in support_tote_ids
+                )
+                if available_qty < required_qty:
+                    sku_shortfalls[int(sku_id)] = int(required_qty - available_qty)
+            candidate_sku_shortfall_by_order[int(order_id)] = dict(sku_shortfalls)
+            if bool(getattr(cfg, "enforce_safe_prune_audit", False)):
+                if missing_warm_stack_ids:
+                    raise ValueError(
+                        f"safe stack pruning removed warm stacks for order {order_id}: {missing_warm_stack_ids}"
+                    )
+                if sku_shortfalls:
+                    raise ValueError(
+                        f"safe stack pruning left SKU inventory shortfalls for order {order_id}: {sku_shortfalls}"
+                    )
 
         return {
             "problem": problem,
@@ -2086,6 +2116,14 @@ class GlobalXYZUSolver:
             "candidate_stack_warm_neighbor_count_by_order": {
                 int(order_id): int(count)
                 for order_id, count in candidate_stack_warm_neighbor_count_by_order.items()
+            },
+            "candidate_sku_shortfall_by_order": {
+                int(order_id): {int(sku_id): int(qty) for sku_id, qty in rows.items()}
+                for order_id, rows in candidate_sku_shortfall_by_order.items()
+            },
+            "candidate_warm_stack_missing_by_order": {
+                int(order_id): [int(stack_id) for stack_id in rows]
+                for order_id, rows in candidate_warm_stack_missing_by_order.items()
             },
             "tote_ids_by_order": tote_ids_by_order,
             "demand_hit_totes_by_order": {int(k): list(v) for k, v in demand_hit_totes_by_order.items()},
@@ -2916,6 +2954,7 @@ class GlobalXYZUSolver:
         route_start_node: int,
         pickup_neighbor_limit: int = 5,
         protected_arcs: Optional[Set[Tuple[int, int]]] = None,
+        prune_delivery_pickup: bool = False,
     ) -> Tuple[List[Tuple[int, int]], Dict[str, int]]:
         kept: Set[Tuple[int, int]] = set()
         protected_arc_set: Set[Tuple[int, int]] = {
@@ -2930,6 +2969,7 @@ class GlobalXYZUSolver:
                 "u_protected_arc_count": int(len(protected_arc_set)),
                 "u_pickup_neighbor_limit": int(limit),
                 "u_route_start_node": int(route_start_node),
+                "u_transition_knn_prune_enabled": bool(prune_delivery_pickup),
             }
         pickup_successors_by_src: Dict[int, List[Tuple[float, int]]] = defaultdict(list)
         special_predecessors_by_pickup: Dict[int, List[Tuple[float, int]]] = defaultdict(list)
@@ -2945,12 +2985,19 @@ class GlobalXYZUSolver:
                     special_predecessors_by_pickup[int(j)].append((travel, int(i)))
                 continue
 
-            # 2. Depot/Delivery transitions are part of the route skeleton.
-            # Only pickup->pickup arcs are KNN-pruned; delivery->pickup arcs
-            # must stay available for warm-start route reconstruction.
-            if str(src.kind) in {"start", "delivery"} or str(dst.kind) in {"delivery", "end"}:
+            # 2. Depot transitions and delivery/end destinations are part of
+            # the route skeleton.  Delivery->pickup transitions can optionally
+            # enter the protected KNN pool; warm-start arcs are already retained
+            # unconditionally above.
+            if str(src.kind) == "start" or str(dst.kind) in {"delivery", "end"}:
                 kept.add((int(i), int(j)))
                 if str(dst.kind) == "pickup" and str(src.kind) in {"start", "delivery"}:
+                    travel = float(route_tau.get((int(i), int(j)), float("inf")))
+                    special_predecessors_by_pickup[int(j)].append((travel, int(i)))
+                continue
+            if str(src.kind) == "delivery" and not bool(prune_delivery_pickup):
+                kept.add((int(i), int(j)))
+                if str(dst.kind) == "pickup":
                     travel = float(route_tau.get((int(i), int(j)), float("inf")))
                     special_predecessors_by_pickup[int(j)].append((travel, int(i)))
                 continue
@@ -2966,7 +3013,9 @@ class GlobalXYZUSolver:
                 kept.add((int(i), int(j)))
                 continue
 
-            # 4. Cross-slot Pickup->Pickup arcs enter the KNN pool to avoid topology explosion.
+            # 4. Cross-slot pickup transitions enter the KNN pool.  When the
+            # transition profile is enabled, this also includes delivery->pickup
+            # arcs, which dominate M8/M9 route size.
             if str(dst.kind) == "pickup":
                 travel = float(route_tau.get((int(i), int(j)), float("inf")))
                 pickup_successors_by_src[int(i)].append((travel, int(j)))
@@ -3032,6 +3081,7 @@ class GlobalXYZUSolver:
             "u_protected_arc_count": int(len(protected_arc_set)),
             "u_pickup_neighbor_limit": int(limit),
             "u_route_start_node": int(route_start_node),
+            "u_transition_knn_prune_enabled": bool(prune_delivery_pickup),
         }
 
     @staticmethod
@@ -3398,6 +3448,7 @@ class GlobalXYZUSolver:
             "warm_protected_route_arc_count_original": 0,
             "warm_protected_route_arc_count_repaired": 0,
             "warm_protected_route_arc_count_envelope": 0,
+            "warm_protected_route_arc_count_global_envelope": 0,
             "warm_protected_route_arc_count_total": 0,
             "warm_protected_route_prefix_normalized": False,
             "warm_protected_route_prefix_id_map": {},
@@ -3456,13 +3507,30 @@ class GlobalXYZUSolver:
             return 0.0, max(1, int(len(target_totes or hit_totes or [])))
 
         for order_id, slot_ids in slot_ids_by_order.items():
-            rows = list(warm.subtask_by_order.get(int(order_id), []))
-            rows.sort(key=lambda row: int(getattr(row, "id", -1)))
-            for idx, st in enumerate(rows):
-                if idx >= len(slot_ids):
-                    break
-                slot_id = int(slot_ids[idx])
-                station_id = int(getattr(st, "assigned_station_id", -1))
+            # Use the exact same canonical slot projection as _apply_warm_start.
+            # Mapping sorted subtasks directly to slots diverges when the
+            # non-empty profile repair reorders or moves a donor profile.
+            profiles = self._canonical_warm_slot_profiles(
+                order_id=int(order_id),
+                warm_rows=list(warm.subtask_by_order.get(int(order_id), [])),
+                slot_ids=list(slot_ids or []),
+                units_by_order_sku=prepared.get("units_by_order_sku", {}),
+                tote_sku_qty=prepared.get("tote_sku_qty", {}),
+            )
+            profiles, _profile_repair_diag = self._repair_nonempty_warm_slot_profiles(
+                order_id=int(order_id),
+                profiles=profiles,
+                units_by_order_sku=prepared.get("units_by_order_sku", {}),
+                demand_hit_totes_by_order=prepared.get("demand_hit_totes_by_order", {}),
+                tote_to_stack=prepared.get("tote_to_stack", {}),
+                tote_sku_qty=prepared.get("tote_sku_qty", {}),
+            )
+            for profile in profiles:
+                if int(profile.get("start_load", 0) or 0) <= 0:
+                    continue
+                st = profile["subtask"]
+                slot_id = int(profile["slot_id"])
+                station_id = int(profile.get("station_id", -1))
                 for task in getattr(st, "execution_tasks", []) or []:
                     stack_id = int(getattr(task, "target_stack_id", -1))
                     route_key = int(route_task_by_tuple.get((slot_id, stack_id, station_id), -1))
@@ -3611,8 +3679,30 @@ class GlobalXYZUSolver:
                     ]:
                         if int(arc[0]) != int(arc[1]) and arc in route_tau:
                             envelope_arcs.add(arc)
+        # Duplicate-tote filtering and list-scheduling repair can move a warm
+        # task to another robot after this early protection pass.  Protect the
+        # transition envelope across every warm-selected task, independent of
+        # its provisional robot id, so the later exact warm-start rebuild cannot
+        # introduce an unprotected delivery->pickup arc.
+        global_task_specs = [
+            route_tasks[int(route_key)]
+            for route_key in sorted({int(row.get("route_key", -1)) for row in envelope_rows})
+            if int(route_key) in route_tasks
+        ]
+        global_envelope_arcs: Set[Tuple[int, int]] = set()
+        for prev_spec in global_task_specs:
+            for next_spec in global_task_specs:
+                for arc in [
+                    (int(prev_spec.pickup_node), int(next_spec.pickup_node)),
+                    (int(prev_spec.delivery_node), int(next_spec.delivery_node)),
+                    (int(prev_spec.delivery_node), int(next_spec.pickup_node)),
+                ]:
+                    if int(arc[0]) != int(arc[1]) and arc in route_tau:
+                        global_envelope_arcs.add(arc)
+        envelope_arcs.update(global_envelope_arcs)
         protected_arcs.update(envelope_arcs)
         diagnostics["warm_protected_route_arc_count_envelope"] = int(len(envelope_arcs))
+        diagnostics["warm_protected_route_arc_count_global_envelope"] = int(len(global_envelope_arcs))
         # Protect every warm-start arc that could be reconstructed, even when a
         # later arc fails. Returning an empty set here lets KNN pruning remove
         # earlier valid warm arcs, which then makes _apply_warm_start fail on a
@@ -4311,6 +4401,21 @@ class GlobalXYZUSolver:
                 int(order_id): int(len(list(tote_ids or [])))
                 for order_id, tote_ids in dict(support_totes_by_order or {}).items()
             },
+            "candidate_sku_shortfall_by_order": {
+                int(order_id): {int(sku_id): int(qty) for sku_id, qty in dict(rows or {}).items()}
+                for order_id, rows in dict(prepared.get("candidate_sku_shortfall_by_order", {}) or {}).items()
+            },
+            "candidate_warm_stack_missing_by_order": {
+                int(order_id): [int(stack_id) for stack_id in list(rows or [])]
+                for order_id, rows in dict(prepared.get("candidate_warm_stack_missing_by_order", {}) or {}).items()
+            },
+            "safe_prune_inventory_coverage_ok": bool(
+                not any(dict(rows or {}) for rows in dict(prepared.get("candidate_sku_shortfall_by_order", {}) or {}).values())
+            ),
+            "safe_prune_warm_stack_coverage_ok": bool(
+                not any(list(rows or []) for rows in dict(prepared.get("candidate_warm_stack_missing_by_order", {}) or {}).values())
+            ),
+            "enforce_safe_prune_audit": bool(getattr(cfg, "enforce_safe_prune_audit", False)),
             "u_legal_arc_count_before_knn": 0,
             "u_arc_count_after_knn": 0,
             "u_knn_pruned_arc_count": 0,
@@ -4437,6 +4542,13 @@ class GlobalXYZUSolver:
         finish = model.addVars([int(slot.slot_id) for slot in slots], lb=0.0, vtype=GRB.CONTINUOUS, name="finish")
         cmax_vtype = GRB.INTEGER if bool(getattr(cfg, "integer_cmax", False)) else GRB.CONTINUOUS
         cmax = model.addVar(lb=0.0, vtype=cmax_vtype, name="Cmax")
+        warm_incumbent_cmax_bound = float(getattr(prepared.get("warm"), "makespan", 0.0) or 0.0)
+        if bool(getattr(cfg, "enable_warm_incumbent_cmax_bound", False)):
+            if warm_incumbent_cmax_bound <= 0.0:
+                if bool(getattr(cfg, "enforce_safe_prune_audit", False)):
+                    raise ValueError("safe incumbent Cmax bound requested without a positive warm makespan")
+            else:
+                model.addConstr(cmax <= float(warm_incumbent_cmax_bound), name="WarmIncumbentCmaxUB")
         station_arrival_clock = None
         station_finish_clock = None
         order_arrival_lb = None
@@ -4641,6 +4753,8 @@ class GlobalXYZUSolver:
             cfg_slot_time_ub = float(getattr(cfg, "big_m_time", 0.0) or 0.0)
             warm_slot_time_ub = 3.0 * warm_makespan_for_prune if warm_makespan_for_prune > 0.0 else 0.0
             route_prune_slot_time_ub = max(float(cfg_slot_time_ub), float(warm_slot_time_ub))
+            if bool(getattr(cfg, "enable_warm_incumbent_cmax_bound", False)) and warm_makespan_for_prune > 0.0:
+                route_prune_slot_time_ub = min(float(route_prune_slot_time_ub), float(warm_makespan_for_prune))
             route_prune_slot_time_ub = max(1.0, float(route_prune_slot_time_ub))
 
             fixed_route_arcs_for_legalization, fixed_route_legalization_diag = self._fixed_route_arcs_from_cfg(
@@ -4783,7 +4897,11 @@ class GlobalXYZUSolver:
                 if bool(warm_bound_needed)
                 else {"ok": False, "reason": "skipped_no_route_prune", "model_cmax": 0.0}
             )
-            if bool(warm_prune_bound_diag.get("ok", False)) and float(warm_prune_bound_diag.get("model_cmax", 0.0) or 0.0) > 0.0:
+            if (
+                not bool(getattr(cfg, "enable_warm_incumbent_cmax_bound", False))
+                and bool(warm_prune_bound_diag.get("ok", False))
+                and float(warm_prune_bound_diag.get("model_cmax", 0.0) or 0.0) > 0.0
+            ):
                 route_prune_slot_time_ub = max(
                     float(route_prune_slot_time_ub),
                     float(warm_prune_bound_diag.get("model_cmax", 0.0) or 0.0),
@@ -4868,7 +4986,24 @@ class GlobalXYZUSolver:
                 route_start_node=min(route_start_nodes.values(), default=0),
                 pickup_neighbor_limit=int(getattr(cfg, "route_pickup_neighbor_limit", 0) or 0),
                 protected_arcs=protected_route_arcs,
+                prune_delivery_pickup=bool(getattr(cfg, "enable_route_transition_knn_prune", False)),
             )
+            legal_route_arc_set = {(int(i), int(j)) for i, j in legal_route_arcs}
+            final_route_arc_set = {(int(i), int(j)) for i, j in route_arcs}
+            expected_protected_route_arcs = {
+                (int(i), int(j))
+                for i, j in protected_route_arcs
+                if (int(i), int(j)) in legal_route_arc_set
+            }
+            missing_protected_route_arcs = sorted(expected_protected_route_arcs - final_route_arc_set)
+            route_arc_knn_diag["u_expected_protected_arc_count"] = int(len(expected_protected_route_arcs))
+            route_arc_knn_diag["u_missing_protected_arc_count"] = int(len(missing_protected_route_arcs))
+            route_arc_knn_diag["u_safe_prune_route_coverage_ok"] = bool(not missing_protected_route_arcs)
+            if bool(getattr(cfg, "enforce_safe_prune_audit", False)) and missing_protected_route_arcs:
+                raise ValueError(
+                    "safe route pruning removed protected arcs: "
+                    f"count={len(missing_protected_route_arcs)}, sample={missing_protected_route_arcs[:8]}"
+                )
             route_tau = {
                 (int(i), int(j)): float(route_tau[(int(i), int(j))])
                 for i, j in route_arcs
@@ -6203,6 +6338,10 @@ class GlobalXYZUSolver:
                 "candidate_stack_topk": int(getattr(cfg, "candidate_stack_topk", 0) or 0),
                 "max_candidate_stacks_per_order": int(getattr(cfg, "max_candidate_stacks_per_order", 0) or 0),
                 "route_pickup_neighbor_limit": int(getattr(cfg, "route_pickup_neighbor_limit", 0) or 0),
+                "enable_route_transition_knn_prune": bool(getattr(cfg, "enable_route_transition_knn_prune", False)),
+                "enforce_safe_prune_audit": bool(getattr(cfg, "enforce_safe_prune_audit", False)),
+                "enable_warm_incumbent_cmax_bound": bool(getattr(cfg, "enable_warm_incumbent_cmax_bound", False)),
+                "warm_incumbent_cmax_bound": float(warm_incumbent_cmax_bound),
                 "enable_scale_adaptive_candidate_prune": bool(getattr(cfg, "enable_scale_adaptive_candidate_prune", True)),
                 "enable_resource_lex_symmetry": bool(getattr(cfg, "enable_resource_lex_symmetry", True)),
                 "enable_anchor_first_order_robot": bool(getattr(cfg, "enable_anchor_first_order_robot", False)),

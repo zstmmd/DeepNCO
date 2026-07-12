@@ -129,10 +129,30 @@ def summary_row(candidate_id: str, phase: str, config: dict[str, Any], output_di
         "actual_hit_stack_count": len({int(t["target_stack_id"]) for t in data.get("tasks", []) if "target_stack_id" in t}),
         "subtask_count": data.get("subtask_count"), "task_count": data.get("task_count"),
         "var_count": diag.get("model_var_count_total"), "constr_count": diag.get("model_constr_count_total"),
+        "general_constr_count": diag.get("model_general_constr_count_total"),
+        "route_arc_count": diag.get("u_arc_count"),
+        "route_arc_count_before_knn": diag.get("u_legal_arc_count_before_knn"),
+        "route_arc_count_after_resource_prune": diag.get("u_arc_count_after_resource_prune"),
+        "route_knn_pruned_arc_count": diag.get("u_knn_pruned_arc_count"),
+        "route_resource_pruned_arc_count": diag.get("u_resource_pruned_arc_count"),
+        "route_directional_pruned_arc_count": diag.get("u_directional_pruned_arc_count"),
+        "missing_protected_arc_count": diag.get("u_missing_protected_arc_count"),
+        "safe_route_coverage_ok": diag.get("u_safe_prune_route_coverage_ok"),
+        "safe_inventory_coverage_ok": diag.get("safe_prune_inventory_coverage_ok"),
+        "safe_warm_stack_coverage_ok": diag.get("safe_prune_warm_stack_coverage_ok"),
+        "warm_start_ready": diag.get("warm_start_mip_start_ready"),
+        "model_sol_count": diag.get("model_sol_count"),
+        "fallback_reason": diag.get("fallback_reason", ""),
     })
     row["accepted"] = bool(
         finite(objective) and finite(bound) and finite(gap) and finite(runtime)
-        and float(gap) <= 0.01 and 1500.0 <= float(runtime) <= 2500.5
+        and float(gap) <= 0.01 and 1800.0 <= float(runtime) <= 2500.0
+        and int(diag.get("model_sol_count", 0) or 0) > 0
+        and bool(diag.get("warm_start_mip_start_ready", False))
+        and not str(diag.get("fallback_reason", "") or "")
+        and int(diag.get("u_missing_protected_arc_count", 0) or 0) == 0
+        and bool(diag.get("safe_prune_inventory_coverage_ok", True))
+        and bool(diag.get("safe_prune_warm_stack_coverage_ok", True))
     )
     return row
 
@@ -153,17 +173,34 @@ def command(
     focus: int,
     heuristics: float,
     safe_lb_profile: bool = False,
+    safe_prune_profile: bool = False,
+    route_pickup_neighbor_limit: int = 5,
+    gurobi_method: int | None = None,
 ) -> list[str]:
+    max_hit_stacks = max(int(v) for v in load_json(config_path)["configs"]["M8"]["bom_colocated_stack_counts"])
     cmd = [
         python, str(ROOT / "experiments/run_global_xyzu.py"), "--scale", "M8", "--seed", "42",
         "--time-limit", str(time_limit), "--mip-gap", "0.01", "--runtime-config-json", str(config_path),
-        "--candidate-stack-topk", "999", "--max-candidate-stacks-per-order", "0",
-        "--candidate-station-topk-per-stack", "1", "--route-pickup-neighbor-limit", "5",
-        "--enable-route-time-window-arc-prune", "--disable-resource-lex-symmetry",
-        "--disable-slot-lex-symmetry", "--gurobi-mip-focus", str(focus),
+        "--candidate-stack-topk", str(max_hit_stacks if safe_prune_profile else 999),
+        "--max-candidate-stacks-per-order", str(max_hit_stacks if safe_prune_profile else 0),
+        "--candidate-station-topk-per-stack", "1",
+        "--route-pickup-neighbor-limit", str(route_pickup_neighbor_limit),
+        "--enable-route-time-window-arc-prune", "--gurobi-mip-focus", str(focus),
         "--gurobi-heuristics", str(heuristics), "--skip-tra-makespan-verification",
         "--output-root", str(output_dir),
     ]
+    if safe_prune_profile:
+        cmd.extend([
+            "--enable-warm-candidate-stack-prune",
+            "--enable-route-directional-arc-prune",
+            "--enable-route-transition-knn-prune",
+            "--enforce-safe-prune-audit",
+            "--enable-warm-incumbent-cmax-bound",
+        ])
+    else:
+        cmd.extend(["--disable-resource-lex-symmetry", "--disable-slot-lex-symmetry"])
+    if gurobi_method is not None:
+        cmd.extend(["--gurobi-method", str(int(gurobi_method))])
     if safe_lb_profile:
         # Implemented lower bounds/linearizations only: no candidate stack or
         # route arc is removed, so the feasible region is unchanged.
@@ -192,6 +229,13 @@ def main() -> int:
         action="store_true",
         help="Enable implemented lower-bound/linearization cuts without candidate pruning.",
     )
+    parser.add_argument(
+        "--safe-prune-profile",
+        action="store_true",
+        help="Enable protected stack/station/route compression plus fail-fast coverage audits.",
+    )
+    parser.add_argument("--route-pickup-neighbor-limit", type=int, choices=(3, 4, 5), default=5)
+    parser.add_argument("--gurobi-method", type=int, choices=(0, 1, 2, 3, 4, 5), default=None)
     args = parser.parse_args()
 
     baseline_doc = load_json(args.baseline.resolve())
@@ -221,6 +265,9 @@ def main() -> int:
                 args.mip_focus,
                 args.heuristics,
                 safe_lb_profile=bool(args.safe_lb_profile),
+                safe_prune_profile=bool(args.safe_prune_profile),
+                route_pickup_neighbor_limit=int(args.route_pickup_neighbor_limit),
+                gurobi_method=args.gurobi_method,
             )
             (candidate_root / "reproduce_command.json").write_text(json.dumps(cmd, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             completed = subprocess.run(cmd, cwd=ROOT, check=False)

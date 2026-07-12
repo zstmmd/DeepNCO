@@ -848,6 +848,21 @@ def main() -> None:
     parser.add_argument("--disable-warm-candidate-stack-prune", action="store_true", help="Disable warm-stack candidate pruning.")
     parser.add_argument("--candidate-station-topk-per-stack", type=int, default=999)
     parser.add_argument("--route-pickup-neighbor-limit", type=int, default=0)
+    parser.add_argument(
+        "--enable-route-transition-knn-prune",
+        action="store_true",
+        help="Apply protected KNN pruning to delivery-to-pickup route transitions.",
+    )
+    parser.add_argument(
+        "--enforce-safe-prune-audit",
+        action="store_true",
+        help="Fail before optimize if candidate inventory, warm stacks, or protected route arcs are uncovered.",
+    )
+    parser.add_argument(
+        "--enable-warm-incumbent-cmax-bound",
+        action="store_true",
+        help="Bound Cmax and route pruning by the feasible warm incumbent makespan.",
+    )
     parser.add_argument("--sort-hit-tote-threshold", type=int, default=3, help="Use SORT when selected hit tote count on a stack is greater than this threshold; otherwise use FLIP.")
     parser.add_argument("--enable-scale-adaptive-candidate-prune", action="store_true", help="Enable GUROBI-S6+ adaptive candidate compression.")
     parser.add_argument("--disable-scale-adaptive-candidate-prune", action="store_true", help="Deprecated no-op: scale-adaptive candidate compression is disabled by default.")
@@ -924,6 +939,9 @@ def main() -> None:
         enable_warm_candidate_stack_prune=bool(args.enable_warm_candidate_stack_prune) and not bool(args.disable_warm_candidate_stack_prune),
         candidate_station_topk_per_stack=int(args.candidate_station_topk_per_stack),
         route_pickup_neighbor_limit=int(args.route_pickup_neighbor_limit),
+        enable_route_transition_knn_prune=bool(args.enable_route_transition_knn_prune),
+        enforce_safe_prune_audit=bool(args.enforce_safe_prune_audit),
+        enable_warm_incumbent_cmax_bound=bool(args.enable_warm_incumbent_cmax_bound),
         sort_hit_tote_threshold=int(args.sort_hit_tote_threshold),
         enable_scale_adaptive_candidate_prune=bool(args.enable_scale_adaptive_candidate_prune) and not bool(args.disable_scale_adaptive_candidate_prune),
         enable_resource_lex_symmetry=not bool(args.disable_resource_lex_symmetry),
