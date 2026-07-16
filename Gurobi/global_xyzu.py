@@ -22,6 +22,12 @@ from problemDto.ofs_problem_dto import OFSProblemDTO
 from Gurobi.sp1 import SP1_BOM_Splitter
 from Gurobi.sp2 import SP2_Station_Assigner
 from Gurobi.sp3 import SP3_Bin_Hitter
+from Gurobi.master_domain import (
+    MasterDomainError,
+    normalize_master_domain_manifest,
+    verify_manifest_problem,
+    verify_manifest_warm_start,
+)
 
 
 class RankAwareGlobalTimeCalculator(GlobalTimeCalculator):
@@ -91,6 +97,7 @@ class GlobalXYZUConfig:
     slot_slack_per_order: int = 1
     enable_tight_slot_upper_bound: bool = True
     max_candidate_stacks_per_order: int = 0
+    enable_hard_candidate_stack_cap: bool = False
     enable_warm_candidate_stack_prune: bool = False
     candidate_station_topk_per_stack: int = 999
     warm_start_sp4_time_limit_sec: int = 15
@@ -123,6 +130,11 @@ class GlobalXYZUConfig:
     gurobi_mem_limit_gb: Optional[float] = None
     gurobi_nodefile_start_gb: Optional[float] = None
     gurobi_threads: Optional[int] = None
+    gurobi_seed: Optional[int] = None
+    gurobi_rins: Optional[int] = None
+    gurobi_no_rel_heur_time: Optional[float] = None
+    gurobi_no_rel_heur_work: Optional[float] = None
+    gurobi_improve_start_gap: Optional[float] = None
     gurobi_cuts: int = 1
     gurobi_cut_passes: int = 1
     gurobi_presolve: int = 1
@@ -134,6 +146,10 @@ class GlobalXYZUConfig:
     enable_route_pair_service_travel_lb: bool = False
     enable_route_slot_stack_count_lb: bool = True
     enable_route_finish_cmax_lb: bool = False
+    enable_slot_pair_arrival_lb: bool = False
+    enable_slot_sku_arrival_lb: bool = False
+    enable_sku_release_workload_lb: bool = False
+    enable_station_rank_workload_lb: bool = False
     enable_global_arrival_workload_lb: bool = True
     enable_route_time_window_arc_prune: bool = True
     enable_route_load_interval_arc_prune: bool = True
@@ -144,6 +160,17 @@ class GlobalXYZUConfig:
     enable_tote_equivalence_symmetry: bool = True
     enable_station_global_lex_symmetry: bool = True
     enable_robot_finish_lex_symmetry: bool = True
+    enable_slot_sku_signature_lex_symmetry: bool = False
+    enable_station_load_lex_symmetry: bool = False
+    station_slot_count_cap: int = 0
+    enable_warm_route_time_upper_bound: bool = False
+    warm_route_time_upper_bound_margin_sec: float = 0.0
+    enable_route_time_big_m_linear_cuts: bool = False
+    enable_route_load_big_m_linear_cuts: bool = False
+    route_constraint_mode: str = "indicator"
+    enable_hard_station_topk: bool = False
+    enable_slot_specific_warm_station_protection: bool = False
+    enable_warm_start_station_projection: bool = False
     enable_anchor_first_order_robot: bool = False
     enable_selected_workload_lbs: bool = True
     enable_route_arrival_slot_linear: bool = False
@@ -153,9 +180,7 @@ class GlobalXYZUConfig:
     enable_scale_adaptive_candidate_prune: bool = False
     sort_hit_tote_threshold: int = 3
     route_pickup_neighbor_limit: int = 0
-    enable_route_transition_knn_prune: bool = False
-    enforce_safe_prune_audit: bool = False
-    enable_warm_incumbent_cmax_bound: bool = False
+    enable_route_delivery_pickup_neighbor_prune: bool = False
     audit_warm_start_fixed_iis: bool = False
     audit_warm_start_iis_path: str = ""
     audit_warm_start_time_limit_sec: float = 120.0
@@ -176,6 +201,8 @@ class GlobalXYZUConfig:
     fixgurobi_warm_bound_only: bool = False
     gurobi_cutoff: Optional[float] = None
     gurobi_best_obj_stop: Optional[float] = None
+    master_domain_manifest: Optional[Dict[str, Any]] = None
+    master_domain_strict: bool = False
 
 
 @dataclass
@@ -373,6 +400,16 @@ class GlobalXYZUSolver:
             model.Params.NodefileStart = float(getattr(cfg, "gurobi_nodefile_start_gb"))
         if getattr(cfg, "gurobi_threads", None) is not None:
             model.Params.Threads = int(getattr(cfg, "gurobi_threads"))
+        if getattr(cfg, "gurobi_seed", None) is not None:
+            model.Params.Seed = int(getattr(cfg, "gurobi_seed"))
+        if getattr(cfg, "gurobi_rins", None) is not None:
+            model.Params.RINS = int(getattr(cfg, "gurobi_rins"))
+        if getattr(cfg, "gurobi_no_rel_heur_time", None) is not None:
+            model.Params.NoRelHeurTime = float(getattr(cfg, "gurobi_no_rel_heur_time"))
+        if getattr(cfg, "gurobi_no_rel_heur_work", None) is not None:
+            model.Params.NoRelHeurWork = float(getattr(cfg, "gurobi_no_rel_heur_work"))
+        if getattr(cfg, "gurobi_improve_start_gap", None) is not None:
+            model.Params.ImproveStartGap = float(getattr(cfg, "gurobi_improve_start_gap"))
         model.Params.Cuts = int(getattr(cfg, "gurobi_cuts", 1))
         if bool(getattr(cfg, "route_lazy_constraint", True)):
             model.Params.LazyConstraints = 1
@@ -551,6 +588,11 @@ class GlobalXYZUSolver:
     def compile_model(self, problem: OFSProblemDTO, cfg: Optional[GlobalXYZUConfig] = None) -> CompiledGlobalXYZUModel:
         cfg = cfg or GlobalXYZUConfig()
         cfg, scale_adaptive_diag = self._apply_scale_adaptive_config(problem, cfg)
+        raw_master_domain = getattr(cfg, "master_domain_manifest", None)
+        master_domain = normalize_master_domain_manifest(raw_master_domain) if raw_master_domain else None
+        if master_domain is not None:
+            verify_manifest_problem(master_domain, problem)
+            cfg.master_domain_manifest = master_domain
         start_clock = time.perf_counter()
         fixgurobi_no_warm_start = bool(getattr(cfg, "fixgurobi_no_warm_start", False))
         fixgurobi_warm_bound_only = bool(getattr(cfg, "fixgurobi_warm_bound_only", False))
@@ -580,6 +622,8 @@ class GlobalXYZUSolver:
             diagnostics["supported_scale"] = False
             diagnostics["warning"] = f"scale={scale_name} is outside the intended SMALL/SMALL2/TINY3/GUROBI-S scope"
         warm = self._build_warm_start(problem, cfg) if bool(cfg.enable_warm_start) else WarmStartState()
+        if master_domain is not None and bool(getattr(cfg, "master_domain_strict", False)) and bool(cfg.enable_warm_start):
+            verify_manifest_warm_start(master_domain, warm)
         self._warm_start = warm
         self._warm_start_problem_snapshot = copy.deepcopy(problem) if bool(cfg.enable_warm_start) else None
         prepared = self._prepare(problem, cfg, warm)
@@ -620,6 +664,8 @@ class GlobalXYZUSolver:
                 "warm_start_sp4_mode": str(getattr(warm, "sp4_mode", "")),
                 "warm_start_sp4_error": str(getattr(warm, "sp4_error", "")),
                 "warm_start_sp4_runtime_sec": float(getattr(warm, "sp4_runtime_sec", 0.0) or 0.0),
+                "master_domain_sha256": str((master_domain or {}).get("manifest_sha256", "")),
+                "master_domain_strict": bool(getattr(cfg, "master_domain_strict", False)),
             }
         )
         model = gp.Model("Global_XYZU_Integrated")
@@ -1732,6 +1778,16 @@ class GlobalXYZUSolver:
         )
 
     def _prepare(self, problem: OFSProblemDTO, cfg: GlobalXYZUConfig, warm: WarmStartState) -> Dict[str, Any]:
+        master_domain = dict(getattr(cfg, "master_domain_manifest", None) or {})
+        master_domain_strict = bool(getattr(cfg, "master_domain_strict", False))
+        master_slot_counts = {
+            int(order_id): int(count)
+            for order_id, count in dict(master_domain.get("slot_count_by_order", {}) or {}).items()
+        }
+        master_candidate_stacks = {
+            int(order_id): [int(stack_id) for stack_id in list(stack_ids or [])]
+            for order_id, stack_ids in dict(master_domain.get("candidate_stacks_by_order", {}) or {}).items()
+        }
         # 预处理 1：把每个订单的 SKU 需求展开成 work unit，支持同一 SKU 多件需求。
         work_units: List[WorkUnitSpec] = []
         units_by_order_sku: Dict[Tuple[int, int], List[str]] = defaultdict(list)
@@ -1785,8 +1841,17 @@ class GlobalXYZUSolver:
             lower_bound = max(1, int(math.ceil(float(required_unit_count) / max(1, cap_limit))))
             heur_count = int(len(heuristic_subtasks_by_order.get(order_id, [])))
             fixed_count = int(dict(getattr(cfg, "fixed_slot_count_by_order", None) or {}).get(int(order_id), 0) or 0)
-            slot_count = self._slot_upper_bound(required_unit_count, heur_count, cap_limit, cfg)
-            slot_count = max(slot_count, lower_bound, fixed_count)
+            if master_domain:
+                if order_id not in master_slot_counts:
+                    raise MasterDomainError(f"master domain has no slot count for order {order_id}")
+                slot_count = int(master_slot_counts[order_id])
+                if slot_count < lower_bound:
+                    raise MasterDomainError(
+                        f"master domain slot count {slot_count} is below lower bound {lower_bound} for order {order_id}"
+                    )
+            else:
+                slot_count = self._slot_upper_bound(required_unit_count, heur_count, cap_limit, cfg)
+                slot_count = max(slot_count, lower_bound, fixed_count)
             for local_idx in range(slot_count):
                 slot_specs.append(SlotSpec(slot_id=slot_id, order_id=order_id, local_index=local_idx))
                 slot_ids_by_order[order_id].append(slot_id)
@@ -1810,8 +1875,6 @@ class GlobalXYZUSolver:
         tote_ids_by_order: Dict[int, List[int]] = {}
         demand_hit_totes_by_order: Dict[int, List[int]] = {}
         support_totes_by_order: Dict[int, List[int]] = {}
-        candidate_sku_shortfall_by_order: Dict[int, Dict[int, int]] = {}
-        candidate_warm_stack_missing_by_order: Dict[int, List[int]] = {}
         tote_to_stack: Dict[int, int] = {}
         tote_position_in_stack: Dict[int, int] = {}
         tote_sku_qty: Dict[Tuple[int, int], int] = {}
@@ -2027,28 +2090,45 @@ class GlobalXYZUSolver:
                 ]
                 stack_ids = list(warm_ranked) + list(required_non_warm) + list(warm_neighbor_ids) + list(tail[:keep_non_warm])
             if int(cfg.max_candidate_stacks_per_order) > 0 and len(stack_ids) > int(cfg.max_candidate_stacks_per_order):
-                protected_stack_ids = list(dict.fromkeys(list(warm_ranked) + [
-                    int(stack_id)
-                    for stack_id in sorted(set(required_cover_stack_ids) | forced_stack_set)
-                    if int(stack_id) not in warm_stack_set
-                ]))
-                remaining_budget = int(cfg.max_candidate_stacks_per_order) - len(protected_stack_ids)
-                if remaining_budget >= 0:
-                    tail = [
-                        int(stack_id)
-                        for stack_id in stack_ids
-                        if int(stack_id) not in set(protected_stack_ids)
-                    ]
-                    stack_ids = list(protected_stack_ids) + list(tail[:remaining_budget])
+                if bool(getattr(cfg, "enable_hard_candidate_stack_cap", False)):
+                    stack_ids = list(dict.fromkeys(int(stack_id) for stack_id in stack_ids))[: int(cfg.max_candidate_stacks_per_order)]
+                    protected_stack_ids = list(stack_ids)
                 else:
-                    stack_ids = list(protected_stack_ids)
+                    protected_stack_ids = list(dict.fromkeys(list(warm_ranked) + [
+                        int(stack_id)
+                        for stack_id in sorted(set(required_cover_stack_ids) | forced_stack_set)
+                        if int(stack_id) not in warm_stack_set
+                    ]))
+                    remaining_budget = int(cfg.max_candidate_stacks_per_order) - len(protected_stack_ids)
+                    if remaining_budget >= 0:
+                        tail = [
+                            int(stack_id)
+                            for stack_id in stack_ids
+                            if int(stack_id) not in set(protected_stack_ids)
+                        ]
+                        stack_ids = list(protected_stack_ids) + list(tail[:remaining_budget])
+                    else:
+                        stack_ids = list(protected_stack_ids)
+            if master_domain:
+                if order_id not in master_candidate_stacks:
+                    raise MasterDomainError(f"master domain has no candidate stacks for order {order_id}")
+                master_stack_ids = list(dict.fromkeys(master_candidate_stacks[order_id]))
+                missing_stack_ids = sorted(
+                    int(stack_id)
+                    for stack_id in master_stack_ids
+                    if int(stack_id) not in getattr(problem, "point_to_stack", {})
+                )
+                if missing_stack_ids:
+                    raise MasterDomainError(
+                        f"master domain references missing stacks for order {order_id}: {missing_stack_ids}"
+                    )
+                missing_warm_stacks = sorted(set(warm_stack_ids) - set(master_stack_ids))
+                if master_domain_strict and missing_warm_stacks:
+                    raise MasterDomainError(
+                        f"master domain does not protect warm-start stacks for order {order_id}: {missing_warm_stacks}"
+                    )
+                stack_ids = master_stack_ids
             candidate_stacks_by_order[order_id] = list(dict.fromkeys(int(stack_id) for stack_id in stack_ids))
-            missing_warm_stack_ids = sorted(
-                int(stack_id)
-                for stack_id in warm_stack_set
-                if int(stack_id) not in set(candidate_stacks_by_order[order_id])
-            )
-            candidate_warm_stack_missing_by_order[int(order_id)] = list(missing_warm_stack_ids)
             candidate_stack_dominated_pruned_count_by_order[int(order_id)] = int(len(dominated_non_warm))
             candidate_stack_warm_neighbor_count_by_order[int(order_id)] = int(
                 len({int(stack_id) for stack_id in warm_neighbor_ids if int(stack_id) in candidate_stacks_by_order[order_id]})
@@ -2068,25 +2148,6 @@ class GlobalXYZUSolver:
             )
             support_totes_by_order[order_id] = sorted(int(tote_id) for tote_id in support_tote_ids)
             tote_ids_by_order[order_id] = list(support_totes_by_order[order_id])
-            sku_shortfalls: Dict[int, int] = {}
-            for sku_id in unique_skus_by_order.get(int(order_id), []):
-                required_qty = int(demand_qty_by_order_sku.get((int(order_id), int(sku_id)), 0) or 0)
-                available_qty = sum(
-                    int(tote_sku_qty.get((int(tote_id), int(sku_id)), 0) or 0)
-                    for tote_id in support_tote_ids
-                )
-                if available_qty < required_qty:
-                    sku_shortfalls[int(sku_id)] = int(required_qty - available_qty)
-            candidate_sku_shortfall_by_order[int(order_id)] = dict(sku_shortfalls)
-            if bool(getattr(cfg, "enforce_safe_prune_audit", False)):
-                if missing_warm_stack_ids:
-                    raise ValueError(
-                        f"safe stack pruning removed warm stacks for order {order_id}: {missing_warm_stack_ids}"
-                    )
-                if sku_shortfalls:
-                    raise ValueError(
-                        f"safe stack pruning left SKU inventory shortfalls for order {order_id}: {sku_shortfalls}"
-                    )
 
         return {
             "problem": problem,
@@ -2116,14 +2177,6 @@ class GlobalXYZUSolver:
             "candidate_stack_warm_neighbor_count_by_order": {
                 int(order_id): int(count)
                 for order_id, count in candidate_stack_warm_neighbor_count_by_order.items()
-            },
-            "candidate_sku_shortfall_by_order": {
-                int(order_id): {int(sku_id): int(qty) for sku_id, qty in rows.items()}
-                for order_id, rows in candidate_sku_shortfall_by_order.items()
-            },
-            "candidate_warm_stack_missing_by_order": {
-                int(order_id): [int(stack_id) for stack_id in rows]
-                for order_id, rows in candidate_warm_stack_missing_by_order.items()
             },
             "tote_ids_by_order": tote_ids_by_order,
             "demand_hit_totes_by_order": {int(k): list(v) for k, v in demand_hit_totes_by_order.items()},
@@ -2234,6 +2287,7 @@ class GlobalXYZUSolver:
         pickup_service_ub_by_node: Optional[Dict[int, float]] = None,
         route_start_nodes: Optional[Sequence[int]] = None,
         route_end_nodes: Optional[Sequence[int]] = None,
+        slot_time_ub_override: Optional[float] = None,
     ) -> Tuple[float, float, Dict[str, Any]]:
         explicit_route_m = getattr(cfg, "route_big_m_time", None)
         warm = prepared.get("warm") or WarmStartState()
@@ -2241,6 +2295,10 @@ class GlobalXYZUSolver:
         cfg_slot_time_ub = float(getattr(cfg, "big_m_time", 0.0) or 0.0)
         warm_slot_time_ub = 3.0 * warm_makespan if warm_makespan > 0.0 else 0.0
         slot_time_ub = max(float(cfg_slot_time_ub), float(warm_slot_time_ub))
+        slot_time_ub_source = "max_cfg_big_m_time_3x_warm_start_makespan"
+        if slot_time_ub_override is not None and float(slot_time_ub_override) > 0.0:
+            slot_time_ub = min(float(slot_time_ub), float(slot_time_ub_override))
+            slot_time_ub_source = "warm_route_time_upper_bound"
         slot_time_ub = max(1.0, float(slot_time_ub))
         pickup_service_ub = {
             int(node_id): float(value)
@@ -2248,6 +2306,7 @@ class GlobalXYZUSolver:
         }
         route_node_time_ub: Dict[int, float] = {}
         route_arc_time_m: Dict[Tuple[int, int], float] = {}
+        protected_route_arcs: Set[Tuple[int, int]] = set()
         route_task_by_key = {int(task_key): spec for task_key, spec in dict(route_tasks or {}).items()}
         if route_nodes:
             start_node_set = {int(node_id) for node_id in (route_start_nodes or [])}
@@ -2291,7 +2350,7 @@ class GlobalXYZUSolver:
             route_big_m = max(1.0, float(explicit_route_m))
             return slot_time_ub, route_big_m, {
                 "slot_time_ub": float(slot_time_ub),
-                "slot_time_ub_source": "max_cfg_big_m_time_3x_warm_start_makespan",
+                "slot_time_ub_source": str(slot_time_ub_source),
                 "route_big_m": float(route_big_m),
                 "route_big_m_source": "config.route_big_m_time",
                 "warm_makespan": float(warm_makespan),
@@ -2330,7 +2389,7 @@ class GlobalXYZUSolver:
         route_big_m = max(1.0, float(route_big_m))
         return slot_time_ub, route_big_m, {
             "slot_time_ub": float(slot_time_ub),
-            "slot_time_ub_source": "max_cfg_big_m_time_3x_warm_start_makespan",
+            "slot_time_ub_source": str(slot_time_ub_source),
             "route_big_m": float(route_big_m),
             "route_big_m_source": source,
             "warm_makespan": float(warm_makespan),
@@ -2968,8 +3027,8 @@ class GlobalXYZUSolver:
                 "u_knn_pruned_arc_count": 0,
                 "u_protected_arc_count": int(len(protected_arc_set)),
                 "u_pickup_neighbor_limit": int(limit),
+                "enable_route_delivery_pickup_neighbor_prune": bool(prune_delivery_pickup),
                 "u_route_start_node": int(route_start_node),
-                "u_transition_knn_prune_enabled": bool(prune_delivery_pickup),
             }
         pickup_successors_by_src: Dict[int, List[Tuple[float, int]]] = defaultdict(list)
         special_predecessors_by_pickup: Dict[int, List[Tuple[float, int]]] = defaultdict(list)
@@ -2985,19 +3044,26 @@ class GlobalXYZUSolver:
                     special_predecessors_by_pickup[int(j)].append((travel, int(i)))
                 continue
 
-            # 2. Depot transitions and delivery/end destinations are part of
-            # the route skeleton.  Delivery->pickup transitions can optionally
-            # enter the protected KNN pool; warm-start arcs are already retained
-            # unconditionally above.
-            if str(src.kind) == "start" or str(dst.kind) in {"delivery", "end"}:
+            if (
+                bool(prune_delivery_pickup)
+                and str(src.kind) == "delivery"
+                and str(dst.kind) == "pickup"
+            ):
+                if int(getattr(src, "station_id", -1)) == int(getattr(dst, "station_id", -2)):
+                    kept.add((int(i), int(j)))
+                    special_predecessors_by_pickup[int(j)].append((float(route_tau.get((int(i), int(j)), float("inf"))), int(i)))
+                    continue
+                travel = float(route_tau.get((int(i), int(j)), float("inf")))
+                pickup_successors_by_src[int(i)].append((travel, int(j)))
+                special_predecessors_by_pickup[int(j)].append((travel, int(i)))
+                continue
+
+            # 2. Depot/Delivery transitions are part of the route skeleton.
+            # By default only pickup->pickup arcs are KNN-pruned; delivery->pickup
+            # arcs can be pruned by an explicit M-suite calibration switch.
+            if str(src.kind) in {"start", "delivery"} or str(dst.kind) in {"delivery", "end"}:
                 kept.add((int(i), int(j)))
                 if str(dst.kind) == "pickup" and str(src.kind) in {"start", "delivery"}:
-                    travel = float(route_tau.get((int(i), int(j)), float("inf")))
-                    special_predecessors_by_pickup[int(j)].append((travel, int(i)))
-                continue
-            if str(src.kind) == "delivery" and not bool(prune_delivery_pickup):
-                kept.add((int(i), int(j)))
-                if str(dst.kind) == "pickup":
                     travel = float(route_tau.get((int(i), int(j)), float("inf")))
                     special_predecessors_by_pickup[int(j)].append((travel, int(i)))
                 continue
@@ -3013,9 +3079,7 @@ class GlobalXYZUSolver:
                 kept.add((int(i), int(j)))
                 continue
 
-            # 4. Cross-slot pickup transitions enter the KNN pool.  When the
-            # transition profile is enabled, this also includes delivery->pickup
-            # arcs, which dominate M8/M9 route size.
+            # 4. Cross-slot Pickup->Pickup arcs enter the KNN pool to avoid topology explosion.
             if str(dst.kind) == "pickup":
                 travel = float(route_tau.get((int(i), int(j)), float("inf")))
                 pickup_successors_by_src[int(i)].append((travel, int(j)))
@@ -3057,6 +3121,12 @@ class GlobalXYZUSolver:
             for _, dst_id in rows[:limit]:
                 kept.add((int(src_id), int(dst_id)))
 
+        if bool(prune_delivery_pickup):
+            for node_id, rows in special_predecessors_by_pickup.items():
+                rows.sort(key=lambda row: (float(row[0]), int(row[1])))
+                for _, src_id in rows[:limit]:
+                    kept.add((int(src_id), int(node_id)))
+
         for node_id, node in route_nodes.items():
             if str(getattr(node, "kind", "")) != "pickup":
                 continue
@@ -3080,8 +3150,8 @@ class GlobalXYZUSolver:
             "u_knn_pruned_arc_count": int(max(0, len(route_arcs) - len(pruned_route_arcs))),
             "u_protected_arc_count": int(len(protected_arc_set)),
             "u_pickup_neighbor_limit": int(limit),
+            "enable_route_delivery_pickup_neighbor_prune": bool(prune_delivery_pickup),
             "u_route_start_node": int(route_start_node),
-            "u_transition_knn_prune_enabled": bool(prune_delivery_pickup),
         }
 
     @staticmethod
@@ -3448,7 +3518,6 @@ class GlobalXYZUSolver:
             "warm_protected_route_arc_count_original": 0,
             "warm_protected_route_arc_count_repaired": 0,
             "warm_protected_route_arc_count_envelope": 0,
-            "warm_protected_route_arc_count_global_envelope": 0,
             "warm_protected_route_arc_count_total": 0,
             "warm_protected_route_prefix_normalized": False,
             "warm_protected_route_prefix_id_map": {},
@@ -3507,30 +3576,13 @@ class GlobalXYZUSolver:
             return 0.0, max(1, int(len(target_totes or hit_totes or [])))
 
         for order_id, slot_ids in slot_ids_by_order.items():
-            # Use the exact same canonical slot projection as _apply_warm_start.
-            # Mapping sorted subtasks directly to slots diverges when the
-            # non-empty profile repair reorders or moves a donor profile.
-            profiles = self._canonical_warm_slot_profiles(
-                order_id=int(order_id),
-                warm_rows=list(warm.subtask_by_order.get(int(order_id), [])),
-                slot_ids=list(slot_ids or []),
-                units_by_order_sku=prepared.get("units_by_order_sku", {}),
-                tote_sku_qty=prepared.get("tote_sku_qty", {}),
-            )
-            profiles, _profile_repair_diag = self._repair_nonempty_warm_slot_profiles(
-                order_id=int(order_id),
-                profiles=profiles,
-                units_by_order_sku=prepared.get("units_by_order_sku", {}),
-                demand_hit_totes_by_order=prepared.get("demand_hit_totes_by_order", {}),
-                tote_to_stack=prepared.get("tote_to_stack", {}),
-                tote_sku_qty=prepared.get("tote_sku_qty", {}),
-            )
-            for profile in profiles:
-                if int(profile.get("start_load", 0) or 0) <= 0:
-                    continue
-                st = profile["subtask"]
-                slot_id = int(profile["slot_id"])
-                station_id = int(profile.get("station_id", -1))
+            rows = list(warm.subtask_by_order.get(int(order_id), []))
+            rows.sort(key=lambda row: int(getattr(row, "id", -1)))
+            for idx, st in enumerate(rows):
+                if idx >= len(slot_ids):
+                    break
+                slot_id = int(slot_ids[idx])
+                station_id = int(getattr(st, "assigned_station_id", -1))
                 for task in getattr(st, "execution_tasks", []) or []:
                     stack_id = int(getattr(task, "target_stack_id", -1))
                     route_key = int(route_task_by_tuple.get((slot_id, stack_id, station_id), -1))
@@ -3679,30 +3731,8 @@ class GlobalXYZUSolver:
                     ]:
                         if int(arc[0]) != int(arc[1]) and arc in route_tau:
                             envelope_arcs.add(arc)
-        # Duplicate-tote filtering and list-scheduling repair can move a warm
-        # task to another robot after this early protection pass.  Protect the
-        # transition envelope across every warm-selected task, independent of
-        # its provisional robot id, so the later exact warm-start rebuild cannot
-        # introduce an unprotected delivery->pickup arc.
-        global_task_specs = [
-            route_tasks[int(route_key)]
-            for route_key in sorted({int(row.get("route_key", -1)) for row in envelope_rows})
-            if int(route_key) in route_tasks
-        ]
-        global_envelope_arcs: Set[Tuple[int, int]] = set()
-        for prev_spec in global_task_specs:
-            for next_spec in global_task_specs:
-                for arc in [
-                    (int(prev_spec.pickup_node), int(next_spec.pickup_node)),
-                    (int(prev_spec.delivery_node), int(next_spec.delivery_node)),
-                    (int(prev_spec.delivery_node), int(next_spec.pickup_node)),
-                ]:
-                    if int(arc[0]) != int(arc[1]) and arc in route_tau:
-                        global_envelope_arcs.add(arc)
-        envelope_arcs.update(global_envelope_arcs)
         protected_arcs.update(envelope_arcs)
         diagnostics["warm_protected_route_arc_count_envelope"] = int(len(envelope_arcs))
-        diagnostics["warm_protected_route_arc_count_global_envelope"] = int(len(global_envelope_arcs))
         # Protect every warm-start arc that could be reconstructed, even when a
         # later arc fails. Returning an empty set here lets KNN pruning remove
         # earlier valid warm arcs, which then makes _apply_warm_start fail on a
@@ -3892,6 +3922,170 @@ class GlobalXYZUSolver:
         }
 
     @staticmethod
+    def _project_warm_slot_profiles_to_route_stations(
+        *,
+        profiles: Sequence[Dict[str, Any]],
+        route_task_by_tuple: Dict[Tuple[int, int, int], int],
+        station_ids: Sequence[int],
+        stack_station_dist: Dict[Tuple[int, int], float],
+        tote_sku_qty: Dict[Tuple[int, int], int],
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        projected_profiles: List[Dict[str, Any]] = []
+        diagnostics: Dict[str, Any] = {
+            "warm_start_station_projection_enabled": True,
+            "warm_start_station_projection_changed_count": 0,
+            "warm_start_station_projection_partial_count": 0,
+            "warm_start_station_projection_dropped_profile_count": 0,
+            "warm_start_station_projection_dropped_stack_count": 0,
+            "warm_start_station_projection_missing_stack_count": 0,
+            "warm_start_station_projection_skipped_order_count": 0,
+            "warm_start_station_projection_skipped_order_ids": [],
+            "warm_start_station_projection_rows": [],
+        }
+        normalized_station_ids = [int(station_id) for station_id in station_ids]
+        sku_ids_by_tote: Dict[int, Set[int]] = defaultdict(set)
+        for (tote_id, sku_id), qty in dict(tote_sku_qty or {}).items():
+            if int(qty) > 0:
+                sku_ids_by_tote[int(tote_id)].add(int(sku_id))
+
+        for raw_profile in list(profiles or []):
+            row = dict(raw_profile or {})
+            slot_id = int(row.get("slot_id", -1))
+            original_station_id = int(row.get("station_id", -1))
+            st = row.get("subtask")
+            stack_ids: List[int] = []
+            hit_skus_by_stack: Dict[int, Set[int]] = defaultdict(set)
+            for task in list(getattr(st, "execution_tasks", []) or []):
+                stack_id = int(getattr(task, "target_stack_id", -1))
+                if stack_id < 0:
+                    continue
+                stack_ids.append(int(stack_id))
+                tote_ids = list(getattr(task, "hit_tote_ids", []) or []) or list(getattr(task, "target_tote_ids", []) or [])
+                for tote_id in tote_ids:
+                    hit_skus_by_stack[int(stack_id)].update(sku_ids_by_tote.get(int(tote_id), set()))
+            repair_seed = row.get("repair_seed")
+            if isinstance(repair_seed, dict):
+                repair_stack_id = int(repair_seed.get("stack_id", -1))
+                repair_sku_id = int(repair_seed.get("sku_id", -1))
+                if repair_stack_id >= 0:
+                    stack_ids.append(int(repair_stack_id))
+                    if repair_sku_id >= 0:
+                        hit_skus_by_stack[int(repair_stack_id)].add(int(repair_sku_id))
+            stack_ids = sorted(set(int(stack_id) for stack_id in stack_ids if int(stack_id) >= 0))
+            if slot_id < 0 or not stack_ids:
+                projected_profiles.append(row)
+                continue
+
+            legal_stations_by_stack: Dict[int, Set[int]] = {}
+            for stack_id in stack_ids:
+                legal_stations = {
+                    int(station_id)
+                    for station_id in normalized_station_ids
+                    if (int(slot_id), int(stack_id), int(station_id)) in route_task_by_tuple
+                }
+                if not legal_stations:
+                    diagnostics["warm_start_station_projection_missing_stack_count"] = (
+                        int(diagnostics["warm_start_station_projection_missing_stack_count"]) + 1
+                    )
+                legal_stations_by_stack[int(stack_id)] = legal_stations
+
+            common_station_ids: Set[int] = set(normalized_station_ids)
+            for stack_id in stack_ids:
+                common_station_ids &= set(legal_stations_by_stack.get(int(stack_id), set()))
+
+            partial = False
+            if common_station_ids:
+                if original_station_id in common_station_ids:
+                    projected_station_id = int(original_station_id)
+                else:
+                    projected_station_id = min(
+                        common_station_ids,
+                        key=lambda station_id: (
+                            sum(float(stack_station_dist.get((int(stack_id), int(station_id)), 0.0) or 0.0) for stack_id in stack_ids),
+                            int(station_id),
+                        ),
+                    )
+                allowed_stack_ids = set(stack_ids)
+            else:
+                station_candidates: List[Tuple[int, float, int, List[int]]] = []
+                for station_id in normalized_station_ids:
+                    compatible_stack_ids = [
+                        int(stack_id)
+                        for stack_id in stack_ids
+                        if int(station_id) in legal_stations_by_stack.get(int(stack_id), set())
+                    ]
+                    if not compatible_stack_ids:
+                        continue
+                    distance_sum = sum(
+                        float(stack_station_dist.get((int(stack_id), int(station_id)), 0.0) or 0.0)
+                        for stack_id in compatible_stack_ids
+                    )
+                    station_candidates.append((-len(compatible_stack_ids), float(distance_sum), int(station_id), compatible_stack_ids))
+                if not station_candidates:
+                    row["start_sku_ids"] = []
+                    row["start_load"] = 0
+                    row["warm_station_projection_dropped"] = True
+                    diagnostics["warm_start_station_projection_dropped_profile_count"] = (
+                        int(diagnostics["warm_start_station_projection_dropped_profile_count"]) + 1
+                    )
+                    projected_profiles.append(row)
+                    continue
+                _neg_count, _distance_sum, projected_station_id, compatible_stack_ids = min(station_candidates)
+                allowed_stack_ids = set(int(stack_id) for stack_id in compatible_stack_ids)
+                partial = True
+                dropped_stack_count = len(set(stack_ids) - allowed_stack_ids)
+                diagnostics["warm_start_station_projection_partial_count"] = (
+                    int(diagnostics["warm_start_station_projection_partial_count"]) + 1
+                )
+                diagnostics["warm_start_station_projection_dropped_stack_count"] = (
+                    int(diagnostics["warm_start_station_projection_dropped_stack_count"]) + int(dropped_stack_count)
+                )
+
+            original_start_skus = {int(sku_id) for sku_id in list(row.get("start_sku_ids", []) or [])}
+            allowed_hit_skus: Set[int] = set()
+            for stack_id in allowed_stack_ids:
+                allowed_hit_skus.update(hit_skus_by_stack.get(int(stack_id), set()))
+            projected_start_skus = sorted(int(sku_id) for sku_id in original_start_skus if int(sku_id) in allowed_hit_skus)
+            if original_start_skus and not projected_start_skus:
+                row["start_sku_ids"] = []
+                row["start_load"] = 0
+                row["warm_station_projection_dropped"] = True
+                diagnostics["warm_start_station_projection_dropped_profile_count"] = (
+                    int(diagnostics["warm_start_station_projection_dropped_profile_count"]) + 1
+                )
+                projected_profiles.append(row)
+                continue
+
+            row["station_id"] = int(projected_station_id)
+            row["rank"] = 0
+            row["start_sku_ids"] = projected_start_skus
+            row["start_load"] = int(len(projected_start_skus))
+            row["warm_project_allowed_stack_ids"] = sorted(int(stack_id) for stack_id in allowed_stack_ids)
+            row["warm_station_original_id"] = int(original_station_id)
+            row["warm_station_projected"] = bool(partial or int(projected_station_id) != int(original_station_id))
+            row["warm_station_projection_partial"] = bool(partial)
+            if bool(row["warm_station_projected"]):
+                diagnostics["warm_start_station_projection_changed_count"] = (
+                    int(diagnostics["warm_start_station_projection_changed_count"]) + 1
+                )
+                rows = list(diagnostics.get("warm_start_station_projection_rows", []) or [])
+                if len(rows) < 100:
+                    rows.append(
+                        {
+                            "slot_id": int(slot_id),
+                            "original_station_id": int(original_station_id),
+                            "projected_station_id": int(projected_station_id),
+                            "stack_ids": [int(stack_id) for stack_id in stack_ids],
+                            "allowed_stack_ids": [int(stack_id) for stack_id in sorted(allowed_stack_ids)],
+                            "partial": bool(partial),
+                        }
+                    )
+                    diagnostics["warm_start_station_projection_rows"] = rows
+            projected_profiles.append(row)
+
+        return projected_profiles, diagnostics
+
+    @staticmethod
     def _lex_aware_station_rank_rows(
         *,
         active_slot_rows: Sequence[Tuple[int, int, int]],
@@ -3951,19 +4145,33 @@ class GlobalXYZUSolver:
     ) -> Dict[str, Any]:
         load_violations: List[Dict[str, Any]] = []
         station_violations: List[Dict[str, Any]] = []
+        sku_signature_violations: List[Dict[str, Any]] = []
         rows: List[Dict[str, Any]] = []
         station_rank_weight = max(1, int(max_rank) + 1)
 
-        def _slot_load(order_id: int, slot_id: int) -> int:
-            return int(
+        def _slot_sku_stats(order_id: int, slot_id: int) -> Tuple[int, int, int]:
+            ordered_sku_ids = sorted(int(sku_id) for sku_id in list(unique_skus_by_order.get(int(order_id), []) or []))
+            load_value = int(
                 round(
                     sum(
                         cls._safe_start_value(sku_use[int(order_id), int(sku_id), int(slot_id)])
-                        for sku_id in list(unique_skus_by_order.get(int(order_id), []) or [])
+                        for sku_id in ordered_sku_ids
                         if (int(order_id), int(sku_id), int(slot_id)) in sku_use
                     )
                 )
             )
+            signature = int(
+                round(
+                    sum(
+                        int(pos + 1) * cls._safe_start_value(sku_use[int(order_id), int(sku_id), int(slot_id)])
+                        for pos, sku_id in enumerate(ordered_sku_ids)
+                        if (int(order_id), int(sku_id), int(slot_id)) in sku_use
+                    )
+                )
+            )
+            signature_base = int((len(ordered_sku_ids) * (len(ordered_sku_ids) + 1)) // 2 + 1)
+            composite = int(signature_base * load_value + signature)
+            return int(load_value), int(signature), int(composite)
 
         def _station_rank_code(slot_id: int) -> int:
             code = 0
@@ -3979,13 +4187,15 @@ class GlobalXYZUSolver:
             slot_rows: List[Dict[str, Any]] = []
             for slot_id in slot_ids:
                 active = int(round(cls._safe_start_value(a[int(slot_id)]))) if int(slot_id) in a else 0
-                load = _slot_load(int(order_id), int(slot_id))
+                load, sku_signature, sku_signature_composite = _slot_sku_stats(int(order_id), int(slot_id))
                 code = _station_rank_code(int(slot_id))
                 row = {
                     "order_id": int(order_id),
                     "slot_id": int(slot_id),
                     "active": int(active),
                     "load": int(load),
+                    "sku_signature": int(sku_signature),
+                    "sku_signature_composite": int(sku_signature_composite),
                     "station_rank_code": int(code),
                 }
                 slot_rows.append(row)
@@ -4014,12 +4224,28 @@ class GlobalXYZUSolver:
                             "right_station_rank_code": int(right["station_rank_code"]),
                         }
                     )
+                if int(left["sku_signature_composite"]) < int(right["sku_signature_composite"]):
+                    sku_signature_violations.append(
+                        {
+                            "order_id": int(order_id),
+                            "left_slot_id": int(left["slot_id"]),
+                            "right_slot_id": int(right["slot_id"]),
+                            "left_composite": int(left["sku_signature_composite"]),
+                            "right_composite": int(right["sku_signature_composite"]),
+                            "left_load": int(left["load"]),
+                            "right_load": int(right["load"]),
+                            "left_sku_signature": int(left["sku_signature"]),
+                            "right_sku_signature": int(right["sku_signature"]),
+                        }
+                    )
         return {
             "warm_start_slot_lex_checked": True,
             "warm_start_slot_load_lex_violation_count": int(len(load_violations)),
             "warm_start_slot_station_lex_violation_count": int(len(station_violations)),
+            "warm_start_slot_sku_signature_lex_violation_count": int(len(sku_signature_violations)),
             "warm_start_slot_load_lex_violations": load_violations[:50],
             "warm_start_slot_station_lex_violations": station_violations[:50],
+            "warm_start_slot_sku_signature_lex_violations": sku_signature_violations[:50],
             "warm_start_slot_lex_rows": rows[:200],
         }
 
@@ -4401,21 +4627,6 @@ class GlobalXYZUSolver:
                 int(order_id): int(len(list(tote_ids or [])))
                 for order_id, tote_ids in dict(support_totes_by_order or {}).items()
             },
-            "candidate_sku_shortfall_by_order": {
-                int(order_id): {int(sku_id): int(qty) for sku_id, qty in dict(rows or {}).items()}
-                for order_id, rows in dict(prepared.get("candidate_sku_shortfall_by_order", {}) or {}).items()
-            },
-            "candidate_warm_stack_missing_by_order": {
-                int(order_id): [int(stack_id) for stack_id in list(rows or [])]
-                for order_id, rows in dict(prepared.get("candidate_warm_stack_missing_by_order", {}) or {}).items()
-            },
-            "safe_prune_inventory_coverage_ok": bool(
-                not any(dict(rows or {}) for rows in dict(prepared.get("candidate_sku_shortfall_by_order", {}) or {}).values())
-            ),
-            "safe_prune_warm_stack_coverage_ok": bool(
-                not any(list(rows or []) for rows in dict(prepared.get("candidate_warm_stack_missing_by_order", {}) or {}).values())
-            ),
-            "enforce_safe_prune_audit": bool(getattr(cfg, "enforce_safe_prune_audit", False)),
             "u_legal_arc_count_before_knn": 0,
             "u_arc_count_after_knn": 0,
             "u_knn_pruned_arc_count": 0,
@@ -4542,13 +4753,6 @@ class GlobalXYZUSolver:
         finish = model.addVars([int(slot.slot_id) for slot in slots], lb=0.0, vtype=GRB.CONTINUOUS, name="finish")
         cmax_vtype = GRB.INTEGER if bool(getattr(cfg, "integer_cmax", False)) else GRB.CONTINUOUS
         cmax = model.addVar(lb=0.0, vtype=cmax_vtype, name="Cmax")
-        warm_incumbent_cmax_bound = float(getattr(prepared.get("warm"), "makespan", 0.0) or 0.0)
-        if bool(getattr(cfg, "enable_warm_incumbent_cmax_bound", False)):
-            if warm_incumbent_cmax_bound <= 0.0:
-                if bool(getattr(cfg, "enforce_safe_prune_audit", False)):
-                    raise ValueError("safe incumbent Cmax bound requested without a positive warm makespan")
-            else:
-                model.addConstr(cmax <= float(warm_incumbent_cmax_bound), name="WarmIncumbentCmaxUB")
         station_arrival_clock = None
         station_finish_clock = None
         order_arrival_lb = None
@@ -4584,6 +4788,18 @@ class GlobalXYZUSolver:
         station_candidate_pruned_count = 0
         route_task_count_before_station_prune = 0
         route_task_count_after_station_prune = 0
+        station_candidate_warm_protected_count = 0
+        station_candidate_warm_excluded_count = 0
+        slot_specific_warm_station_protection_count = 0
+        master_domain = dict(getattr(cfg, "master_domain_manifest", None) or {})
+        master_domain_strict = bool(getattr(cfg, "master_domain_strict", False))
+        master_route_task_tuples = {
+            (int(value[0]), int(value[1]), int(value[2]))
+            for value in list(master_domain.get("route_task_tuples", []) or [])
+        }
+        master_station_ids_by_slot_stack: Dict[Tuple[int, int], Set[int]] = defaultdict(set)
+        for slot_id, stack_id, station_id in master_route_task_tuples:
+            master_station_ids_by_slot_stack[(int(slot_id), int(stack_id))].add(int(station_id))
 
         if integrate_u_route:
             # U 预处理：使用统一 depot 起终点，坐标来自第一个机器人的 start_point。
@@ -4616,7 +4832,34 @@ class GlobalXYZUSolver:
                 (int(order_id), int(stack_id)): {int(v) for v in station_values}
                 for (order_id, stack_id), station_values in dict(prepared.get("warm_station_ids_by_order_stack", {}) or {}).items()
             }
+            slot_specific_warm_station = bool(getattr(cfg, "enable_slot_specific_warm_station_protection", False))
+            warm_station_ids_by_slot_stack: Dict[Tuple[int, int], Set[int]] = defaultdict(set)
+            if slot_specific_warm_station:
+                warm_state = prepared.get("warm") or self._warm_start
+                warm_subtask_by_order = getattr(warm_state, "subtask_by_order", {}) if warm_state is not None else {}
+                for order_id, slot_ids in slot_ids_by_order.items():
+                    profiles = self._canonical_warm_slot_profiles(
+                        order_id=int(order_id),
+                        warm_rows=list(warm_subtask_by_order.get(int(order_id), [])),
+                        slot_ids=list(slot_ids or []),
+                        units_by_order_sku=units_by_order_sku,
+                        tote_sku_qty=tote_sku_qty,
+                    )
+                    for profile in profiles:
+                        slot_id = int(profile.get("slot_id", -1))
+                        station_id = int(profile.get("station_id", -1))
+                        if slot_id < 0 or station_id < 0:
+                            continue
+                        st = profile.get("subtask")
+                        for task in list(getattr(st, "execution_tasks", []) or []):
+                            stack_id = int(getattr(task, "target_stack_id", -1))
+                            if stack_id >= 0:
+                                warm_station_ids_by_slot_stack[(int(slot_id), int(stack_id))].add(int(station_id))
+                slot_specific_warm_station_protection_count = int(
+                    sum(len(values) for values in warm_station_ids_by_slot_stack.values())
+                )
             station_topk = max(0, int(getattr(cfg, "candidate_station_topk_per_stack", 0) or 0))
+            hard_station_topk = bool(getattr(cfg, "enable_hard_station_topk", False))
             for slot in slots:
                 sid = int(slot.slot_id)
                 for stack_id in candidate_stacks_by_order.get(int(slot.order_id), []):
@@ -4626,8 +4869,15 @@ class GlobalXYZUSolver:
                         continue
                     route_task_count_before_station_prune += int(len(station_ids))
                     allowed_station_ids = [int(station_id) for station_id in station_ids]
-                    if station_topk > 0:
-                        warm_station_ids = set(warm_station_ids_by_order_stack.get((int(slot.order_id), int(stack_id)), set()))
+                    if master_domain:
+                        allowed_station_ids = sorted(
+                            master_station_ids_by_slot_stack.get((int(sid), int(stack_id)), set())
+                        )
+                    elif station_topk > 0:
+                        if slot_specific_warm_station:
+                            warm_station_ids = set(warm_station_ids_by_slot_stack.get((int(sid), int(stack_id)), set()))
+                        else:
+                            warm_station_ids = set(warm_station_ids_by_order_stack.get((int(slot.order_id), int(stack_id)), set()))
                         ranked_station_ids = sorted(
                             allowed_station_ids,
                             key=lambda station_id: (
@@ -4635,7 +4885,13 @@ class GlobalXYZUSolver:
                                 int(station_id),
                             ),
                         )
-                        chosen_station_ids = set(ranked_station_ids[:station_topk]) | warm_station_ids
+                        nearest_station_ids = set(ranked_station_ids[:station_topk])
+                        if hard_station_topk:
+                            chosen_station_ids = set(nearest_station_ids)
+                            station_candidate_warm_excluded_count += len(set(warm_station_ids) - set(chosen_station_ids))
+                        else:
+                            chosen_station_ids = set(nearest_station_ids) | set(warm_station_ids)
+                            station_candidate_warm_protected_count += len(set(chosen_station_ids) - set(nearest_station_ids))
                         allowed_station_ids = [
                             int(station_id)
                             for station_id in ranked_station_ids
@@ -4688,6 +4944,15 @@ class GlobalXYZUSolver:
                             -1,
                         )
                         route_service_node_ids.extend([int(p_node), int(d_node)])
+
+            if master_domain_strict:
+                actual_route_task_tuples = set(route_task_by_tuple.keys())
+                if actual_route_task_tuples != master_route_task_tuples:
+                    missing = sorted(master_route_task_tuples - actual_route_task_tuples)
+                    extra = sorted(actual_route_task_tuples - master_route_task_tuples)
+                    raise MasterDomainError(
+                        f"master route-task domain mismatch: missing={missing[:10]}, extra={extra[:10]}"
+                    )
 
             def _route_travel_time(i: int, j: int) -> float:
                 # 路由时间采用仓库坐标曼哈顿距离 / 机器人速度。
@@ -4753,8 +5018,6 @@ class GlobalXYZUSolver:
             cfg_slot_time_ub = float(getattr(cfg, "big_m_time", 0.0) or 0.0)
             warm_slot_time_ub = 3.0 * warm_makespan_for_prune if warm_makespan_for_prune > 0.0 else 0.0
             route_prune_slot_time_ub = max(float(cfg_slot_time_ub), float(warm_slot_time_ub))
-            if bool(getattr(cfg, "enable_warm_incumbent_cmax_bound", False)) and warm_makespan_for_prune > 0.0:
-                route_prune_slot_time_ub = min(float(route_prune_slot_time_ub), float(warm_makespan_for_prune))
             route_prune_slot_time_ub = max(1.0, float(route_prune_slot_time_ub))
 
             fixed_route_arcs_for_legalization, fixed_route_legalization_diag = self._fixed_route_arcs_from_cfg(
@@ -4897,15 +5160,19 @@ class GlobalXYZUSolver:
                 if bool(warm_bound_needed)
                 else {"ok": False, "reason": "skipped_no_route_prune", "model_cmax": 0.0}
             )
-            if (
-                not bool(getattr(cfg, "enable_warm_incumbent_cmax_bound", False))
-                and bool(warm_prune_bound_diag.get("ok", False))
-                and float(warm_prune_bound_diag.get("model_cmax", 0.0) or 0.0) > 0.0
-            ):
-                route_prune_slot_time_ub = max(
-                    float(route_prune_slot_time_ub),
-                    float(warm_prune_bound_diag.get("model_cmax", 0.0) or 0.0),
-                )
+            if bool(warm_prune_bound_diag.get("ok", False)) and float(warm_prune_bound_diag.get("model_cmax", 0.0) or 0.0) > 0.0:
+                warm_prune_model_cmax = float(warm_prune_bound_diag.get("model_cmax", 0.0) or 0.0)
+                if bool(getattr(cfg, "enable_warm_route_time_upper_bound", False)):
+                    route_prune_slot_time_ub = min(
+                        float(route_prune_slot_time_ub),
+                        warm_prune_model_cmax
+                        + max(0.0, float(getattr(cfg, "warm_route_time_upper_bound_margin_sec", 0.0) or 0.0)),
+                    )
+                else:
+                    route_prune_slot_time_ub = max(
+                        float(route_prune_slot_time_ub),
+                        warm_prune_model_cmax,
+                    )
             required_route_arcs = {
                 (int(spec.pickup_node), int(spec.delivery_node))
                 for spec in route_tasks.values()
@@ -4926,6 +5193,42 @@ class GlobalXYZUSolver:
             protected_route_arcs = set(protected_route_arcs) | required_route_arcs
             protected_route_arcs.update(fixed_route_arcs_from_sequence)
             protected_route_arcs.update(extra_protected_route_arcs)
+            master_route_arcs = {
+                (int(value[0]), int(value[1]))
+                for value in list(master_domain.get("route_arcs", []) or [])
+            }
+            master_protected_route_arcs = {
+                (int(value[0]), int(value[1]))
+                for value in list(master_domain.get("protected_route_arcs", []) or [])
+            }
+            if master_domain:
+                rebuilt_master_arc_count = 0
+                unknown_master_arcs = []
+                for arc in sorted(master_route_arcs - set(route_tau.keys())):
+                    source, target = int(arc[0]), int(arc[1])
+                    source_node = route_nodes.get(source)
+                    target_node = route_nodes.get(target)
+                    if (
+                        source_node is None
+                        or target_node is None
+                        or source == target
+                        or str(getattr(source_node, "kind", "")) == "end"
+                        or str(getattr(target_node, "kind", "")) == "start"
+                    ):
+                        unknown_master_arcs.append((source, target))
+                        continue
+                    route_tau[(source, target)] = _route_travel_time(source, target)
+                    rebuilt_master_arc_count += 1
+                if unknown_master_arcs:
+                    raise MasterDomainError(
+                        f"master domain contains unavailable route arcs: {unknown_master_arcs[:10]}"
+                    )
+                if not master_protected_route_arcs.issubset(master_route_arcs):
+                    raise MasterDomainError("master protected route arcs are not a subset of master route arcs")
+                protected_route_arcs.update(master_protected_route_arcs)
+                time_big_m_diagnostics["master_domain_rebuilt_route_arc_count"] = int(
+                    rebuilt_master_arc_count
+                )
             resource_prune_enabled = bool(
                 getattr(cfg, "enable_route_time_window_arc_prune", True)
                 or getattr(cfg, "enable_route_load_interval_arc_prune", True)
@@ -4986,24 +5289,11 @@ class GlobalXYZUSolver:
                 route_start_node=min(route_start_nodes.values(), default=0),
                 pickup_neighbor_limit=int(getattr(cfg, "route_pickup_neighbor_limit", 0) or 0),
                 protected_arcs=protected_route_arcs,
-                prune_delivery_pickup=bool(getattr(cfg, "enable_route_transition_knn_prune", False)),
+                prune_delivery_pickup=bool(getattr(cfg, "enable_route_delivery_pickup_neighbor_prune", False)),
             )
-            legal_route_arc_set = {(int(i), int(j)) for i, j in legal_route_arcs}
-            final_route_arc_set = {(int(i), int(j)) for i, j in route_arcs}
-            expected_protected_route_arcs = {
-                (int(i), int(j))
-                for i, j in protected_route_arcs
-                if (int(i), int(j)) in legal_route_arc_set
-            }
-            missing_protected_route_arcs = sorted(expected_protected_route_arcs - final_route_arc_set)
-            route_arc_knn_diag["u_expected_protected_arc_count"] = int(len(expected_protected_route_arcs))
-            route_arc_knn_diag["u_missing_protected_arc_count"] = int(len(missing_protected_route_arcs))
-            route_arc_knn_diag["u_safe_prune_route_coverage_ok"] = bool(not missing_protected_route_arcs)
-            if bool(getattr(cfg, "enforce_safe_prune_audit", False)) and missing_protected_route_arcs:
-                raise ValueError(
-                    "safe route pruning removed protected arcs: "
-                    f"count={len(missing_protected_route_arcs)}, sample={missing_protected_route_arcs[:8]}"
-                )
+            if master_domain:
+                route_arcs = sorted(master_route_arcs)
+                protected_route_arcs = set(master_protected_route_arcs)
             route_tau = {
                 (int(i), int(j)): float(route_tau[(int(i), int(j))])
                 for i, j in route_arcs
@@ -5064,10 +5354,19 @@ class GlobalXYZUSolver:
                 for k, v in dict(warm_prune_bound_diag.get("warm_order_finish_ub_by_order", {}) or {}).items()
             }
             time_big_m_diagnostics.update(route_arc_knn_diag)
+            time_big_m_diagnostics["master_domain_sha256"] = str(master_domain.get("manifest_sha256", ""))
+            time_big_m_diagnostics["master_domain_route_task_count"] = int(len(master_route_task_tuples))
+            time_big_m_diagnostics["master_domain_route_arc_count"] = int(len(master_route_arcs))
+            time_big_m_diagnostics["master_domain_protected_route_arc_count"] = int(
+                len(master_protected_route_arcs)
+            )
             time_big_m_diagnostics["u_capacity_pruned_pickup_pickup_arc_count"] = int(capacity_pruned_pickup_pickup_arc_count)
             time_big_m_diagnostics["route_task_count_before_station_prune"] = int(route_task_count_before_station_prune)
             time_big_m_diagnostics["route_task_count_after_station_prune"] = int(route_task_count_after_station_prune)
             time_big_m_diagnostics["station_candidate_pruned_count"] = int(station_candidate_pruned_count)
+            time_big_m_diagnostics["station_candidate_warm_protected_count"] = int(station_candidate_warm_protected_count)
+            time_big_m_diagnostics["station_candidate_warm_excluded_count"] = int(station_candidate_warm_excluded_count)
+            time_big_m_diagnostics["slot_specific_warm_station_protection_count"] = int(slot_specific_warm_station_protection_count)
             min_trip_travel_time = float(
                 min([float(v) for v in pickup_dist_lb_by_node.values() if float(v) > 0.0] + [0.0])
             )
@@ -5097,6 +5396,18 @@ class GlobalXYZUSolver:
             prepared=prepared,
             route_tasks=route_tasks,
         )
+        warm_route_time_ub_override: Optional[float] = None
+        if bool(getattr(cfg, "enable_warm_route_time_upper_bound", False)):
+            warm_time_candidates = [
+                float(time_big_m_diagnostics.get("route_time_window_prune_warm_model_cmax", 0.0) or 0.0),
+                float(time_big_m_diagnostics.get("route_time_window_prune_warm_station_rebuild_model_cmax", 0.0) or 0.0),
+            ]
+            warm_time_candidates = [value for value in warm_time_candidates if float(value) > 0.0]
+            if warm_time_candidates:
+                warm_route_time_ub_override = (
+                    min(float(value) for value in warm_time_candidates)
+                    + max(0.0, float(getattr(cfg, "warm_route_time_upper_bound_margin_sec", 0.0) or 0.0))
+                )
         slot_time_ub, route_big_m, dynamic_time_diagnostics = self._compute_dynamic_time_bounds(
             prepared=prepared,
             cfg=cfg,
@@ -5106,6 +5417,7 @@ class GlobalXYZUSolver:
             pickup_service_ub_by_node=pickup_service_ub_by_node,
             route_start_nodes=list(route_start_nodes.values()),
             route_end_nodes=list(route_end_nodes.values()),
+            slot_time_ub_override=warm_route_time_ub_override,
         )
         route_node_time_ub = {
             int(node_id): float(value)
@@ -5115,12 +5427,31 @@ class GlobalXYZUSolver:
             (int(i), int(j)): float(value)
             for (i, j), value in dict(dynamic_time_diagnostics.get("route_arc_time_m", {}) or {}).items()
         }
+        for sid in [int(slot.slot_id) for slot in slots]:
+            if sid in arrival:
+                arrival[sid].UB = float(slot_time_ub)
+            if sid in start:
+                start[sid].UB = float(slot_time_ub)
+            if sid in finish:
+                finish[sid].UB = float(slot_time_ub)
+        if route_time is not None:
+            for node_id in route_node_ids:
+                node_ub = float(route_node_time_ub.get(int(node_id), float(slot_time_ub)) or float(slot_time_ub))
+                route_time[int(node_id)].UB = max(0.0, float(node_ub))
+        if route_finish is not None:
+            for robot_id in robot_ids:
+                end_node = int(route_end_nodes.get(int(robot_id), -1))
+                if end_node >= 0:
+                    finish_ub = float(route_node_time_ub.get(int(end_node), float(slot_time_ub)) or float(slot_time_ub))
+                    route_finish[int(robot_id)].UB = max(0.0, float(finish_ub))
         base_model_diagnostics.update(dynamic_time_diagnostics)
+        base_model_diagnostics["enable_warm_route_time_upper_bound"] = bool(getattr(cfg, "enable_warm_route_time_upper_bound", False))
+        base_model_diagnostics["warm_route_time_upper_bound_override"] = float(warm_route_time_ub_override or 0.0)
         time_big_m_diagnostics = base_model_diagnostics
         order_ids = sorted(int(order_id) for order_id in slot_ids_by_order.keys())
         if station_ids and max_rank > 0:
-            station_arrival_clock = model.addVars(station_ids, range(max_rank), lb=0.0, vtype=GRB.CONTINUOUS, name="station_arrival_clock")
-            station_finish_clock = model.addVars(station_ids, range(max_rank), lb=0.0, vtype=GRB.CONTINUOUS, name="station_finish_clock")
+            station_arrival_clock = model.addVars(station_ids, range(max_rank), lb=0.0, ub=float(slot_time_ub), vtype=GRB.CONTINUOUS, name="station_arrival_clock")
+            station_finish_clock = model.addVars(station_ids, range(max_rank), lb=0.0, ub=float(slot_time_ub), vtype=GRB.CONTINUOUS, name="station_finish_clock")
         enable_order_time_windows = bool(getattr(cfg, "enable_order_time_windows", False))
         if enable_order_time_windows and order_ids:
             order_arrival_lb = model.addVars(order_ids, lb=0.0, vtype=GRB.CONTINUOUS, name="order_arrival_lb")
@@ -5132,14 +5463,17 @@ class GlobalXYZUSolver:
         robot_task_count_lex_count = 0
         robot_finish_lex_count = 0
         station_slot_count_lex_count = 0
+        station_slot_count_cap_count = 0
         station_global_lex_count = 0
         stack_equivalence_lex_count = 0
         slot_load_lex_count = 0
+        slot_sku_signature_lex_count = 0
         slot_station_lex_count = 0
         required_slot_active_lb_count = 0
         slot_min_pick_workload_lb_count = 0
         tote_equivalence_lex_count = 0
         global_routing_workload_cut_count = 0
+        station_load_lex_count = 0
 
         for unit in work_units:
             order_slots = slot_ids_by_order.get(int(unit.order_id), [])
@@ -5174,6 +5508,38 @@ class GlobalXYZUSolver:
                         name=f"SlotLoadLex_{order_id}_{idx}",
                     )
                     slot_load_lex_count += 1
+                if bool(getattr(cfg, "enable_slot_sku_signature_lex_symmetry", False)) and sku_ids:
+                    left_slot = int(slot_ids[idx])
+                    right_slot = int(slot_ids[idx + 1])
+                    ordered_sku_ids = sorted(int(sku_id) for sku_id in sku_ids)
+                    # Sort slots by (SKU-count, SKU-signature). The count term dominates,
+                    # so this refines slot symmetry without reversing load order.
+                    signature_base = float((len(ordered_sku_ids) * (len(ordered_sku_ids) + 1)) // 2 + 1)
+                    left_signature = (
+                        signature_base * gp.quicksum(
+                            sku_use[int(order_id), int(sku_id), left_slot]
+                            for sku_id in ordered_sku_ids
+                        )
+                        + gp.quicksum(
+                            float(pos + 1) * sku_use[int(order_id), int(sku_id), left_slot]
+                            for pos, sku_id in enumerate(ordered_sku_ids)
+                        )
+                    )
+                    right_signature = (
+                        signature_base * gp.quicksum(
+                            sku_use[int(order_id), int(sku_id), right_slot]
+                            for sku_id in ordered_sku_ids
+                        )
+                        + gp.quicksum(
+                            float(pos + 1) * sku_use[int(order_id), int(sku_id), right_slot]
+                            for pos, sku_id in enumerate(ordered_sku_ids)
+                        )
+                    )
+                    model.addConstr(
+                        left_signature >= right_signature,
+                        name=f"SlotSkuSignatureLex_{int(order_id)}_{idx}",
+                    )
+                    slot_sku_signature_lex_count += 1
             required_active_count = int(math.ceil(float(len(sku_ids)) / max(1, int(cap_limit)))) if sku_ids else 0
             if required_active_count >= len(slot_ids) and slot_ids:
                 for slot_id in slot_ids:
@@ -5246,6 +5612,18 @@ class GlobalXYZUSolver:
                     slot_station_lex_count += 1
 
         for station_id in station_ids:
+            station_slot_count_expr = gp.quicksum(
+                y[int(slot.slot_id), int(station_id), int(rank)]
+                for slot in slots
+                for rank in range(max_rank)
+            )
+            station_slot_count_cap = int(getattr(cfg, "station_slot_count_cap", 0) or 0)
+            if station_slot_count_cap > 0:
+                model.addConstr(
+                    station_slot_count_expr <= int(station_slot_count_cap),
+                    name=f"StationSlotCountCap_{station_id}",
+                )
+                station_slot_count_cap_count += 1
             for rank in range(max_rank):
                 model.addConstr(gp.quicksum(y[int(slot.slot_id), int(station_id), int(rank)] for slot in slots) <= 1, name=f"RankUnique_{station_id}_{rank}")
             for rank in range(max_rank - 1):
@@ -5349,13 +5727,28 @@ class GlobalXYZUSolver:
         global_arrival_workload_lb_count = 0
         route_service_sec_cut_count = 0
         route_arrival_slot_linear_count = 0
+        slot_pair_arrival_lb_count = 0
+        slot_sku_arrival_lb_count = 0
+        sku_release_workload_lb_count = 0
+        route_time_big_m_linear_count = 0
+        route_load_big_m_linear_count = 0
+        route_time_indicator_count = 0
+        route_load_indicator_count = 0
+        route_owner_indicator_count = 0
+        route_time_linear_count = 0
+        route_load_linear_count = 0
+        route_owner_linear_count = 0
         global_selected_route_workload_lb_count = 0
         global_selected_station_workload_lb_count = 0
         order_workload_lb_count = 0
         station_clock_linear_count = 0
         anchor_first_order_robot_count = 0
         sort_hit_tote_threshold_count = 0
+        station_rank_workload_lb_count = 0
         sort_hit_tote_threshold = max(0, int(getattr(cfg, "sort_hit_tote_threshold", 3) or 0))
+        route_constraint_mode = str(getattr(cfg, "route_constraint_mode", "indicator") or "indicator").strip().lower()
+        if route_constraint_mode not in {"indicator", "linear"}:
+            route_constraint_mode = "indicator"
 
         # -----------------------------
         # Z 层约束：模式选择、tote 携带/命中/noise 关系、需求覆盖和容量。
@@ -5624,6 +6017,53 @@ class GlobalXYZUSolver:
             + station_service_expr_by_slot[int(slot.slot_id)]
             for slot in slots
         )
+        if bool(getattr(cfg, "enable_station_rank_workload_lb", False)) and station_finish_clock is not None and station_ids and max_rank > 0:
+            station_rank_slot_workload = model.addVars(
+                [
+                    (int(slot.slot_id), int(station_id), int(rank))
+                    for slot in slots
+                    for station_id in station_ids
+                    for rank in range(max_rank)
+                ],
+                lb=0.0,
+                vtype=GRB.CONTINUOUS,
+                name="station_rank_slot_workload",
+            )
+            workload_big_m = float(slot_time_ub)
+            for slot in slots:
+                sid = int(slot.slot_id)
+                slot_workload_expr = (
+                    float(getattr(OFSConfig, "PICKING_TIME", 1.0)) * total_pick_qty_expr_by_slot[sid]
+                    + station_service_expr_by_slot[sid]
+                )
+                for station_id in station_ids:
+                    for rank in range(max_rank):
+                        w = station_rank_slot_workload[sid, int(station_id), int(rank)]
+                        y_var = y[sid, int(station_id), int(rank)]
+                        model.addConstr(
+                            w <= slot_workload_expr,
+                            name=f"StationRankSlotWorkloadProcUB_{sid}_{int(station_id)}_{rank}",
+                        )
+                        model.addConstr(
+                            w <= workload_big_m * y_var,
+                            name=f"StationRankSlotWorkloadAssignUB_{sid}_{int(station_id)}_{rank}",
+                        )
+                        model.addConstr(
+                            w >= slot_workload_expr - workload_big_m * (1 - y_var),
+                            name=f"StationRankSlotWorkloadAssignLB_{sid}_{int(station_id)}_{rank}",
+                        )
+            for station_id in station_ids:
+                for rank in range(max_rank):
+                    model.addConstr(
+                        station_finish_clock[int(station_id), int(rank)]
+                        >= gp.quicksum(
+                            station_rank_slot_workload[int(slot.slot_id), int(station_id), int(prev_rank)]
+                            for slot in slots
+                            for prev_rank in range(rank + 1)
+                        ),
+                        name=f"StationRankWorkloadPrefixLB_{int(station_id)}_{rank}",
+                    )
+                    station_rank_workload_lb_count += 1
         model.addConstr(cmax >= total_station_workload / max(1, len(station_ids)), name="Global_Station_Workload_Bound")
         if bool(getattr(cfg, "enable_selected_workload_lbs", True)):
             model.addConstr(cmax >= total_station_workload / max(1, len(station_ids)), name="GlobalSelectedStationWorkloadLB")
@@ -5839,6 +6279,29 @@ class GlobalXYZUSolver:
                             name=f"StationGlobalLex_{left}_{right}",
                         )
                         station_global_lex_count += 1
+            if bool(getattr(cfg, "enable_station_load_lex_symmetry", False)) and station_finish_clock is not None:
+                all_candidate_stack_ids = sorted({
+                    int(stack_id)
+                    for stack_ids in candidate_stacks_by_order.values()
+                    for stack_id in stack_ids
+                })
+                station_signature_groups: Dict[Tuple[float, ...], List[int]] = defaultdict(list)
+                for station_id in station_ids:
+                    signature = tuple(
+                        round(float(stack_station_dist.get((int(stack_id), int(station_id)), 0.0)), 6)
+                        for stack_id in all_candidate_stack_ids
+                    )
+                    station_signature_groups[signature].append(int(station_id))
+                final_rank = max(0, int(max_rank) - 1)
+                for group in station_signature_groups.values():
+                    ordered = sorted(int(v) for v in group)
+                    for left, right in zip(ordered, ordered[1:]):
+                        model.addConstr(
+                            station_finish_clock[int(left), final_rank]
+                            >= station_finish_clock[int(right), final_rank],
+                            name=f"StationLoadLex_{left}_{right}",
+                        )
+                        station_load_lex_count += 1
 
         if integrate_u_route and pass_x is not None and route_arc is not None and route_time is not None and route_load is not None:
             # -----------------------------
@@ -6047,6 +6510,43 @@ class GlobalXYZUSolver:
                             name=f"SlotArrivalAvgIntrinsicLB_{sid}",
                         )
                         slot_min_arrival_lb_count += 1
+                    if bool(getattr(cfg, "enable_slot_pair_arrival_lb", False)):
+                        for stack_id in candidate_stacks_by_order.get(int(slot.order_id), []):
+                            for station_id in station_ids:
+                                key = (sid, int(stack_id), int(station_id))
+                                value = float(delivery_intrinsic_lb_by_tuple.get(key, 0.0) or 0.0)
+                                if value <= 0.0 or key not in pair_activate:
+                                    continue
+                                model.addConstr(
+                                    arrival[sid] >= value * pair_activate[key],
+                                    name=f"SlotPairArrivalLB_{sid}_{int(stack_id)}_{int(station_id)}",
+                                )
+                                slot_pair_arrival_lb_count += 1
+                    if bool(getattr(cfg, "enable_slot_sku_arrival_lb", False)):
+                        order_id = int(slot.order_id)
+                        demand_hit_totes = demand_hit_totes_by_order.get(order_id, [])
+                        for sku_id in unique_skus_by_order.get(order_id, []):
+                            sku_stack_ids = {
+                                int(tote_to_stack.get(int(tote_id), -1))
+                                for tote_id in demand_hit_totes
+                                if int(tote_sku_qty.get((int(tote_id), int(sku_id)), 0) or 0) > 0
+                            }
+                            intrinsic_values_for_sku = []
+                            for stack_id in candidate_stacks_by_order.get(order_id, []):
+                                if int(stack_id) not in sku_stack_ids:
+                                    continue
+                                for station_id in station_ids:
+                                    key = (sid, int(stack_id), int(station_id))
+                                    value = float(delivery_intrinsic_lb_by_tuple.get(key, 0.0) or 0.0)
+                                    if value > 0.0:
+                                        intrinsic_values_for_sku.append(float(value))
+                            if intrinsic_values_for_sku:
+                                model.addConstr(
+                                    arrival[sid]
+                                    >= float(min(intrinsic_values_for_sku)) * sku_use[order_id, int(sku_id), sid],
+                                    name=f"SlotSkuArrivalLB_{sid}_{int(sku_id)}",
+                                )
+                                slot_sku_arrival_lb_count += 1
                 release_thresholds = sorted(
                     {
                         round(float(value), 6)
@@ -6071,6 +6571,51 @@ class GlobalXYZUSolver:
                             name=f"StationReleaseSuffixWorkloadLB_{str(threshold).replace('.', '_')}",
                         )
                         station_release_workload_lb_count += 1
+
+            if bool(getattr(cfg, "enable_sku_release_workload_lb", False)):
+                sku_release_rows: List[Tuple[float, float]] = []
+                for order_id in sorted(int(v) for v in slot_ids_by_order.keys()):
+                    demand_hit_totes = demand_hit_totes_by_order.get(int(order_id), [])
+                    for sku_id in unique_skus_by_order.get(int(order_id), []):
+                        sku_stack_ids = {
+                            int(tote_to_stack.get(int(tote_id), -1))
+                            for tote_id in demand_hit_totes
+                            if int(tote_sku_qty.get((int(tote_id), int(sku_id)), 0) or 0) > 0
+                        }
+                        intrinsic_values_for_sku = []
+                        for slot_id in slot_ids_by_order.get(int(order_id), []):
+                            for stack_id in candidate_stacks_by_order.get(int(order_id), []):
+                                if int(stack_id) not in sku_stack_ids:
+                                    continue
+                                for station_id in station_ids:
+                                    value = float(delivery_intrinsic_lb_by_tuple.get((int(slot_id), int(stack_id), int(station_id)), 0.0) or 0.0)
+                                    if value > 0.0:
+                                        intrinsic_values_for_sku.append(float(value))
+                        if not intrinsic_values_for_sku:
+                            continue
+                        demand_qty = float(demand_qty_by_order_sku.get((int(order_id), int(sku_id)), 0) or 0)
+                        if demand_qty <= 0.0:
+                            continue
+                        sku_release_rows.append(
+                            (
+                                float(min(intrinsic_values_for_sku)),
+                                float(getattr(OFSConfig, "PICKING_TIME", 1.0)) * float(demand_qty),
+                            )
+                        )
+                release_thresholds = sorted({round(float(value), 6) for value, _workload in sku_release_rows if float(value) > 1e-9})
+                for threshold in release_thresholds:
+                    tail_workload = sum(
+                        float(workload)
+                        for release_value, workload in sku_release_rows
+                        if float(release_value) + 1e-9 >= float(threshold)
+                    )
+                    if tail_workload <= 0.0:
+                        continue
+                    model.addConstr(
+                        cmax >= float(threshold) + float(tail_workload) / max(1, len(station_ids)),
+                        name=f"SkuReleaseWorkloadLB_{str(threshold).replace('.', '_')}",
+                    )
+                    sku_release_workload_lb_count += 1
 
             if slot_robot is not None:
                 # 同一 slot 的所有激活 stack 访问绑定到同一机器人，匹配 SubTask.assigned_robot_id 字段语义。
@@ -6179,29 +6724,86 @@ class GlobalXYZUSolver:
                     # 弧上的时间连续性与载荷递推，使用 Big-M 只在选中该弧时生效。
                     if (int(i), int(j)) not in route_arc:
                         continue
-                    route_time_cont_constr = model.addGenConstrIndicator(
-                        route_arc[int(i), int(j)],
-                        True,
-                        (
+                    arc_time_m = max(
+                        1.0,
+                        float(
+                            route_arc_time_m.get(
+                                (int(i), int(j)),
+                                float(route_node_time_ub.get(int(i), float(slot_time_ub)))
+                                + float(pickup_service_ub_by_node.get(int(i), 0.0) or 0.0)
+                                + float(route_tau[int(i), int(j)])
+                            )
+                        ),
+                    )
+                    if route_constraint_mode == "linear":
+                        model.addConstr(
                             route_time[int(j)]
                             >= route_time[int(i)]
                             + route_service_expr_by_node.get(int(i), gp.LinExpr(0.0))
                             + float(route_tau[int(i), int(j)])
-                        ),
-                        name=f"RouteTimeCont_{i}_{j}_{r}",
-                    )
-                    lazy_route_time_count += 1
-                    route_load_lb_constr = model.addGenConstrIndicator(
-                        route_arc[int(i), int(j)],
-                        True,
-                        (
-                            route_load[int(j)]
-                            == route_load[int(i)]
-                            + route_demand_expr_by_node.get(int(j), gp.LinExpr(0.0))
-                        ),
-                        name=f"RouteLoadLB_{i}_{j}_{r}",
-                    )
-                    lazy_route_load_count += 1
+                            - arc_time_m * (1.0 - route_arc[int(i), int(j)]),
+                            name=f"RouteTimeBigMLinear_{i}_{j}_{r}",
+                        )
+                        route_time_linear_count += 1
+                    else:
+                        model.addGenConstrIndicator(
+                            route_arc[int(i), int(j)],
+                            True,
+                            (
+                                route_time[int(j)]
+                                >= route_time[int(i)]
+                                + route_service_expr_by_node.get(int(i), gp.LinExpr(0.0))
+                                + float(route_tau[int(i), int(j)])
+                            ),
+                            name=f"RouteTimeCont_{i}_{j}_{r}",
+                        )
+                        route_time_indicator_count += 1
+                        lazy_route_time_count += 1
+                        if bool(getattr(cfg, "enable_route_time_big_m_linear_cuts", False)):
+                            model.addConstr(
+                                route_time[int(j)]
+                                >= route_time[int(i)]
+                                + route_service_expr_by_node.get(int(i), gp.LinExpr(0.0))
+                                + float(route_tau[int(i), int(j)])
+                                - arc_time_m * (1.0 - route_arc[int(i), int(j)]),
+                                name=f"RouteTimeBigMLinear_{i}_{j}_{r}",
+                            )
+                            route_time_big_m_linear_count += 1
+                    load_m = float(max(1, int(robot_capacity)) * 2)
+                    demand_expr = route_demand_expr_by_node.get(int(j), gp.LinExpr(0.0))
+                    if route_constraint_mode == "linear":
+                        model.addConstr(
+                            route_load[int(j)] >= route_load[int(i)] + demand_expr - load_m * (1.0 - route_arc[int(i), int(j)]),
+                            name=f"RouteLoadBigMLinearLB_{i}_{j}_{r}",
+                        )
+                        model.addConstr(
+                            route_load[int(j)] <= route_load[int(i)] + demand_expr + load_m * (1.0 - route_arc[int(i), int(j)]),
+                            name=f"RouteLoadBigMLinearUB_{i}_{j}_{r}",
+                        )
+                        route_load_linear_count += 2
+                    else:
+                        model.addGenConstrIndicator(
+                            route_arc[int(i), int(j)],
+                            True,
+                            (
+                                route_load[int(j)]
+                                == route_load[int(i)]
+                                + route_demand_expr_by_node.get(int(j), gp.LinExpr(0.0))
+                            ),
+                            name=f"RouteLoadLB_{i}_{j}_{r}",
+                        )
+                        route_load_indicator_count += 1
+                        lazy_route_load_count += 1
+                        if bool(getattr(cfg, "enable_route_load_big_m_linear_cuts", False)):
+                            model.addConstr(
+                                route_load[int(j)] >= route_load[int(i)] + demand_expr - load_m * (1.0 - route_arc[int(i), int(j)]),
+                                name=f"RouteLoadBigMLinearLB_{i}_{j}_{r}",
+                            )
+                            model.addConstr(
+                                route_load[int(j)] <= route_load[int(i)] + demand_expr + load_m * (1.0 - route_arc[int(i), int(j)]),
+                                name=f"RouteLoadBigMLinearUB_{i}_{j}_{r}",
+                            )
+                            route_load_big_m_linear_count += 2
 
             for i, j in route_arcs:
                 if (int(i), int(j)) not in route_arc:
@@ -6216,28 +6818,67 @@ class GlobalXYZUSolver:
                 elif src_kind == "start" and dst_kind in {"pickup", "delivery"}:
                     owner_robot = int(getattr(src_node, "robot_id", -1))
                     if owner_robot >= 0:
-                        model.addGenConstrIndicator(
-                            route_arc[int(i), int(j)],
-                            True,
-                            route_owner[int(j)] == route_owner[int(i)],
-                            name=f"RouteStartOwnerLink_{i}_{j}_{owner_robot}",
-                        )
+                        if route_constraint_mode == "linear":
+                            owner_m = float(max(1, len(robot_ids) - 1))
+                            model.addConstr(
+                                route_owner[int(j)] - route_owner[int(i)] <= owner_m * (1.0 - route_arc[int(i), int(j)]),
+                                name=f"RouteStartOwnerLinkLinearUB_{i}_{j}_{owner_robot}",
+                            )
+                            model.addConstr(
+                                route_owner[int(i)] - route_owner[int(j)] <= owner_m * (1.0 - route_arc[int(i), int(j)]),
+                                name=f"RouteStartOwnerLinkLinearLB_{i}_{j}_{owner_robot}",
+                            )
+                            route_owner_linear_count += 2
+                        else:
+                            model.addGenConstrIndicator(
+                                route_arc[int(i), int(j)],
+                                True,
+                                route_owner[int(j)] == route_owner[int(i)],
+                                name=f"RouteStartOwnerLink_{i}_{j}_{owner_robot}",
+                            )
+                            route_owner_indicator_count += 1
                 elif src_kind in {"pickup", "delivery"} and dst_kind == "end":
                     owner_robot = int(getattr(dst_node, "robot_id", -1))
                     if owner_robot >= 0:
+                        if route_constraint_mode == "linear":
+                            owner_m = float(max(1, len(robot_ids) - 1))
+                            model.addConstr(
+                                route_owner[int(i)] - route_owner[int(j)] <= owner_m * (1.0 - route_arc[int(i), int(j)]),
+                                name=f"RouteEndOwnerLinkLinearUB_{i}_{j}_{owner_robot}",
+                            )
+                            model.addConstr(
+                                route_owner[int(j)] - route_owner[int(i)] <= owner_m * (1.0 - route_arc[int(i), int(j)]),
+                                name=f"RouteEndOwnerLinkLinearLB_{i}_{j}_{owner_robot}",
+                            )
+                            route_owner_linear_count += 2
+                        else:
+                            model.addGenConstrIndicator(
+                                route_arc[int(i), int(j)],
+                                True,
+                                route_owner[int(i)] == route_owner[int(j)],
+                                name=f"RouteEndOwnerLink_{i}_{j}_{owner_robot}",
+                            )
+                            route_owner_indicator_count += 1
+                elif src_kind in {"pickup", "delivery"} and dst_kind in {"pickup", "delivery"}:
+                    if route_constraint_mode == "linear":
+                        owner_m = float(max(1, len(robot_ids) - 1))
+                        model.addConstr(
+                            route_owner[int(i)] - route_owner[int(j)] <= owner_m * (1.0 - route_arc[int(i), int(j)]),
+                            name=f"RouteOwnerSyncLinearUB_{i}_{j}",
+                        )
+                        model.addConstr(
+                            route_owner[int(j)] - route_owner[int(i)] <= owner_m * (1.0 - route_arc[int(i), int(j)]),
+                            name=f"RouteOwnerSyncLinearLB_{i}_{j}",
+                        )
+                        route_owner_linear_count += 2
+                    else:
                         model.addGenConstrIndicator(
                             route_arc[int(i), int(j)],
                             True,
                             route_owner[int(i)] == route_owner[int(j)],
-                            name=f"RouteEndOwnerLink_{i}_{j}_{owner_robot}",
+                            name=f"RouteOwnerSync_{i}_{j}",
                         )
-                elif src_kind in {"pickup", "delivery"} and dst_kind in {"pickup", "delivery"}:
-                    model.addGenConstrIndicator(
-                        route_arc[int(i), int(j)],
-                        True,
-                        route_owner[int(i)] == route_owner[int(j)],
-                        name=f"RouteOwnerSync_{i}_{j}",
-                    )
+                        route_owner_indicator_count += 1
 
             if bool(getattr(cfg, "enable_route_service_sec_cuts", False)):
                 service_node_set = {int(node_id) for node_id in service_nodes}
@@ -6330,18 +6971,29 @@ class GlobalXYZUSolver:
                 "enable_route_service_sec_cuts": bool(getattr(cfg, "enable_route_service_sec_cuts", False)),
                 "enable_tight_slot_upper_bound": bool(getattr(cfg, "enable_tight_slot_upper_bound", False)),
                 "enable_warm_candidate_stack_prune": bool(getattr(cfg, "enable_warm_candidate_stack_prune", False)),
+                "enable_hard_candidate_stack_cap": bool(getattr(cfg, "enable_hard_candidate_stack_cap", False)),
                 "enable_slot_lex_symmetry": bool(getattr(cfg, "enable_slot_lex_symmetry", True)),
                 "enable_tote_equivalence_symmetry": bool(getattr(cfg, "enable_tote_equivalence_symmetry", True)),
                 "enable_station_global_lex_symmetry": bool(getattr(cfg, "enable_station_global_lex_symmetry", True)),
                 "enable_robot_finish_lex_symmetry": bool(getattr(cfg, "enable_robot_finish_lex_symmetry", True)),
+                "enable_slot_sku_signature_lex_symmetry": bool(getattr(cfg, "enable_slot_sku_signature_lex_symmetry", False)),
+                "enable_station_load_lex_symmetry": bool(getattr(cfg, "enable_station_load_lex_symmetry", False)),
+                "enable_route_time_big_m_linear_cuts": bool(getattr(cfg, "enable_route_time_big_m_linear_cuts", False)),
+                "enable_route_load_big_m_linear_cuts": bool(getattr(cfg, "enable_route_load_big_m_linear_cuts", False)),
+                "enable_route_delivery_pickup_neighbor_prune": bool(getattr(cfg, "enable_route_delivery_pickup_neighbor_prune", False)),
+                "enable_slot_pair_arrival_lb": bool(getattr(cfg, "enable_slot_pair_arrival_lb", False)),
+                "enable_slot_sku_arrival_lb": bool(getattr(cfg, "enable_slot_sku_arrival_lb", False)),
+                "enable_sku_release_workload_lb": bool(getattr(cfg, "enable_sku_release_workload_lb", False)),
+                "enable_station_rank_workload_lb": bool(getattr(cfg, "enable_station_rank_workload_lb", False)),
+                "station_slot_count_cap": int(getattr(cfg, "station_slot_count_cap", 0) or 0),
+                "route_constraint_mode": str(route_constraint_mode),
+                "enable_hard_station_topk": bool(getattr(cfg, "enable_hard_station_topk", False)),
+                "enable_slot_specific_warm_station_protection": bool(getattr(cfg, "enable_slot_specific_warm_station_protection", False)),
+                "enable_warm_start_station_projection": bool(getattr(cfg, "enable_warm_start_station_projection", False)),
                 "candidate_station_topk_per_stack": int(getattr(cfg, "candidate_station_topk_per_stack", 0) or 0),
                 "candidate_stack_topk": int(getattr(cfg, "candidate_stack_topk", 0) or 0),
                 "max_candidate_stacks_per_order": int(getattr(cfg, "max_candidate_stacks_per_order", 0) or 0),
                 "route_pickup_neighbor_limit": int(getattr(cfg, "route_pickup_neighbor_limit", 0) or 0),
-                "enable_route_transition_knn_prune": bool(getattr(cfg, "enable_route_transition_knn_prune", False)),
-                "enforce_safe_prune_audit": bool(getattr(cfg, "enforce_safe_prune_audit", False)),
-                "enable_warm_incumbent_cmax_bound": bool(getattr(cfg, "enable_warm_incumbent_cmax_bound", False)),
-                "warm_incumbent_cmax_bound": float(warm_incumbent_cmax_bound),
                 "enable_scale_adaptive_candidate_prune": bool(getattr(cfg, "enable_scale_adaptive_candidate_prune", True)),
                 "enable_resource_lex_symmetry": bool(getattr(cfg, "enable_resource_lex_symmetry", True)),
                 "enable_anchor_first_order_robot": bool(getattr(cfg, "enable_anchor_first_order_robot", False)),
@@ -6360,7 +7012,19 @@ class GlobalXYZUSolver:
                 "global_arrival_workload_lb_count": int(global_arrival_workload_lb_count),
                 "u_sec_cut_count": int(route_service_sec_cut_count),
                 "route_arrival_slot_linear_count": int(route_arrival_slot_linear_count),
+                "slot_pair_arrival_lb_count": int(slot_pair_arrival_lb_count),
+                "slot_sku_arrival_lb_count": int(slot_sku_arrival_lb_count),
+                "sku_release_workload_lb_count": int(sku_release_workload_lb_count),
+                "route_time_big_m_linear_count": int(route_time_big_m_linear_count),
+                "route_load_big_m_linear_count": int(route_load_big_m_linear_count),
+                "route_time_indicator_count": int(route_time_indicator_count),
+                "route_time_linear_count": int(route_time_linear_count),
+                "route_load_indicator_count": int(route_load_indicator_count),
+                "route_load_linear_count": int(route_load_linear_count),
+                "route_owner_indicator_count": int(route_owner_indicator_count),
+                "route_owner_linear_count": int(route_owner_linear_count),
                 "station_clock_linear_count": int(station_clock_linear_count),
+                "station_rank_workload_lb_count": int(station_rank_workload_lb_count),
                 "sort_hit_tote_threshold": int(sort_hit_tote_threshold),
                 "sort_hit_tote_threshold_count": int(sort_hit_tote_threshold_count),
                 "global_selected_route_workload_lb_count": int(global_selected_route_workload_lb_count),
@@ -6373,11 +7037,14 @@ class GlobalXYZUSolver:
                 "robot_task_count_lex_count": int(robot_task_count_lex_count),
                 "robot_finish_lex_count": int(robot_finish_lex_count),
                 "station_slot_count_lex_count": int(station_slot_count_lex_count),
+                "station_slot_count_cap_count": int(station_slot_count_cap_count),
                 "station_global_lex_count": int(station_global_lex_count),
                 "stack_equivalence_lex_count": int(stack_equivalence_lex_count),
                 "slot_load_lex_count": int(slot_load_lex_count),
+                "slot_sku_signature_lex_count": int(slot_sku_signature_lex_count),
                 "slot_station_lex_count": int(slot_station_lex_count),
                 "tote_equivalence_lex_count": int(tote_equivalence_lex_count),
+                "station_load_lex_count": int(station_load_lex_count),
                 "global_routing_workload_cut_count": int(global_routing_workload_cut_count),
                 "anchor_first_order_robot_count": int(anchor_first_order_robot_count),
             }
@@ -6426,6 +7093,7 @@ class GlobalXYZUSolver:
             "route_nodes": route_nodes,
             "route_tau": route_tau,
             "route_arcs": route_arcs,
+            "protected_route_arcs": sorted(protected_route_arcs),
             "pass_x": pass_x,
             "route_owner": route_owner,
             "route_arc": route_arc,
@@ -6490,6 +7158,13 @@ class GlobalXYZUSolver:
             "warm_start_profile_repaired_empty_count": 0,
             "warm_start_profile_donor_move_count": 0,
             "warm_start_profile_unrepaired_empty_slots": [],
+            "warm_start_station_projection_enabled": False,
+            "warm_start_station_projection_changed_count": 0,
+            "warm_start_station_projection_partial_count": 0,
+            "warm_start_station_projection_dropped_profile_count": 0,
+            "warm_start_station_projection_dropped_stack_count": 0,
+            "warm_start_station_projection_missing_stack_count": 0,
+            "warm_start_station_projection_rows": [],
         }
         if warm is None or not warm.subtask_by_order:
             diagnostics["warm_start_u_skipped_reason"] = "empty_warm_start"
@@ -6609,8 +7284,10 @@ class GlobalXYZUSolver:
         slot_start_load_by_slot: Dict[int, int] = defaultdict(int)
         slot_start_sku_ids_by_slot: Dict[int, Set[int]] = defaultdict(set)
         slot_repair_seed_by_slot: Dict[int, Dict[str, int]] = {}
+        slot_project_allowed_stack_ids_by_slot: Dict[int, Set[int]] = {}
         slot_unit_count: Dict[int, int] = defaultdict(int)
         slot_noise_count: Dict[int, int] = defaultdict(int)
+        station_projection_skipped_order_ids: Set[int] = set()
         for order_id, slot_ids in slot_ids_by_order.items():
             profiles = self._canonical_warm_slot_profiles(
                 order_id=int(order_id),
@@ -6639,6 +7316,39 @@ class GlobalXYZUSolver:
                 list(diagnostics.get("warm_start_profile_unrepaired_empty_slots", []) or [])
                 + list(profile_repair_diag.get("warm_start_profile_unrepaired_empty_slots", []) or [])
             )
+            if bool(getattr(cfg, "enable_warm_start_station_projection", False)):
+                profiles, station_projection_diag = self._project_warm_slot_profiles_to_route_stations(
+                    profiles=profiles,
+                    route_task_by_tuple=route_task_by_tuple,
+                    station_ids=station_ids,
+                    stack_station_dist=stack_station_dist,
+                    tote_sku_qty=tote_sku_qty,
+                )
+                for key, value in station_projection_diag.items():
+                    if isinstance(value, bool):
+                        diagnostics[key] = bool(diagnostics.get(key, False) or value)
+                    elif isinstance(value, (int, float)):
+                        diagnostics[key] = int(diagnostics.get(key, 0) or 0) + int(value)
+                    elif key == "warm_start_station_projection_rows":
+                        diagnostics[key] = (
+                            list(diagnostics.get(key, []) or []) + list(value or [])
+                        )[:100]
+                    else:
+                        diagnostics[key] = value
+                if any(
+                    bool(profile.get("warm_station_projection_partial", False))
+                    or bool(profile.get("warm_station_projection_dropped", False))
+                    for profile in profiles
+                ):
+                    diagnostics["warm_start_station_projection_skipped_order_count"] = (
+                        int(diagnostics.get("warm_start_station_projection_skipped_order_count", 0) or 0) + 1
+                    )
+                    diagnostics["warm_start_station_projection_skipped_order_ids"] = sorted(set(
+                        list(diagnostics.get("warm_start_station_projection_skipped_order_ids", []) or [])
+                        + [int(order_id)]
+                    ))
+                    station_projection_skipped_order_ids.add(int(order_id))
+                    continue
             for profile in profiles:
                 if int(profile.get("start_load", 0) or 0) <= 0:
                     diagnostics["warm_start_skipped_mode_count"] = (
@@ -6660,6 +7370,11 @@ class GlobalXYZUSolver:
                         "sku_id": int(profile["repair_seed"].get("sku_id", -1)),
                         "tote_id": int(profile["repair_seed"].get("tote_id", -1)),
                         "stack_id": int(profile["repair_seed"].get("stack_id", -1)),
+                    }
+                if isinstance(profile.get("warm_project_allowed_stack_ids"), list):
+                    slot_project_allowed_stack_ids_by_slot[slot_id] = {
+                        int(stack_id)
+                        for stack_id in list(profile.get("warm_project_allowed_stack_ids", []) or [])
                     }
                 slot_station_rank[slot_id] = (int(station_id), int(rank))
                 if station_id >= 0 and 0 <= rank < max_rank and (slot_id, station_id, rank) in y:
@@ -6695,9 +7410,89 @@ class GlobalXYZUSolver:
                 claimed.append(int(tote_id))
             return claimed
 
+        def _unset_order_warm_starts(order_id: int) -> None:
+            order_id = int(order_id)
+            slot_ids = [int(slot_id) for slot_id in list(slot_ids_by_order.get(order_id, []) or [])]
+            slot_id_set = set(slot_ids)
+            for slot_id in slot_ids:
+                if slot_id in a:
+                    a[slot_id].Start = GRB.UNDEFINED
+                if slot_id in arrival:
+                    arrival[slot_id].Start = GRB.UNDEFINED
+                if slot_id in start:
+                    start[slot_id].Start = GRB.UNDEFINED
+                if slot_id in finish:
+                    finish[slot_id].Start = GRB.UNDEFINED
+                for station_id in station_ids:
+                    for rank in range(max_rank):
+                        if (slot_id, int(station_id), int(rank)) in y:
+                            y[slot_id, int(station_id), int(rank)].Start = GRB.UNDEFINED
+                if slot_robot is not None:
+                    for robot_id in robot_ids:
+                        if (slot_id, int(robot_id)) in slot_robot:
+                            slot_robot[slot_id, int(robot_id)].Start = GRB.UNDEFINED
+            for (unit_order_id, _sku_id), unit_ids in units_by_order_sku.items():
+                if int(unit_order_id) != order_id:
+                    continue
+                for unit_id in unit_ids:
+                    for slot_id in slot_ids:
+                        if (str(unit_id), int(slot_id)) in x:
+                            x[str(unit_id), int(slot_id)].Start = GRB.UNDEFINED
+            for sku_id in unique_skus_by_order.get(order_id, []):
+                for slot_id in slot_ids:
+                    if (order_id, int(sku_id), int(slot_id)) in sku_use:
+                        sku_use[order_id, int(sku_id), int(slot_id)].Start = GRB.UNDEFINED
+            for container in (flip, sort_var, carry, hit, noise, flip_hit, pair_activate):
+                if container is None:
+                    continue
+                for key, var in container.items():
+                    key_slot_id = int(key[0]) if isinstance(key, tuple) else int(key)
+                    if key_slot_id in slot_id_set:
+                        var.Start = GRB.UNDEFINED
+            skipped_route_nodes: Set[int] = set()
+            for spec in route_tasks.values():
+                if int(getattr(spec, "slot_id", -1)) in slot_id_set:
+                    skipped_route_nodes.add(int(spec.pickup_node))
+                    skipped_route_nodes.add(int(spec.delivery_node))
+            for node_id in skipped_route_nodes:
+                if route_owner is not None and int(node_id) in route_owner:
+                    route_owner[int(node_id)].Start = GRB.UNDEFINED
+                if route_time is not None and int(node_id) in route_time:
+                    route_time[int(node_id)].Start = GRB.UNDEFINED
+                if route_load is not None and int(node_id) in route_load:
+                    route_load[int(node_id)].Start = GRB.UNDEFINED
+                if pass_x is not None:
+                    for robot_id in robot_ids:
+                        if (int(node_id), int(robot_id)) in pass_x:
+                            pass_x[int(node_id), int(robot_id)].Start = GRB.UNDEFINED
+            if route_arc is not None and skipped_route_nodes:
+                for arc_key, arc_var in route_arc.items():
+                    if int(arc_key[0]) in skipped_route_nodes or int(arc_key[1]) in skipped_route_nodes:
+                        arc_var.Start = GRB.UNDEFINED
+            if route_finish is not None and skipped_route_nodes:
+                for robot_id in robot_ids:
+                    if int(robot_id) in route_finish:
+                        route_finish[int(robot_id)].Start = GRB.UNDEFINED
+            if order_arrival_lb is not None and order_id in order_arrival_lb:
+                order_arrival_lb[order_id].Start = GRB.UNDEFINED
+            if order_arrival_ub is not None and order_id in order_arrival_ub:
+                order_arrival_ub[order_id].Start = GRB.UNDEFINED
+            if order_span_overrun is not None and order_id in order_span_overrun:
+                order_span_overrun[order_id].Start = GRB.UNDEFINED
+            if order_deadline_overrun is not None and order_id in order_deadline_overrun:
+                order_deadline_overrun[order_id].Start = GRB.UNDEFINED
+
+        for skipped_order_id in sorted(station_projection_skipped_order_ids):
+            _unset_order_warm_starts(int(skipped_order_id))
+        if station_projection_skipped_order_ids:
+            diagnostics["warm_start_station_projection_skipped_order_ids"] = sorted(
+                set(int(order_id) for order_id in station_projection_skipped_order_ids)
+            )
+
         for slot_id, st in slot_to_warm_subtask.items():
             order_id = int(getattr(getattr(st, "parent_order", None), "order_id", -1))
-            station_id = int(getattr(st, "assigned_station_id", -1))
+            station_id = int(slot_station_rank.get(int(slot_id), (int(getattr(st, "assigned_station_id", -1)), -1))[0])
+            projected_allowed_stack_ids = slot_project_allowed_stack_ids_by_slot.get(int(slot_id))
             start_sku_ids = set(int(sku_id) for sku_id in slot_start_sku_ids_by_slot.get(int(slot_id), set()))
             slot_sku_ids: List[int] = []
             seen_profile_skus: Set[int] = set()
@@ -6739,6 +7534,8 @@ class GlobalXYZUSolver:
             slot_route_start_count = 0
             for task in getattr(st, "execution_tasks", []) or []:
                 stack_id = int(getattr(task, "target_stack_id", -1))
+                if projected_allowed_stack_ids is not None and int(stack_id) not in projected_allowed_stack_ids:
+                    continue
                 mode = str(getattr(task, "operation_mode", "FLIP")).upper()
                 mode_selected = False
                 service_time_model = 0.0
@@ -7089,11 +7886,15 @@ class GlobalXYZUSolver:
                             if int(row.get("robot_id", -1)) in robot_ids
                         }
                         diagnostics["warm_start_route_repair_repaired_used_robot_count"] = int(len(repaired_used_robot_ids))
+                        original_ok = bool(original_rebuild.get("ok", False))
+                        repaired_ok = bool(repaired_rebuild.get("ok", False))
                         if (
-                            bool(original_rebuild.get("ok", False))
-                            and bool(repaired_rebuild.get("ok", False))
-                            and float(repaired_rebuild.get("route_end_max", 0.0) or 0.0)
-                            < float(original_rebuild.get("route_end_max", 0.0) or 0.0) - 1e-9
+                            repaired_ok
+                            and (
+                                not original_ok
+                                or float(repaired_rebuild.get("route_end_max", 0.0) or 0.0)
+                                < float(original_rebuild.get("route_end_max", 0.0) or 0.0) - 1e-9
+                            )
                         ):
                             selected_route_rows = [dict(row) for row in repaired_rows]
                             diagnostics["warm_start_route_repair_accepted"] = True
@@ -7374,14 +8175,22 @@ class GlobalXYZUSolver:
         # Project pair activation from the final Z-mode and Y-station starts. This
         # must happen after duplicate-tote replacement and route repair because
         # those steps can change the selected stack of a slot.
+        projected_pair_keys: Set[Tuple[int, int, int]] = set()
+        for row in selected_route_rows:
+            route_key = int(row.get("route_key", -1))
+            spec = route_tasks.get(int(route_key))
+            if spec is None:
+                continue
+            projected_pair_keys.add((int(spec.slot_id), int(spec.stack_id), int(spec.station_id)))
+        if projected_pair_keys:
+            selected_stack_start_keys = {(int(sid), int(stack_id)) for sid, stack_id, _station_id in projected_pair_keys}
+            pending_pair_activate_keys = set(projected_pair_keys)
         pair_projection_changed_count = 0
         for (slot_id, stack_id, station_id), pair_var in pair_activate.items():
             slot_id = int(slot_id)
             stack_id = int(stack_id)
             station_id = int(station_id)
-            stack_selected = (slot_id, stack_id) in selected_stack_start_keys
-            station_selected = int(slot_station_rank.get(slot_id, (-1, -1))[0]) == station_id
-            projected = 1.0 if stack_selected and station_selected else GRB.UNDEFINED
+            projected = 1.0 if (slot_id, stack_id, station_id) in projected_pair_keys else GRB.UNDEFINED
             if projected == 1.0:
                 pair_projection_changed_count += 1
             pair_var.Start = projected

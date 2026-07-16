@@ -48,8 +48,9 @@ from .state import OperatorArm, ResourceConfig, ResourceSubtask, UpperEvalResult
 from .surrogate import ResourceSurrogateScorer, config_distance
 from .validator import ResourceValidator
 from .fixgurobi_evaluator import FixGurobiEvaluator
+from .hybrid_gate import should_run_hybrid_exact
 from .revolving_solver import RevolvingSolver
-from .utils import global_used_totes
+from .utils import _sync_problem_global_makespan_from_tasks, global_used_totes
 
 
 class ResourceTimeALNSEngine:
@@ -61,7 +62,13 @@ class ResourceTimeALNSEngine:
         self.scorer = ResourceSurrogateScorer(opt)
         self.revolving_solver = RevolvingSolver(opt)
         self.eval_backend = str(getattr(self.cfg, "resource_eval_backend", "surrogate") or "surrogate").strip().lower()
-        self.fixgurobi_evaluator = FixGurobiEvaluator(opt, surrogate_scorer=self.scorer) if self.eval_backend == "fixgurobi_prefix" else None
+        self.fixgurobi_evaluator = (
+            FixGurobiEvaluator(opt, surrogate_scorer=self.scorer)
+            if self.eval_backend in {"fixgurobi_prefix", "hybrid_fixgurobi"}
+            else None
+        )
+        self.hybrid_last_exact_iter = -1
+        self.active_iter_id = 0
         self.fixgurobi_only_eval = bool(
             self.eval_backend == "fixgurobi_prefix"
             and bool(getattr(self.cfg, "resource_fixgurobi_skip_ortools_validation", False))
@@ -91,7 +98,7 @@ class ResourceTimeALNSEngine:
         self._bootstrap_z_stacked_sort(self.current_config)
         self.initial_config: ResourceConfig = self.current_config.clone()
         skip_initial_fixgurobi = bool(
-            self.eval_backend == "fixgurobi_prefix"
+            self.eval_backend in {"fixgurobi_prefix", "hybrid_fixgurobi"}
             and bool(getattr(self.cfg, "resource_skip_initial_fixgurobi_eval", False))
         )
         self.current_eval = (
@@ -99,6 +106,15 @@ class ResourceTimeALNSEngine:
             if bool(skip_initial_fixgurobi)
             else self._evaluate_config(self.current_config, layer="XYZ")
         )
+        self.fixgurobi_precompile_diagnostics: Dict[str, object] = {}
+        if (
+            self.fixgurobi_evaluator is not None
+            and bool(getattr(self.cfg, "fixgurobi_precompile_before_search", False))
+        ):
+            self.fixgurobi_precompile_diagnostics = self.fixgurobi_evaluator.precompile(
+                self.current_config,
+                layer="XYZ",
+            )
         if self.fixgurobi_only_eval:
             initial_hard_reject_reason = ""
             initial_makespan = float("inf") if bool(skip_initial_fixgurobi) else float(self.current_eval.F_raw)
@@ -528,6 +544,14 @@ class ResourceTimeALNSEngine:
         )
         if self.fixgurobi_evaluator is None:
             return base_eval
+        if self.eval_backend == "hybrid_fixgurobi" and not self._should_run_hybrid_exact(
+            base_eval,
+            layer=layer_name,
+            config=eval_config,
+        ):
+            base_eval.metadata.update(dict(getattr(eval_config, "metadata", {}) or {}))
+            base_eval.metadata["hybrid_exact_skipped"] = True
+            return base_eval
         current_best = float("inf")
         if hasattr(self, "best_validated"):
             try:
@@ -543,7 +567,42 @@ class ResourceTimeALNSEngine:
             bypass_cache=bool(bypass_cache),
         )
         result.metadata.update(dict(getattr(eval_config, "metadata", {}) or {}))
+        if self.eval_backend == "hybrid_fixgurobi":
+            self.hybrid_last_exact_iter = int(getattr(self, "active_iter_id", 0) or 0)
+            result.metadata["hybrid_exact_skipped"] = False
         return result
+
+    def _should_run_hybrid_exact(self, base_eval, *, layer: str, config: ResourceConfig) -> bool:
+        iter_id = int(getattr(self, "active_iter_id", 0) or 0)
+        if iter_id <= 0:
+            return True
+        if int(getattr(self, "hybrid_last_exact_iter", -1)) == iter_id:
+            return False
+        allowed_layers = {
+            value.strip().upper()
+            for value in str(getattr(self.cfg, "resource_hybrid_exact_layers", "U,XYZ") or "U,XYZ").split(",")
+            if value.strip()
+        }
+        period = max(1, int(getattr(self.cfg, "resource_hybrid_exact_period", 4) or 4))
+        current_best = float(getattr(getattr(self, "best_validated", None), "makespan", float("inf")))
+        margin = max(0.0, float(getattr(self.cfg, "resource_hybrid_exact_margin_ratio", 0.08) or 0.0))
+        proxy_value = float(getattr(base_eval, "F_raw", float("inf")))
+        metadata = dict(getattr(config, "metadata", {}) or {})
+        try:
+            revolving_lb = float(metadata.get("revolving_lb", float("nan")))
+        except (TypeError, ValueError):
+            revolving_lb = float("nan")
+        return should_run_hybrid_exact(
+            iter_id=iter_id,
+            last_exact_iter=int(getattr(self, "hybrid_last_exact_iter", -1)),
+            layer=str(layer),
+            allowed_layers=allowed_layers,
+            period=period,
+            margin_ratio=margin,
+            current_best=current_best,
+            proxy_value=proxy_value,
+            revolving_lb=revolving_lb,
+        )
 
     def _sync_fixgurobi_best_snapshot(self, value: float, iter_id: int) -> None:
         """Keep TRA summary fields aligned when FixGurobi is the only evaluator."""
@@ -2088,6 +2147,73 @@ class ResourceTimeALNSEngine:
             "local_release_retry_count": 0,
         }
 
+    def _build_canonical_seed_outer_candidate(self, iter_id: int) -> Optional[Dict[str, object]]:
+        if int(iter_id) != 1 or not bool(
+            getattr(self.cfg, "resource_revolving_canonical_seed_outer_first", False)
+        ):
+            return None
+        candidate = self.current_config.clone().rebuild_indices()
+        candidate.metadata["canonical_seed_outer_candidate"] = True
+        candidate_eval = self._evaluate_config(
+            config=candidate,
+            layer="XYZ",
+            score_cache=None,
+            affected_subtask_ids=(),
+            fallback_penalty=0.0,
+            iterations_since_last_validation=int(iter_id) - int(self.last_validation_iter),
+            distance_to_last_validated=0.0,
+            bypass_cache=True,
+        )
+        candidate_signature = candidate.validation_signature()
+        return {
+            "iter": int(iter_id),
+            "layer": "XYZ",
+            "candidate_stage": "exact",
+            "candidate_rank": -1,
+            "destroy_operator": "canonical_seed_hold",
+            "repair_operator": "canonical_seed_outer",
+            "fallback_used": False,
+            "projection_mode": "canonical_seed_outer",
+            "projection_repaired_subtask_count": 0,
+            "F_raw": float(candidate_eval.F_raw),
+            "F_cal": float(candidate_eval.F_cal),
+            "eval_backend": str(candidate_eval.metadata.get("eval_backend", "surrogate")),
+            "fixgurobi_status": str(candidate_eval.metadata.get("fixgurobi_status", "")),
+            "fixgurobi_obj": candidate_eval.metadata.get("fixgurobi_obj", ""),
+            "fixgurobi_bound": candidate_eval.metadata.get("fixgurobi_bound", ""),
+            "fixgurobi_gap": candidate_eval.metadata.get("fixgurobi_gap", ""),
+            "fixgurobi_solve_time": candidate_eval.metadata.get("fixgurobi_solve_time", ""),
+            "fixgurobi_fixed_scope": str(candidate_eval.metadata.get("fixgurobi_fixed_scope", "")),
+            "fixgurobi_infeasible_reason": str(candidate_eval.metadata.get("fixgurobi_infeasible_reason", "")),
+            "duplicate_tote_count": int(candidate_eval.duplicate_tote_count),
+            "duplicate_tote_penalty": float(candidate_eval.duplicate_tote_penalty),
+            "candidate_signature": self._candidate_signature_text(("canonical_seed_outer", candidate_signature)),
+            "candidate_signature_tuple": candidate_signature,
+            "candidate_payload": {
+                "config": candidate,
+                "score_cache": None,
+                "affected_ids": set(),
+                "fallback_used": False,
+                "projection_mode": "canonical_seed_outer",
+                "projection_repaired_subtask_count": 0,
+            },
+            "candidate_eval": candidate_eval,
+            "selected_for_sa": False,
+            "action_signature": self._action_signature_text(("canonical_seed_outer", candidate_signature)),
+            "coverage_feasible": bool(candidate_eval.coverage_feasible),
+            "unmet_sku_total": int(candidate_eval.unmet_sku_total),
+            "xyz_x_operator": "canonical_seed_hold",
+            "xyz_y_operator": "canonical_seed_hold",
+            "xyz_z_operator": "canonical_seed_hold",
+            "repartition_mode": False,
+            "critical_path_operator_used": False,
+            "critical_path_subtask_ids": [],
+            "coverage_issue_subtask_ids": [],
+            "local_release_subtask_count": 0,
+            "local_release_initial_count": 0,
+            "local_release_retry_count": 0,
+        }
+
     def _build_global_decomp_repair_candidate(self, iter_id: int) -> Optional[Dict[str, object]]:
         if self.global_decomp_repair_used:
             return None
@@ -2142,6 +2268,7 @@ class ResourceTimeALNSEngine:
                 enable_warm_candidate_stack_prune=False,
                 candidate_station_topk_per_stack=int(attempt["candidate_station_topk_per_stack"]),
                 route_pickup_neighbor_limit=int(getattr(self.cfg, "resource_global_decomp_repair_route_pickup_neighbor_limit", 0) or 0),
+                sort_hit_tote_threshold=int(getattr(self.cfg, "fixgurobi_sort_hit_tote_threshold", 3) or 3),
                 enable_scale_adaptive_candidate_prune=False,
                 gurobi_output=bool(getattr(self.cfg, "fixgurobi_output", False)),
                 enable_warm_start=False,
@@ -2852,6 +2979,12 @@ class ResourceTimeALNSEngine:
         coverage_hard_reject_count = 0
         duplicate_hard_reject_count = 0
         seen_validation_signatures = set()
+        canonical_seed_row = self._build_canonical_seed_outer_candidate(int(iter_id))
+        if canonical_seed_row is not None:
+            generated_count += 1
+            candidate_rows.append(canonical_seed_row)
+            pool.append(canonical_seed_row)
+            seen_validation_signatures.add(canonical_seed_row["candidate_signature_tuple"])
         seed_row = self._build_structure_seed_xyz_candidate(int(iter_id))
         if seed_row is not None:
             generated_count += 1
@@ -3890,7 +4023,9 @@ class ResourceTimeALNSEngine:
         max_iters = int(getattr(self.cfg, "max_iters", 50))
         cooling = float(getattr(self.cfg, "resource_sa_cooling", 0.95))
         reheat = float(getattr(self.cfg, "resource_sa_reheat_factor", 1.25))
+        self.opt.search_start_time_sec = float(time.perf_counter())
         for iter_id in range(1, max_iters + 1):
+            self.active_iter_id = int(iter_id)
             wall_limit = float(getattr(self.cfg, "resource_wall_time_limit_sec", 0.0) or 0.0)
             if wall_limit > 0.0 and float(self.opt._runtime_elapsed_sec()) >= float(wall_limit):
                 self.opt.stop_reason = f"wall_time_limit_{wall_limit:.3f}s"
@@ -4460,7 +4595,8 @@ class ResourceTimeALNSEngine:
             self.opt.work_z = float(self.best_validated.makespan)
             verify_method = getattr(self.opt, "_verify_makespan_breakdown", None)
             if callable(verify_method):
-                final_verification = dict(verify_method("") or {})
+                _sync_problem_global_makespan_from_tasks(getattr(self.opt, "problem", None))
+                final_verification = dict(verify_method(self.opt._ensure_log_dir()) or {})
                 final_failures = list(final_verification.get("failures", []) or [])
                 if final_failures and bool(getattr(self.cfg, "resource_hard_reject_unreasonable_solution", True)):
                     self.best_validated.makespan = float("inf")

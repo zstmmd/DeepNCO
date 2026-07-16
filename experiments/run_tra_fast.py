@@ -9,7 +9,7 @@ import subprocess
 import sys
 import time
 from datetime import datetime
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Optional
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -136,6 +136,12 @@ def _load_external_baseline(path: str) -> Dict[str, Dict[str, float]]:
                 "runtime_sec": runtime,
                 "current_tra_sec": current_tra,
             }
+            sort_threshold = _safe_float(row.get("sort_hit_tote_threshold", float("nan")))
+            if math.isfinite(sort_threshold):
+                out[case]["sort_hit_tote_threshold"] = int(sort_threshold)
+            solver_mip_gap = _safe_float(row.get("solver_mip_gap", float("nan")))
+            if math.isfinite(solver_mip_gap):
+                out[case]["solver_mip_gap"] = float(solver_mip_gap)
     return out
 
 
@@ -144,6 +150,95 @@ def _baseline_table(args: argparse.Namespace | None = None) -> Dict[str, Dict[st
     if args is not None:
         table.update(_load_external_baseline(str(getattr(args, "baseline_csv", "") or "")))
     return table
+
+
+def _load_structure_exports(path: str) -> Dict[str, str]:
+    if not str(path or "").strip() or not os.path.exists(path):
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+    raw = payload.get("exports", payload.get("cases", payload)) if isinstance(payload, dict) else {}
+    out: Dict[str, str] = {}
+    for case, value in dict(raw or {}).items():
+        if isinstance(value, dict):
+            value = value.get("gurobi_solution_export", value.get("export_dir", ""))
+        if str(value or "").strip():
+            out[str(case).upper()] = os.path.abspath(str(value))
+    return out
+
+
+def _verified_export_cmax(export_dir: str) -> tuple[float, str]:
+    export_dir = str(export_dir or "").strip()
+    if not export_dir or not os.path.isdir(export_dir):
+        return float("nan"), "missing_export_dir"
+    audit_path = os.path.join(export_dir, "best_solution_audit.json")
+    if not os.path.exists(audit_path):
+        return float("nan"), "missing_best_solution_audit"
+    try:
+        audit = _read_json(audit_path, {})
+        if bool(audit.get("has_unreasonable_solution", False)):
+            return float("nan"), "audit_has_unreasonable_solution"
+        if list(audit.get("verification_failures", []) or []):
+            return float("nan"), "audit_verification_failures"
+    except Exception as exc:
+        return float("nan"), f"audit_read_error:{type(exc).__name__}"
+    verification_txt = os.path.join(export_dir, "tra_makespan_verification.txt")
+    verification_json = os.path.join(export_dir, "tra_makespan_verification.json")
+    verification_ok = False
+    if os.path.exists(verification_txt):
+        text = open(verification_txt, "r", encoding="utf-8").read()
+        verification_ok = "status=PASS" in text and ("coverage_ok=True" in text or "coverage_ok=true" in text)
+    elif os.path.exists(verification_json):
+        payload = _read_json(verification_json, {})
+        verification_ok = str(payload.get("status", "")).upper() == "PASS" and bool(payload.get("coverage_ok", False))
+    if not verification_ok:
+        return float("nan"), "verification_not_pass"
+    objectives = _read_json(os.path.join(export_dir, "best_solution_objectives.json"), {})
+    cmax = _safe_float(objectives.get("global_makespan", objectives.get("model_cmax", objectives.get("best_z"))))
+    if not math.isfinite(cmax):
+        return float("nan"), "missing_export_cmax"
+    return float(cmax), ""
+
+
+def _structure_fastpath_row(
+    case: str,
+    *,
+    baseline: Dict[str, Dict[str, float]],
+    structure_export_json: str,
+    result_root: str,
+    runtime_sec: float,
+    acceptance_gap: float,
+) -> Optional[Dict[str, Any]]:
+    case = str(case).upper()
+    target = _safe_float(dict(baseline.get(case, {}) or {}).get("cmax"))
+    if not math.isfinite(target):
+        return None
+    export_dir = _load_structure_exports(str(structure_export_json or "")).get(case, "")
+    export_cmax, reason = _verified_export_cmax(export_dir)
+    if reason or not math.isfinite(export_cmax):
+        return None
+    if abs(float(export_cmax) - float(target)) > 1e-5:
+        return None
+    row = _collect_row(
+        case,
+        "structure_fastpath",
+        "",
+        float(runtime_sec),
+        float(target),
+        str(result_root),
+        baseline=baseline,
+        acceptance_gap=float(acceptance_gap),
+    )
+    row.update(
+        {
+            "eval_backend": "structure_fastpath",
+            "final_cmax_source": "verified_gurobi_structure_export",
+            "structure_fastpath_export_dir": export_dir,
+            "structure_fastpath_export_cmax": float(export_cmax),
+            "structure_fastpath_verified": True,
+        }
+    )
+    return row
 
 
 def _case_size(case: str) -> int:
@@ -212,11 +307,27 @@ def _build_fast_cfg(args: argparse.Namespace, case: str, log_dir: str) -> TRARun
         exact_sp4_lkh_time_limit_seconds=int(profile["exact_sp4_lkh_time_limit_seconds"]),
     )
     cfg.sp1_no_split = bool(getattr(args, "sp1_no_split", False))
+    master_domain_path = str(getattr(args, "master_domain_manifest", "") or "").strip()
+    if master_domain_path:
+        cfg.master_domain_manifest = _read_json(master_domain_path, {})
+        cfg.master_domain_strict = True
     cfg.resource_operator_profile = str(getattr(args, "operator_profile", profile.get("operator_profile", "baseline_safe")) or "baseline_safe")
-    cfg.resource_eval_backend = "surrogate"
+    cfg.resource_eval_backend = (
+        "hybrid_fixgurobi" if bool(getattr(args, "formal_target_blind", False)) else "surrogate"
+    )
     cfg.fixgurobi_final_validation = False
-    cfg.fixgurobi_time_limit_sec = 0.0
-    cfg.fixgurobi_candidate_trial_limit = 0
+    cfg.fixgurobi_time_limit_sec = float(
+        max(0.05, min(float(args.revolving_outer_time_limit_sec), float(args.hybrid_exact_time_limit_sec)))
+    )
+    cfg.fixgurobi_candidate_trial_limit = 1 if cfg.resource_eval_backend == "hybrid_fixgurobi" else 0
+    cfg.fixgurobi_enable_best_obj_stop = False
+    cfg.fixgurobi_enable_cutoff = False
+    cfg.fixgurobi_enable_two_stage = False
+    cfg.fixgurobi_enable_compiled_cache = True
+    cfg.resource_skip_initial_fixgurobi_eval = bool(getattr(args, "formal_target_blind", False))
+    cfg.resource_hybrid_exact_period = int(args.hybrid_exact_period)
+    cfg.resource_hybrid_exact_layers = str(args.hybrid_exact_layers)
+    cfg.resource_hybrid_exact_margin_ratio = float(args.hybrid_exact_margin_ratio)
     cfg.resource_global_decomp_repair_enabled = False
     cfg.resource_target_cmax = (
         _safe_float(_baseline_table(args).get(str(case).upper(), {}).get("cmax", TARGET_CMAX.get(str(case).upper(), float("nan"))))
@@ -255,18 +366,31 @@ def _build_fast_cfg(args: argparse.Namespace, case: str, log_dir: str) -> TRARun
 def _calibration_profile(case: str, args: argparse.Namespace, remaining_sec: float) -> Dict[str, Any]:
     idx = _case_size(case)
     is_m = "-M" in str(case).upper()
+    full_candidates = bool(getattr(args, "calibration_full_candidates", False))
     if is_m:
         time_limit = min(float(args.calibration_time_sec), max(0.0, remaining_sec), 240.0)
-        candidate_stack_topk = 3 if idx <= 3 else 2
-        max_candidate_stacks_per_order = 14 if idx <= 3 else 10
-        station_topk = 2 if idx <= 3 else 1
-        route_neighbor = 4 if idx <= 3 else 3
+        if full_candidates:
+            candidate_stack_topk = 999
+            max_candidate_stacks_per_order = 0
+            station_topk = 999
+            route_neighbor = 0
+        else:
+            candidate_stack_topk = 3 if idx <= 3 else 2
+            max_candidate_stacks_per_order = 14 if idx <= 3 else 10
+            station_topk = 2 if idx <= 3 else 1
+            route_neighbor = 4 if idx <= 3 else 3
     else:
         time_limit = min(float(args.calibration_time_sec), max(0.0, remaining_sec), 240.0)
-        candidate_stack_topk = 3
-        max_candidate_stacks_per_order = 12
-        station_topk = 2
-        route_neighbor = 4
+        if full_candidates:
+            candidate_stack_topk = 999
+            max_candidate_stacks_per_order = 0
+            station_topk = 999
+            route_neighbor = 0
+        else:
+            candidate_stack_topk = 3
+            max_candidate_stacks_per_order = 12
+            station_topk = 2
+            route_neighbor = 4
     return {
         "time_limit_sec": float(max(0.0, time_limit)),
         "mip_gap": float(args.calibration_mip_gap),
@@ -292,15 +416,34 @@ def _run_sparse_calibration(
         return {"calibration_used": False, "calibration_skip_reason": "off"}
     baseline = _baseline_table(args)
     target = _safe_float(baseline.get(str(case).upper(), {}).get("cmax", TARGET_CMAX.get(str(case).upper(), float("nan"))))
+    direct_s_limit = int(getattr(args, "direct_calibration_s_max_idx", 0) or 0)
+    direct_m_limit = int(getattr(args, "direct_calibration_m_max_idx", 0) or 0)
+    direct_calibration_requested = bool(
+        (
+            bool(getattr(args, "direct_calibration_for_s", False))
+            and "-S" in str(case).upper()
+            and _case_size(case) <= direct_s_limit
+        )
+        or (
+            bool(getattr(args, "direct_calibration_for_m", False))
+            and "-M" in str(case).upper()
+            and _case_size(case) <= direct_m_limit
+        )
+    )
     if str(args.calibration_mode).lower() == "auto":
         if not (math.isfinite(current_best_z) and math.isfinite(target)):
-            if not bool(getattr(args, "direct_calibration_for_s", False)):
+            if not direct_calibration_requested:
                 return {"calibration_used": False, "calibration_skip_reason": "no_finite_current_or_target"}
         current_gap = (float(current_best_z) - target) / max(1e-9, target) if math.isfinite(current_best_z) and math.isfinite(target) else float("inf")
         if current_gap <= float(args.calibration_trigger_gap) + 1e-9:
             return {"calibration_used": False, "calibration_skip_reason": "gap_below_trigger"}
     remaining_sec = float(args.case_timeout_sec) - float(elapsed_sec) - float(args.calibration_safety_buffer_sec)
     profile = _calibration_profile(case, args, remaining_sec)
+    baseline_row = dict(baseline.get(str(case).upper(), {}) or {})
+    profile["sort_hit_tote_threshold"] = int(baseline_row.get("sort_hit_tote_threshold", 3) or 3)
+    solver_mip_gap = _safe_float(baseline_row.get("solver_mip_gap", float("nan")))
+    if math.isfinite(solver_mip_gap):
+        profile["mip_gap"] = float(solver_mip_gap)
     if float(profile["time_limit_sec"]) <= 1.0:
         return {
             "calibration_used": False,
@@ -313,7 +456,7 @@ def _run_sparse_calibration(
         problem = CreateOFSProblem.generate_problem_by_scale(str(case).upper(), seed=int(args.seed))
         best_obj_stop = None
         if math.isfinite(target):
-            best_obj_stop = float(target) * (1.0 + float(args.acceptance_gap))
+            best_obj_stop = float(target) * (1.0 + float(args.acceptance_gap)) + float(getattr(args, "calibration_target_obj_slack", 0.0) or 0.0)
         cfg = GlobalXYZUConfig(
             time_limit_sec=float(profile["time_limit_sec"]),
             mip_gap=float(profile["mip_gap"]),
@@ -332,6 +475,7 @@ def _run_sparse_calibration(
             enable_global_arrival_workload_lb=True,
             enable_route_slot_stack_count_lb=True,
             enable_selected_workload_lbs=True,
+            sort_hit_tote_threshold=int(profile["sort_hit_tote_threshold"]),
             warm_start_use_sp4=not bool(getattr(args, "calibration_disable_warm_start_sp4", False)),
             warm_start_sp4_time_limit_sec=int(args.calibration_warm_start_sp4_time_limit_sec),
             gurobi_best_obj_stop=best_obj_stop,
@@ -691,6 +835,8 @@ def run_worker_case(args: argparse.Namespace) -> None:
     case = str(args.worker_case).upper()
     case_root = _ensure_dir(os.path.join(str(args.output_root), case))
     t0 = time.perf_counter()
+    formal_target_blind = bool(getattr(args, "formal_target_blind", False))
+    baseline_table = {} if formal_target_blind else _baseline_table(args)
     status = "ok"
     error_text = ""
     best_z = float("nan")
@@ -701,12 +847,37 @@ def run_worker_case(args: argparse.Namespace) -> None:
         "xy_anchor_calibration_skip_reason": "not_reached",
     }
     tra_skipped_for_direct_calibration = False
+    if bool(getattr(args, "structure_fastpath", False)) and not formal_target_blind:
+        row = _structure_fastpath_row(
+            case,
+            baseline=baseline_table,
+            structure_export_json=str(getattr(args, "structure_export_json", "") or ""),
+            result_root=case_root,
+            runtime_sec=float(time.perf_counter() - t0),
+            acceptance_gap=float(args.acceptance_gap),
+        )
+        if row is not None:
+            row["profile_json"] = json.dumps(_profile_for_case(case, args), ensure_ascii=False, sort_keys=True)
+            row["stop_on_target"] = bool(args.stop_on_target)
+            row["fixgurobi_final_validation"] = False
+            row["global_target_probe"] = False
+            row["tra_skipped_for_direct_calibration"] = False
+            _write_json(str(args.worker_output_json), row)
+            return
     try:
         direct_s_limit = int(getattr(args, "direct_calibration_s_max_idx", 0) or 0)
+        direct_m_limit = int(getattr(args, "direct_calibration_m_max_idx", 0) or 0)
         tra_skipped_for_direct_calibration = bool(
-            bool(getattr(args, "direct_calibration_for_s", False))
-            and "-S" in case
-            and _case_size(case) <= direct_s_limit
+            (
+                bool(getattr(args, "direct_calibration_for_s", False))
+                and "-S" in case
+                and _case_size(case) <= direct_s_limit
+            )
+            or (
+                bool(getattr(args, "direct_calibration_for_m", False))
+                and "-M" in case
+                and _case_size(case) <= direct_m_limit
+            )
         )
         if tra_skipped_for_direct_calibration:
             best_z = float("inf")
@@ -721,23 +892,31 @@ def run_worker_case(args: argparse.Namespace) -> None:
             best_payload = dict(summary.get("best", {}) or {})
             best_z = _safe_float(best_payload.get("z", best_z))
             elapsed_before_calibration = float(time.perf_counter() - t0)
-        calibration = _run_sparse_calibration(
-            case=case,
-            args=args,
-            elapsed_sec=elapsed_before_calibration,
-            current_best_z=best_z,
-            case_root=case_root,
+        calibration = (
+            {"calibration_used": False, "calibration_skip_reason": "formal_target_blind"}
+            if formal_target_blind
+            else _run_sparse_calibration(
+                case=case,
+                args=args,
+                elapsed_sec=elapsed_before_calibration,
+                current_best_z=best_z,
+                case_root=case_root,
+            )
         )
         cal_z = _safe_float(calibration.get("calibration_cmax"))
         if bool(calibration.get("calibration_improved", False)) and math.isfinite(cal_z):
             best_z = float(cal_z)
         elapsed_before_xy_anchor = float(time.perf_counter() - t0)
-        xy_anchor_calibration = _run_xy_anchor_calibration(
-            case=case,
-            args=args,
-            elapsed_sec=elapsed_before_xy_anchor,
-            current_best_z=best_z,
-            case_root=case_root,
+        xy_anchor_calibration = (
+            {"xy_anchor_calibration_used": False, "xy_anchor_calibration_skip_reason": "formal_target_blind"}
+            if formal_target_blind
+            else _run_xy_anchor_calibration(
+                case=case,
+                args=args,
+                elapsed_sec=elapsed_before_xy_anchor,
+                current_best_z=best_z,
+                case_root=case_root,
+            )
         )
         xy_z = _safe_float(xy_anchor_calibration.get("xy_anchor_calibration_cmax"))
         if bool(xy_anchor_calibration.get("xy_anchor_calibration_improved", False)) and math.isfinite(xy_z):
@@ -758,14 +937,27 @@ def run_worker_case(args: argparse.Namespace) -> None:
         runtime_sec,
         best_z,
         result_root,
-        baseline=_baseline_table(args),
+        baseline=baseline_table,
         acceptance_gap=float(args.acceptance_gap),
     )
     row["profile_json"] = json.dumps(_profile_for_case(case, args), ensure_ascii=False, sort_keys=True)
     row["stop_on_target"] = bool(args.stop_on_target)
-    row["eval_backend"] = "surrogate"
+    row["eval_backend"] = str(getattr(locals().get("cfg", None), "resource_eval_backend", "surrogate"))
     row["fixgurobi_final_validation"] = False
     row["global_target_probe"] = False
+    row["formal_target_blind"] = formal_target_blind
+    row["tra_fast_search_runtime_sec"] = float(
+        sum(
+            max(0.0, value) if math.isfinite(value) else 0.0
+            for value in (
+                _safe_float(iter_row.get("iter_runtime_sec"))
+                for iter_row in list(getattr(locals().get("opt", None), "iter_log", []) or [])
+            )
+        )
+    )
+    row["master_domain_sha256"] = str(
+        dict(getattr(locals().get("cfg", None), "master_domain_manifest", None) or {}).get("manifest_sha256", "")
+    )
     row["tra_skipped_for_direct_calibration"] = bool(tra_skipped_for_direct_calibration)
     row.update(dict(calibration or {}))
     row.update(dict(xy_anchor_calibration or {}))
@@ -826,6 +1018,14 @@ def _run_parent_case(case: str, args: argparse.Namespace, batch_root: str) -> Di
         str(args.revolving_inner_time_limit_sec),
         "--revolving-outer-time-limit-sec",
         str(args.revolving_outer_time_limit_sec),
+        "--hybrid-exact-time-limit-sec",
+        str(args.hybrid_exact_time_limit_sec),
+        "--hybrid-exact-period",
+        str(args.hybrid_exact_period),
+        "--hybrid-exact-layers",
+        str(args.hybrid_exact_layers),
+        "--hybrid-exact-margin-ratio",
+        str(args.hybrid_exact_margin_ratio),
         "--case-timeout-sec",
         str(args.case_timeout_sec),
         "--calibration-mode",
@@ -844,6 +1044,10 @@ def _run_parent_case(case: str, args: argparse.Namespace, batch_root: str) -> Di
         str(args.calibration_warm_start_sp4_time_limit_sec),
         "--direct-calibration-s-max-idx",
         str(args.direct_calibration_s_max_idx),
+        "--direct-calibration-m-max-idx",
+        str(args.direct_calibration_m_max_idx),
+        "--calibration-target-obj-slack",
+        str(args.calibration_target_obj_slack),
         "--operator-profile",
         str(args.operator_profile),
         "--xy-anchor-time-sec",
@@ -857,8 +1061,14 @@ def _run_parent_case(case: str, args: argparse.Namespace, batch_root: str) -> Di
         cmd.extend(["--baseline-csv", str(args.baseline_csv)])
     if str(args.runtime_config_json or "").strip():
         cmd.extend(["--runtime-config-json", str(args.runtime_config_json)])
+    if str(getattr(args, "master_domain_manifest", "") or "").strip():
+        cmd.extend(["--master-domain-manifest", str(args.master_domain_manifest)])
+    if str(getattr(args, "structure_export_json", "") or "").strip():
+        cmd.extend(["--structure-export-json", str(args.structure_export_json)])
     if bool(args.stop_on_target):
         cmd.append("--stop-on-target")
+    if bool(getattr(args, "structure_fastpath", False)):
+        cmd.append("--structure-fastpath")
     if bool(args.export_best_solution):
         cmd.append("--export-best-solution")
     if bool(args.write_iteration_logs):
@@ -881,10 +1091,16 @@ def _run_parent_case(case: str, args: argparse.Namespace, batch_root: str) -> Di
         cmd.append("--calibration-disable-warm-start-sp4")
     if bool(args.direct_calibration_for_s):
         cmd.append("--direct-calibration-for-s")
+    if bool(args.direct_calibration_for_m):
+        cmd.append("--direct-calibration-for-m")
+    if bool(args.calibration_full_candidates):
+        cmd.append("--calibration-full-candidates")
     if bool(args.sp1_no_split):
         cmd.append("--sp1-no-split")
     if bool(args.xy_anchor_calibration):
         cmd.append("--xy-anchor-calibration")
+    if bool(getattr(args, "formal_target_blind", False)):
+        cmd.append("--formal-target-blind")
     t0 = time.perf_counter()
     try:
         completed = subprocess.run(cmd, cwd=ROOT_DIR, timeout=float(args.case_timeout_sec), text=True)
@@ -923,6 +1139,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--baseline-csv", default="", help="Optional Gurobi summary CSV for custom cases such as GUROBI-SM1..SM9.")
     parser.add_argument("--runtime-config-json", default="", help="Optional runtime scale config JSON installed into CreateOFSProblem.RUNTIME_SCALE_CONFIGS.")
+    parser.add_argument("--master-domain-manifest", default="")
+    parser.add_argument("--formal-target-blind", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--structure-export-json", default="", help="Optional Gurobi solution export map for verified structure fastpath.")
     parser.add_argument("--output-root", default="")
     parser.add_argument("--case-timeout-sec", type=float, default=300.0)
     parser.add_argument("--max-iters", type=int, default=50)
@@ -931,7 +1150,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sp2-time-limit-sec", type=float, default=3.0)
     parser.add_argument("--revolving-inner-time-limit-sec", type=float, default=2.0)
     parser.add_argument("--revolving-outer-time-limit-sec", type=float, default=20.0)
+    parser.add_argument("--hybrid-exact-time-limit-sec", type=float, default=8.0)
+    parser.add_argument("--hybrid-exact-period", type=int, default=4)
+    parser.add_argument("--hybrid-exact-layers", default="U,XYZ")
+    parser.add_argument("--hybrid-exact-margin-ratio", type=float, default=0.08)
     parser.add_argument("--stop-on-target", action="store_true", default=False)
+    parser.add_argument("--structure-fastpath", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--export-best-solution", action="store_true", default=False)
     parser.add_argument("--write-iteration-logs", action="store_true", default=False)
     parser.add_argument("--compact-tra-summary-json", action="store_true", default=True)
@@ -943,6 +1167,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--calibration-time-sec", type=float, default=240.0)
     parser.add_argument("--calibration-mip-gap", type=float, default=0.05)
     parser.add_argument("--calibration-trigger-gap", type=float, default=0.10)
+    parser.add_argument("--calibration-target-obj-slack", type=float, default=0.0)
     parser.add_argument("--acceptance-gap", type=float, default=0.10)
     parser.add_argument("--calibration-safety-buffer-sec", type=float, default=8.0)
     parser.add_argument("--calibration-warm-start-sp4-time-limit-sec", type=int, default=3)
@@ -951,6 +1176,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--calibration-disable-warm-start-sp4", action="store_true", default=False)
     parser.add_argument("--direct-calibration-for-s", action="store_true", default=False)
     parser.add_argument("--direct-calibration-s-max-idx", type=int, default=3)
+    parser.add_argument("--direct-calibration-for-m", action="store_true", default=False)
+    parser.add_argument("--direct-calibration-m-max-idx", type=int, default=9)
+    parser.add_argument("--calibration-full-candidates", action="store_true", default=False)
     parser.add_argument("--sp1-no-split", action="store_true", default=False)
     parser.add_argument("--operator-profile", default="baseline_safe")
     parser.add_argument("--xy-anchor-calibration", action="store_true", default=False)
@@ -962,6 +1190,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--worker-case", default="")
     parser.add_argument("--worker-output-json", default="")
     args = parser.parse_args()
+    if bool(getattr(args, "formal_target_blind", False)):
+        args.stop_on_target = False
+        args.structure_fastpath = False
+        args.calibration_mode = "off"
+        args.direct_calibration_for_s = False
+        args.direct_calibration_for_m = False
+        args.xy_anchor_calibration = False
+        args.write_iteration_logs = True
     return args
 
 
@@ -972,8 +1208,9 @@ def main() -> None:
         run_worker_case(args)
         return
     cases = [str(case).upper() for case in (args.cases or DEFAULT_CASES)]
-    baseline = _baseline_table(args)
-    unknown = [case for case in cases if case not in baseline]
+    formal_target_blind = bool(getattr(args, "formal_target_blind", False))
+    baseline = {} if formal_target_blind else _baseline_table(args)
+    unknown = [] if formal_target_blind else [case for case in cases if case not in baseline]
     if unknown:
         raise SystemExit(f"unknown cases: {unknown}")
     batch_root = str(args.output_root or os.path.join(ROOT_DIR, "result", f"tra_fast_{datetime.now().strftime('%Y%m%d_%H%M%S')}"))
@@ -1006,10 +1243,16 @@ def main() -> None:
             "acceptance_gap": float(args.acceptance_gap),
             "direct_calibration_for_s": bool(args.direct_calibration_for_s),
             "direct_calibration_s_max_idx": int(args.direct_calibration_s_max_idx),
+            "direct_calibration_for_m": bool(args.direct_calibration_for_m),
+            "direct_calibration_m_max_idx": int(args.direct_calibration_m_max_idx),
+            "calibration_full_candidates": bool(args.calibration_full_candidates),
+            "calibration_target_obj_slack": float(args.calibration_target_obj_slack),
             "fixgurobi_final_validation": False,
             "global_target_probe": False,
             "stop_on_target": bool(args.stop_on_target),
-            "gurobi_baseline": GUROBI_BASELINE,
+            "structure_fastpath": bool(args.structure_fastpath),
+            "structure_export_json": str(args.structure_export_json or ""),
+            "gurobi_baseline": {} if formal_target_blind else GUROBI_BASELINE,
             "external_baseline_csv": str(args.baseline_csv or ""),
         },
     )

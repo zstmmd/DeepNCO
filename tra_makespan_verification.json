@@ -1,8 +1,8 @@
 {
   "status": "PASS",
-  "task_count": 4,
-  "max_task_end": 103.0,
-  "global_makespan": 103.0,
+  "task_count": 12,
+  "max_task_end": 613.0,
+  "global_makespan": 613.0,
   "coverage": {
     "coverage_ok": true,
     "unmet_sku_total": 0,
@@ -11,8 +11,8 @@
       {
         "subtask_id": 0,
         "order_id": 0,
-        "required_sku_units": 4,
-        "provided_sku_units": 4,
+        "required_sku_units": 6,
+        "provided_sku_units": 6,
         "unmet_sku_units": 0,
         "unmet_skus": {},
         "coverage_ok": true
@@ -20,24 +20,96 @@
       {
         "subtask_id": 1,
         "order_id": 1,
-        "required_sku_units": 1,
-        "provided_sku_units": 1,
+        "required_sku_units": 4,
+        "provided_sku_units": 4,
         "unmet_sku_units": 0,
         "unmet_skus": {},
         "coverage_ok": true
       },
       {
         "subtask_id": 2,
-        "order_id": 0,
-        "required_sku_units": 3,
-        "provided_sku_units": 3,
+        "order_id": 2,
+        "required_sku_units": 6,
+        "provided_sku_units": 6,
         "unmet_sku_units": 0,
         "unmet_skus": {},
         "coverage_ok": true
       },
       {
         "subtask_id": 3,
+        "order_id": 3,
+        "required_sku_units": 4,
+        "provided_sku_units": 4,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 4,
+        "order_id": 4,
+        "required_sku_units": 5,
+        "provided_sku_units": 5,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 5,
+        "order_id": 5,
+        "required_sku_units": 4,
+        "provided_sku_units": 4,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 6,
+        "order_id": 0,
+        "required_sku_units": 4,
+        "provided_sku_units": 4,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 7,
         "order_id": 1,
+        "required_sku_units": 6,
+        "provided_sku_units": 6,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 8,
+        "order_id": 2,
+        "required_sku_units": 4,
+        "provided_sku_units": 4,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 9,
+        "order_id": 3,
+        "required_sku_units": 6,
+        "provided_sku_units": 6,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 10,
+        "order_id": 4,
+        "required_sku_units": 5,
+        "provided_sku_units": 5,
+        "unmet_sku_units": 0,
+        "unmet_skus": {},
+        "coverage_ok": true
+      },
+      {
+        "subtask_id": 11,
+        "order_id": 5,
         "required_sku_units": 6,
         "provided_sku_units": 6,
         "unmet_sku_units": 0,
@@ -53,53 +125,157 @@
     "orders": [
       {
         "order_id": 0,
-        "lst_sec": 183.0,
-        "kitting_span_limit_sec": 56.0,
-        "effective_window_sec": 105.0,
+        "lst_sec": 439.0,
+        "kitting_span_limit_sec": 80.0,
+        "effective_window_sec": 150.0,
         "order_anchor_start_sec": 0.0,
         "order_time_window_lb_sec": 0.0,
-        "order_time_window_ub_sec": 105.0,
+        "order_time_window_ub_sec": 150.0,
         "start_proxy_lb_sec": 0.0,
         "start_proxy_ub_sec": 0.0,
         "start_proxy_span_sec": 0.0,
-        "arrival_lb": 13.0,
-        "arrival_ub": 46.0,
+        "arrival_lb": 25.0,
+        "arrival_ub": 63.0,
         "span_overrun": 0.0,
         "deadline_overrun": 0.0,
         "subtasks": [
           {
             "subtask_id": 0,
-            "arrival": 13.0
+            "arrival": 63.0
           },
           {
-            "subtask_id": 2,
-            "arrival": 46.0
+            "subtask_id": 6,
+            "arrival": 25.0
           }
         ]
       },
       {
         "order_id": 1,
-        "lst_sec": 203.0,
-        "kitting_span_limit_sec": 56.0,
-        "effective_window_sec": 105.0,
+        "lst_sec": 481.0,
+        "kitting_span_limit_sec": 80.0,
+        "effective_window_sec": 150.0,
         "order_anchor_start_sec": 0.0,
         "order_time_window_lb_sec": 0.0,
-        "order_time_window_ub_sec": 105.0,
+        "order_time_window_ub_sec": 150.0,
         "start_proxy_lb_sec": 0.0,
         "start_proxy_ub_sec": 0.0,
         "start_proxy_span_sec": 0.0,
-        "arrival_lb": 19.0,
-        "arrival_ub": 46.0,
+        "arrival_lb": 69.0,
+        "arrival_ub": 69.0,
         "span_overrun": 0.0,
         "deadline_overrun": 0.0,
         "subtasks": [
           {
             "subtask_id": 1,
-            "arrival": 46.0
+            "arrival": 69.0
           },
           {
+            "subtask_id": 7,
+            "arrival": 69.0
+          }
+        ]
+      },
+      {
+        "order_id": 2,
+        "lst_sec": 481.0,
+        "kitting_span_limit_sec": 80.0,
+        "effective_window_sec": 150.0,
+        "order_anchor_start_sec": 0.0,
+        "order_time_window_lb_sec": 0.0,
+        "order_time_window_ub_sec": 150.0,
+        "start_proxy_lb_sec": 0.0,
+        "start_proxy_ub_sec": 0.0,
+        "start_proxy_span_sec": 0.0,
+        "arrival_lb": 69.0,
+        "arrival_ub": 90.0,
+        "span_overrun": 0.0,
+        "deadline_overrun": 0.0,
+        "subtasks": [
+          {
+            "subtask_id": 2,
+            "arrival": 90.0
+          },
+          {
+            "subtask_id": 8,
+            "arrival": 69.0
+          }
+        ]
+      },
+      {
+        "order_id": 3,
+        "lst_sec": 496.0,
+        "kitting_span_limit_sec": 80.0,
+        "effective_window_sec": 150.0,
+        "order_anchor_start_sec": 0.0,
+        "order_time_window_lb_sec": 0.0,
+        "order_time_window_ub_sec": 150.0,
+        "start_proxy_lb_sec": 0.0,
+        "start_proxy_ub_sec": 0.0,
+        "start_proxy_span_sec": 0.0,
+        "arrival_lb": 69.0,
+        "arrival_ub": 90.0,
+        "span_overrun": 0.0,
+        "deadline_overrun": 0.0,
+        "subtasks": [
+          {
             "subtask_id": 3,
-            "arrival": 19.0
+            "arrival": 90.0
+          },
+          {
+            "subtask_id": 9,
+            "arrival": 69.0
+          }
+        ]
+      },
+      {
+        "order_id": 4,
+        "lst_sec": 439.0,
+        "kitting_span_limit_sec": 80.0,
+        "effective_window_sec": 150.0,
+        "order_anchor_start_sec": 0.0,
+        "order_time_window_lb_sec": 0.0,
+        "order_time_window_ub_sec": 150.0,
+        "start_proxy_lb_sec": 0.0,
+        "start_proxy_ub_sec": 0.0,
+        "start_proxy_span_sec": 0.0,
+        "arrival_lb": 69.0,
+        "arrival_ub": 90.0,
+        "span_overrun": 0.0,
+        "deadline_overrun": 0.0,
+        "subtasks": [
+          {
+            "subtask_id": 4,
+            "arrival": 90.0
+          },
+          {
+            "subtask_id": 10,
+            "arrival": 69.0
+          }
+        ]
+      },
+      {
+        "order_id": 5,
+        "lst_sec": 429.0,
+        "kitting_span_limit_sec": 80.0,
+        "effective_window_sec": 150.0,
+        "order_anchor_start_sec": 0.0,
+        "order_time_window_lb_sec": 0.0,
+        "order_time_window_ub_sec": 150.0,
+        "start_proxy_lb_sec": 0.0,
+        "start_proxy_ub_sec": 0.0,
+        "start_proxy_span_sec": 0.0,
+        "arrival_lb": 69.0,
+        "arrival_ub": 219.0,
+        "span_overrun": 0.0,
+        "deadline_overrun": 0.0,
+        "subtasks": [
+          {
+            "subtask_id": 5,
+            "arrival": 219.0
+          },
+          {
+            "subtask_id": 11,
+            "arrival": 69.0
           }
         ]
       }
@@ -114,39 +290,115 @@
     "orders": [
       {
         "order_id": 0,
-        "unique_sku_count": 7,
-        "effective_window_sec": 105.0,
+        "unique_sku_count": 10,
+        "effective_window_sec": 150.0,
         "subtask_count": 2,
         "arrived_subtask_count": 2,
-        "span_sec": 33.0,
+        "span_sec": 38.0,
         "feasible": true,
         "subtasks": [
           {
             "subtask_id": 0,
-            "arrival": 13.0
+            "arrival": 63.0
           },
           {
-            "subtask_id": 2,
-            "arrival": 46.0
+            "subtask_id": 6,
+            "arrival": 25.0
           }
         ]
       },
       {
         "order_id": 1,
-        "unique_sku_count": 7,
-        "effective_window_sec": 105.0,
+        "unique_sku_count": 10,
+        "effective_window_sec": 150.0,
         "subtask_count": 2,
         "arrived_subtask_count": 2,
-        "span_sec": 27.0,
+        "span_sec": 0.0,
         "feasible": true,
         "subtasks": [
           {
             "subtask_id": 1,
-            "arrival": 46.0
+            "arrival": 69.0
           },
           {
+            "subtask_id": 7,
+            "arrival": 69.0
+          }
+        ]
+      },
+      {
+        "order_id": 2,
+        "unique_sku_count": 10,
+        "effective_window_sec": 150.0,
+        "subtask_count": 2,
+        "arrived_subtask_count": 2,
+        "span_sec": 21.0,
+        "feasible": true,
+        "subtasks": [
+          {
+            "subtask_id": 2,
+            "arrival": 90.0
+          },
+          {
+            "subtask_id": 8,
+            "arrival": 69.0
+          }
+        ]
+      },
+      {
+        "order_id": 3,
+        "unique_sku_count": 10,
+        "effective_window_sec": 150.0,
+        "subtask_count": 2,
+        "arrived_subtask_count": 2,
+        "span_sec": 21.0,
+        "feasible": true,
+        "subtasks": [
+          {
             "subtask_id": 3,
-            "arrival": 19.0
+            "arrival": 90.0
+          },
+          {
+            "subtask_id": 9,
+            "arrival": 69.0
+          }
+        ]
+      },
+      {
+        "order_id": 4,
+        "unique_sku_count": 10,
+        "effective_window_sec": 150.0,
+        "subtask_count": 2,
+        "arrived_subtask_count": 2,
+        "span_sec": 21.0,
+        "feasible": true,
+        "subtasks": [
+          {
+            "subtask_id": 4,
+            "arrival": 90.0
+          },
+          {
+            "subtask_id": 10,
+            "arrival": 69.0
+          }
+        ]
+      },
+      {
+        "order_id": 5,
+        "unique_sku_count": 10,
+        "effective_window_sec": 150.0,
+        "subtask_count": 2,
+        "arrived_subtask_count": 2,
+        "span_sec": 150.0,
+        "feasible": true,
+        "subtasks": [
+          {
+            "subtask_id": 5,
+            "arrival": 219.0
+          },
+          {
+            "subtask_id": 11,
+            "arrival": 69.0
           }
         ]
       }
@@ -157,36 +409,108 @@
     {
       "station_id": 0,
       "task_id": 0,
-      "start": 13.0,
-      "end": 52.0,
+      "start": 63.0,
+      "end": 153.0,
       "wait": 0.0,
-      "pick": 39.0,
+      "pick": 90.0,
       "extra": 0.0
     },
     {
       "station_id": 0,
       "task_id": 1,
-      "start": 52.0,
-      "end": 64.0,
-      "wait": 6.0,
-      "pick": 12.0,
+      "start": 153.0,
+      "end": 225.0,
+      "wait": 84.0,
+      "pick": 72.0,
       "extra": 0.0
     },
     {
       "station_id": 0,
       "task_id": 2,
-      "start": 64.0,
-      "end": 103.0,
-      "wait": 18.0,
-      "pick": 39.0,
+      "start": 225.0,
+      "end": 360.0,
+      "wait": 135.0,
+      "pick": 135.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 0,
+      "task_id": 3,
+      "start": 360.0,
+      "end": 459.0,
+      "wait": 270.0,
+      "pick": 99.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 0,
+      "task_id": 4,
+      "start": 459.0,
+      "end": 543.0,
+      "wait": 369.0,
+      "pick": 84.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 0,
+      "task_id": 5,
+      "start": 543.0,
+      "end": 603.0,
+      "wait": 324.0,
+      "pick": 60.0,
       "extra": 0.0
     },
     {
       "station_id": 1,
-      "task_id": 3,
-      "start": 19.0,
-      "end": 103.0,
+      "task_id": 6,
+      "start": 25.0,
+      "end": 91.0,
       "wait": 0.0,
+      "pick": 66.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 1,
+      "task_id": 7,
+      "start": 91.0,
+      "end": 226.0,
+      "wait": 22.0,
+      "pick": 135.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 1,
+      "task_id": 8,
+      "start": 226.0,
+      "end": 307.0,
+      "wait": 157.0,
+      "pick": 81.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 1,
+      "task_id": 9,
+      "start": 307.0,
+      "end": 451.0,
+      "wait": 238.0,
+      "pick": 144.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 1,
+      "task_id": 10,
+      "start": 451.0,
+      "end": 529.0,
+      "wait": 382.0,
+      "pick": 78.0,
+      "extra": 0.0
+    },
+    {
+      "station_id": 1,
+      "task_id": 11,
+      "start": 529.0,
+      "end": 613.0,
+      "wait": 460.0,
       "pick": 84.0,
       "extra": 0.0
     }

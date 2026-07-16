@@ -199,6 +199,8 @@ class FixGurobiEvaluator:
     def _scope_for_layer(self, layer: str) -> str:
         layer_name = str(layer or "").upper()
         if bool(getattr(self.cfg, "resource_revolving_mode", False)) and bool(getattr(self.cfg, "resource_revolving_enable_u_layer", False)):
+            if layer_name == "XYZ" and bool(getattr(self.cfg, "fixgurobi_global_outer_on_xyz", False)):
+                return "GLOBAL"
             if layer_name == "X":
                 return "Y"
             if layer_name == "XZ":
@@ -562,6 +564,15 @@ class FixGurobiEvaluator:
             if self._fixes_z(scope):
                 fixed_z_descriptors_by_order_slot[int(order_id)] = z_rows
 
+        if str(scope or "").upper() == "GLOBAL":
+            manifest_slot_counts = dict(
+                dict(getattr(self.cfg, "master_domain_manifest", None) or {}).get("slot_count_by_order", {}) or {}
+            )
+            if manifest_slot_counts:
+                fixed_slot_count_by_order = {
+                    int(order_id): int(count) for order_id, count in manifest_slot_counts.items()
+                }
+
         fixed_used_stack_ids_by_order = (
             {int(k): list(v) for k, v in forced_candidate_stacks_by_order.items()}
             if self._include_fixed_used_stacks(scope)
@@ -604,11 +615,26 @@ class FixGurobiEvaluator:
             "route_sequence_audit": route_audit,
         }
 
+    def precompile(self, config: ResourceConfig, *, layer: str) -> Dict[str, Any]:
+        scope = self._scope_for_layer(layer)
+        normalized = config.clone().rebuild_indices()
+        fixed_payload = self._fixed_payload(normalized, scope, ())
+        started = time.perf_counter()
+        compiled, diagnostics, _base_cfg = self._get_compiled_model(fixed_payload, scope)
+        return {
+            "ok": compiled is not None,
+            "scope": str(scope),
+            "runtime_sec": float(time.perf_counter() - started),
+            **dict(diagnostics or {}),
+        }
+
     def _build_global_cfg(self, fixed_payload: Dict[str, Any]) -> GlobalXYZUConfig:
         has_fixed_route = bool(
             fixed_payload.get("fixed_route_node_sequence_by_robot")
             or fixed_payload.get("fixed_route_task_sequence_by_robot")
         )
+        master_domain = dict(getattr(self.cfg, "master_domain_manifest", None) or {})
+        canonical_warm = dict(master_domain.get("canonical_warm_config", {}) or {})
         cfg = GlobalXYZUConfig(
             time_limit_sec=float(getattr(self.cfg, "fixgurobi_time_limit_sec", 20.0) or 20.0),
             mip_gap=float(getattr(self.cfg, "fixgurobi_mip_gap", 0.01) or 0.01),
@@ -620,13 +646,38 @@ class FixGurobiEvaluator:
                 if has_fixed_route
                 else int(getattr(self.cfg, "fixgurobi_candidate_station_topk_per_stack", 999) or 999)
             ),
-            warm_start_sp4_time_limit_sec=0,
-            warm_start_subtask_ordering=str(getattr(self.cfg, "fixgurobi_warm_start_subtask_ordering", "default") or "default"),
+            warm_start_sp4_time_limit_sec=int(canonical_warm.get("warm_start_sp4_time_limit_sec", 0) or 0),
+            warm_start_subtask_ordering=str(
+                canonical_warm.get(
+                    "warm_start_subtask_ordering",
+                    getattr(self.cfg, "fixgurobi_warm_start_subtask_ordering", "default"),
+                )
+                or "default"
+            ),
+            warm_start_use_sp2_mip_initial=bool(canonical_warm.get("warm_start_use_sp2_mip_initial", False)),
+            warm_start_sp2_mip_time_limit_sec=float(
+                canonical_warm.get("warm_start_sp2_mip_time_limit_sec", 30.0) or 30.0
+            ),
+            warm_start_refine_sp2_after_sp4=bool(
+                canonical_warm.get("warm_start_refine_sp2_after_sp4", False)
+            ),
             route_pickup_neighbor_limit=int(getattr(self.cfg, "fixgurobi_route_pickup_neighbor_limit", 0) or 0),
+            sort_hit_tote_threshold=int(
+                canonical_warm.get(
+                    "sort_hit_tote_threshold",
+                    getattr(self.cfg, "fixgurobi_sort_hit_tote_threshold", 3),
+                )
+                or 3
+            ),
             enable_scale_adaptive_candidate_prune=bool(getattr(self.cfg, "fixgurobi_enable_scale_adaptive_candidate_prune", False)),
             gurobi_output=bool(getattr(self.cfg, "fixgurobi_output", False)),
             enable_warm_start=bool(getattr(self.cfg, "enable_warm_start", False) or getattr(self.cfg, "fixgurobi_use_warm_bound", True)),
-            warm_start_use_sp4=bool(getattr(self.cfg, "enable_warm_start", False) or getattr(self.cfg, "fixgurobi_use_warm_bound", True)),
+            warm_start_use_sp4=bool(
+                canonical_warm.get(
+                    "warm_start_use_sp4",
+                    bool(getattr(self.cfg, "enable_warm_start", False) or getattr(self.cfg, "fixgurobi_use_warm_bound", True)),
+                )
+            ),
             integrate_u_route=True,
             route_arc_prune=bool(getattr(self.cfg, "fixgurobi_route_arc_prune", True)),
             enable_route_time_window_arc_prune=bool(getattr(self.cfg, "fixgurobi_route_time_window_arc_prune", True)),
@@ -655,6 +706,8 @@ class FixGurobiEvaluator:
             fixgurobi_no_warm_start=not bool(getattr(self.cfg, "enable_warm_start", False)),
             fixgurobi_allow_warm_start_fallback=bool(getattr(self.cfg, "fixgurobi_allow_warm_start_fallback", False)),
             fixgurobi_warm_bound_only=bool((not bool(getattr(self.cfg, "enable_warm_start", False))) and getattr(self.cfg, "fixgurobi_use_warm_bound", True)),
+            master_domain_manifest=getattr(self.cfg, "master_domain_manifest", None),
+            master_domain_strict=bool(getattr(self.cfg, "master_domain_strict", False)),
         )
         cfg.route_big_m_time = max(
             float(getattr(cfg, "big_m_time", 2000.0) or 2000.0),
@@ -687,6 +740,9 @@ class FixGurobiEvaluator:
         problem = getattr(self.opt, "problem", None)
         scale = str(getattr(problem, "scale_name", getattr(self.cfg, "scale", "")) or "")
         seed = int(getattr(self.cfg, "seed", 0) or 0)
+        master_domain_sha256 = str(
+            dict(getattr(base_cfg, "master_domain_manifest", None) or {}).get("manifest_sha256", "")
+        )
         slot_count_key = tuple(
             (int(order_id), int(count))
             for order_id, count in sorted(dict(fixed_payload.get("fixed_slot_count_by_order") or {}).items())
@@ -737,6 +793,7 @@ class FixGurobiEvaluator:
         return (
             str(scale).upper(),
             int(seed),
+            master_domain_sha256,
             slot_count_key,
             int(getattr(base_cfg, "candidate_stack_topk", 999) or 999),
             int(getattr(base_cfg, "candidate_station_topk_per_stack", 999) or 999),

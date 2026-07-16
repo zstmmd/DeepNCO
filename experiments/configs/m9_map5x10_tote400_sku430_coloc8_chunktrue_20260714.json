@@ -1,0 +1,27 @@
+{
+  "configs": {
+    "M9": {
+      "map_size": [5, 10],
+      "map_layout_mode": "middle_stack_grid",
+      "middle_stack_shape": [5, 10],
+      "storage_gap_rows": 4,
+      "resources": [5, 4, 400],
+      "data": [11, 430],
+      "bom_complexity": [24, 1],
+      "warehouse_block_height": 8,
+      "target_stack_count": 50,
+      "inventory_cold_filler_probability": 0.0,
+      "inventory_initial_unassigned_skus_per_tote": 1,
+      "exact_order_sku_counts": [24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24],
+      "exact_order_sku_quantity_range": [3, 4],
+      "bom_colocated_inventory": true,
+      "bom_colocated_stack_counts": [8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8],
+      "bom_colocated_disjoint_stack_groups": false,
+      "bom_colocated_support_multiplier": 3.0,
+      "bom_colocated_sku_copy_count": 2,
+      "bom_colocated_chunked_by_stack": true,
+      "bom_batch_quantity_unit": 1,
+      "bom_batch_quantity_range": [3, 3]
+    }
+  }
+}

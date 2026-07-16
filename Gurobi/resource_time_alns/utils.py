@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import math
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple, TypeVar
 
 from .state import ResourceConfig
@@ -138,3 +139,27 @@ def global_used_totes(
         exclude_task_ids=exclude_task_ids,
     )
     return {int(tote_id) for tote_id in tote_rows.keys()}
+
+
+def _sync_problem_global_makespan_from_tasks(problem: Any) -> float:
+    """Align a restored TRA snapshot's scalar makespan with its task rows."""
+    if problem is None:
+        return float("nan")
+    tasks: List[Any] = []
+    for subtask in getattr(problem, "subtask_list", []) or []:
+        tasks.extend(list(getattr(subtask, "execution_tasks", []) or []))
+    if not tasks:
+        tasks.extend(list(getattr(problem, "task_list", []) or []))
+    max_end = 0.0
+    for task in tasks:
+        try:
+            end = float(getattr(task, "end_process_time", 0.0) or 0.0)
+        except Exception:
+            continue
+        if math.isfinite(end):
+            max_end = max(float(max_end), float(end))
+    try:
+        setattr(problem, "global_makespan", float(max_end))
+    except Exception:
+        pass
+    return float(max_end)

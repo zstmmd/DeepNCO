@@ -232,8 +232,13 @@ class TRARunConfig:
     resource_assert_sp4_ortools_only: bool = True
     resource_eval_backend: str = "surrogate"
     resource_fixgurobi_skip_ortools_validation: bool = False
+    resource_hybrid_exact_period: int = 4
+    resource_hybrid_exact_layers: str = "U,XYZ"
+    resource_hybrid_exact_margin_ratio: float = 0.08
     resource_target_cmax: float = float("nan")
     resource_wall_time_limit_sec: float = 0.0
+    master_domain_manifest: Optional[Dict[str, Any]] = None
+    master_domain_strict: bool = False
     fixgurobi_time_limit_sec: float = 20.0
     fixgurobi_mip_gap: float = 0.01
     fixgurobi_candidate_trial_limit: int = 1
@@ -248,7 +253,10 @@ class TRARunConfig:
     fixgurobi_allow_warm_start_fallback: bool = False
     fixgurobi_warm_start_subtask_ordering: str = "default"
     fixgurobi_force_xyz_scope: bool = False
+    fixgurobi_global_outer_on_xyz: bool = False
     fixgurobi_enable_compiled_cache: bool = True
+    fixgurobi_precompile_before_search: bool = False
+    resource_revolving_canonical_seed_outer_first: bool = False
     fixgurobi_enable_two_stage: bool = True
     fixgurobi_enable_cutoff: bool = True
     fixgurobi_accept_first_improvement: bool = True
@@ -264,6 +272,7 @@ class TRARunConfig:
     fixgurobi_route_load_interval_arc_prune: bool = True
     fixgurobi_enable_symmetry: bool = True
     fixgurobi_relax_sort_tote_fix: bool = False
+    fixgurobi_sort_hit_tote_threshold: int = 3
     fixgurobi_fix_used_stack_ids: bool = False
     fixgurobi_output: bool = False
     resource_enable_single_flip_sortify: bool = False
@@ -851,6 +860,7 @@ class TRAOptimizer:
         self.precheck_aborted: bool = False
         self.precheck_status: Optional[str] = None
         self.run_start_time_sec: float = 0.0
+        self.search_start_time_sec: float = 0.0
         self.run_total_time_sec: float = 0.0
         self._resolved_log_dir: Optional[str] = None
         self.layer_runtime_sec_by_name: Dict[str, float] = {name: 0.0 for name in self.layer_names}
@@ -1510,7 +1520,10 @@ class TRAOptimizer:
                 warm_start_use_sp4=False,
                 integrate_u_route=True,
                 route_arc_prune=bool(getattr(self.cfg, "fixgurobi_route_arc_prune", True)),
+                master_domain_manifest=getattr(self.cfg, "master_domain_manifest", None),
+                master_domain_strict=bool(getattr(self.cfg, "master_domain_strict", False)),
                 route_pickup_neighbor_limit=int(getattr(self.cfg, "fixgurobi_route_pickup_neighbor_limit", 0) or 0),
+                sort_hit_tote_threshold=int(getattr(self.cfg, "fixgurobi_sort_hit_tote_threshold", 3) or 3),
                 enable_route_time_window_arc_prune=bool(getattr(self.cfg, "fixgurobi_route_time_window_arc_prune", True)),
                 enable_route_load_interval_arc_prune=bool(getattr(self.cfg, "fixgurobi_route_load_interval_arc_prune", True)),
                 gurobi_output=False,
@@ -1740,9 +1753,10 @@ class TRAOptimizer:
 
 
     def _runtime_elapsed_sec(self) -> float:
-        if self.run_start_time_sec <= 0.0:
+        clock_start = float(self.search_start_time_sec or self.run_start_time_sec)
+        if clock_start <= 0.0:
             return 0.0
-        return float(max(0.0, time.perf_counter() - self.run_start_time_sec))
+        return float(max(0.0, time.perf_counter() - clock_start))
 
     def _resource_time_run_stats_payload(self) -> Dict[str, Any]:
         iter_rows = list(getattr(self, "iter_log", []) or [])
@@ -8188,6 +8202,7 @@ class TRAOptimizer:
         self._reset_runtime_caches()
         self._resolved_log_dir = None
         self.run_start_time_sec = float(time.perf_counter())
+        self.search_start_time_sec = 0.0
         self.run_total_time_sec = 0.0
         self.layer_runtime_sec_by_name = {name: 0.0 for name in self.layer_names}
         self.layer_trial_count_by_name = {name: 0.0 for name in self.layer_names}

@@ -820,6 +820,7 @@ def main() -> None:
     parser.add_argument("--disable-warm-start-sp4", action="store_true", help="Disable SP4/LKH during warm-start construction and use greedy routing.")
     parser.add_argument("--enable-sp4-fallback", action="store_true", help="Allow SP4/ortools if the integrated MIP path falls back.")
     parser.add_argument("--max-candidate-stacks-per-order", type=int, default=0)
+    parser.add_argument("--enable-hard-candidate-stack-cap", action="store_true", help="Apply max-candidate-stacks-per-order as a hard legacy cap.")
     parser.add_argument("--u-route-lkh", action="store_true", help="Use non-MIP routing in the U stage when SP4 is available.")
     parser.add_argument("--bom-arrival-window-sec", type=float, default=60.0)
     parser.add_argument("--disable-order-time-windows", action="store_true")
@@ -834,6 +835,9 @@ def main() -> None:
     parser.add_argument("--enable-route-slot-stack-count-lb", action="store_true", help="Deprecated no-op: slot stack-count capacity cover cuts are enabled by default.")
     parser.add_argument("--disable-route-slot-stack-count-lb", action="store_true", help="Disable slot stack-count capacity cover lower-bound cuts.")
     parser.add_argument("--enable-route-finish-cmax-lb", action="store_true", help="Enable cmax lower bound from robot route finish times.")
+    parser.add_argument("--enable-slot-pair-arrival-lb", action="store_true", help="Add per selected stack/station intrinsic-arrival lower bounds to each slot.")
+    parser.add_argument("--enable-slot-sku-arrival-lb", action="store_true", help="Add per SKU intrinsic-arrival lower bounds to each slot when that SKU is assigned there.")
+    parser.add_argument("--enable-sku-release-workload-lb", action="store_true", help="Add global tail workload lower bounds from per-SKU route release times.")
     parser.add_argument("--enable-global-arrival-workload-lb", action="store_true", help="Deprecated no-op: global arrival workload lower-bound cut is enabled by default.")
     parser.add_argument("--disable-global-arrival-workload-lb", action="store_true", help="Disable global arrival plus station workload lower-bound cut.")
     parser.add_argument("--enable-route-time-window-arc-prune", action="store_true", help="Enable safe U-layer time-window arc pruning.")
@@ -848,26 +852,24 @@ def main() -> None:
     parser.add_argument("--disable-warm-candidate-stack-prune", action="store_true", help="Disable warm-stack candidate pruning.")
     parser.add_argument("--candidate-station-topk-per-stack", type=int, default=999)
     parser.add_argument("--route-pickup-neighbor-limit", type=int, default=0)
-    parser.add_argument(
-        "--enable-route-transition-knn-prune",
-        action="store_true",
-        help="Apply protected KNN pruning to delivery-to-pickup route transitions.",
-    )
-    parser.add_argument(
-        "--enforce-safe-prune-audit",
-        action="store_true",
-        help="Fail before optimize if candidate inventory, warm stacks, or protected route arcs are uncovered.",
-    )
-    parser.add_argument(
-        "--enable-warm-incumbent-cmax-bound",
-        action="store_true",
-        help="Bound Cmax and route pruning by the feasible warm incumbent makespan.",
-    )
+    parser.add_argument("--enable-route-delivery-pickup-neighbor-prune", action="store_true", help="Also apply route pickup-neighbor pruning to delivery->pickup arcs while preserving protected warm arcs.")
     parser.add_argument("--sort-hit-tote-threshold", type=int, default=3, help="Use SORT when selected hit tote count on a stack is greater than this threshold; otherwise use FLIP.")
     parser.add_argument("--enable-scale-adaptive-candidate-prune", action="store_true", help="Enable GUROBI-S6+ adaptive candidate compression.")
     parser.add_argument("--disable-scale-adaptive-candidate-prune", action="store_true", help="Deprecated no-op: scale-adaptive candidate compression is disabled by default.")
     parser.add_argument("--disable-resource-lex-symmetry", action="store_true", help="Disable safe same-coordinate resource lex symmetry constraints.")
     parser.add_argument("--disable-slot-lex-symmetry", action="store_true", help="Disable slot load/station lex symmetry constraints.")
+    parser.add_argument("--enable-slot-sku-signature-lex-symmetry", action="store_true", help="Add load-dominant SKU signature lex ordering between same-order slots.")
+    parser.add_argument("--enable-station-load-lex-symmetry", action="store_true", help="Add final-clock load ordering for stations with identical candidate-stack distance signatures.")
+    parser.add_argument("--station-slot-count-cap", type=int, default=0, help="Experimental station active-slot count cap; <=0 leaves it unset.")
+    parser.add_argument("--enable-station-rank-workload-lb", action="store_true", help="Add station-rank cumulative workload lower bounds using assignment linearization.")
+    parser.add_argument("--enable-warm-route-time-upper-bound", action="store_true", help="Tighten slot/route time upper bounds using the current warm feasible cmax.")
+    parser.add_argument("--warm-route-time-upper-bound-margin-sec", type=float, default=0.0, help="Optional nonnegative margin added to the warm route time upper bound.")
+    parser.add_argument("--enable-route-time-big-m-linear-cuts", action="store_true", help="Add redundant per-arc linear Big-M route time constraints for the LP relaxation.")
+    parser.add_argument("--enable-route-load-big-m-linear-cuts", action="store_true", help="Add redundant per-arc linear Big-M route load constraints for the LP relaxation.")
+    parser.add_argument("--route-constraint-mode", choices=("indicator", "linear"), default="indicator", help="U-layer route time/load/owner constraint encoding.")
+    parser.add_argument("--enable-hard-station-topk", action="store_true", help="Use station topK strictly for U-route candidates without warm-station union protection.")
+    parser.add_argument("--enable-slot-specific-warm-station-protection", action="store_true", help="Protect warm stations only for the exact warm slot/stack pairs instead of every slot in the order.")
+    parser.add_argument("--enable-warm-start-station-projection", action="store_true", help="Project warm-start station/rank choices onto available U-route station candidates.")
     parser.add_argument("--enable-anchor-first-order-robot", action="store_true", help="Experimental: fix warm first pickup to its warm robot.")
     parser.add_argument("--disable-selected-workload-lbs", action="store_true", help="Disable selected route/station workload lower bounds.")
     parser.add_argument("--enable-route-arrival-slot-linear", action="store_true", help="Re-enable redundant linear Big-M route-arrival binding.")
@@ -888,6 +890,11 @@ def main() -> None:
     parser.add_argument("--gurobi-crossover", type=int, default=-1, help="Optional Gurobi Crossover; negative leaves it unset.")
     parser.add_argument("--gurobi-mip-focus", type=int, default=-1, help="Optional Gurobi MIPFocus; negative leaves it unset.")
     parser.add_argument("--gurobi-start-node-limit", type=int, default=-1, help="Optional Gurobi StartNodeLimit for MIP-start repair; negative leaves it unset.")
+    parser.add_argument("--gurobi-seed", type=int, default=-1, help="Optional Gurobi random Seed; negative leaves it unset.")
+    parser.add_argument("--gurobi-rins", type=int, default=-1, help="Optional Gurobi RINS frequency; negative leaves it unset.")
+    parser.add_argument("--gurobi-no-rel-heur-time", type=float, default=-1.0, help="Optional Gurobi NoRelHeurTime in seconds; negative leaves it unset.")
+    parser.add_argument("--gurobi-no-rel-heur-work", type=float, default=-1.0, help="Optional Gurobi NoRelHeurWork; negative leaves it unset.")
+    parser.add_argument("--gurobi-improve-start-gap", type=float, default=-1.0, help="Optional Gurobi ImproveStartGap; negative leaves it unset.")
     parser.add_argument("--gurobi-cuts", type=int, default=-1, help="Optional Gurobi Cuts parameter; negative uses config default.")
     parser.add_argument("--gurobi-cut-passes", type=int, default=-1, help="Optional Gurobi CutPasses parameter; negative uses config default.")
     parser.add_argument("--gurobi-presolve", type=int, default=-1, help="Optional Gurobi Presolve parameter; negative uses config default.")
@@ -913,6 +920,7 @@ def main() -> None:
         gurobi_output=not bool(args.quiet_gurobi),
         integer_cmax=bool(args.integer_cmax),
         max_candidate_stacks_per_order=int(args.max_candidate_stacks_per_order),
+        enable_hard_candidate_stack_cap=bool(args.enable_hard_candidate_stack_cap),
         u_route_use_mip=not bool(args.u_route_lkh),
         integrate_u_route=not bool(args.disable_integrated_u_route),
         route_arc_prune=not bool(args.disable_route_arc_prune),
@@ -930,6 +938,9 @@ def main() -> None:
         enable_route_pair_service_travel_lb=bool(args.enable_route_pair_service_travel_lb),
         enable_route_slot_stack_count_lb=not bool(args.disable_route_slot_stack_count_lb),
         enable_route_finish_cmax_lb=bool(args.enable_route_finish_cmax_lb),
+        enable_slot_pair_arrival_lb=bool(args.enable_slot_pair_arrival_lb),
+        enable_slot_sku_arrival_lb=bool(args.enable_slot_sku_arrival_lb),
+        enable_sku_release_workload_lb=bool(args.enable_sku_release_workload_lb),
         enable_global_arrival_workload_lb=not bool(args.disable_global_arrival_workload_lb),
         enable_route_time_window_arc_prune=bool(args.enable_route_time_window_arc_prune) and not bool(args.disable_route_time_window_arc_prune),
         enable_route_load_interval_arc_prune=not bool(args.disable_route_load_interval_arc_prune),
@@ -939,13 +950,23 @@ def main() -> None:
         enable_warm_candidate_stack_prune=bool(args.enable_warm_candidate_stack_prune) and not bool(args.disable_warm_candidate_stack_prune),
         candidate_station_topk_per_stack=int(args.candidate_station_topk_per_stack),
         route_pickup_neighbor_limit=int(args.route_pickup_neighbor_limit),
-        enable_route_transition_knn_prune=bool(args.enable_route_transition_knn_prune),
-        enforce_safe_prune_audit=bool(args.enforce_safe_prune_audit),
-        enable_warm_incumbent_cmax_bound=bool(args.enable_warm_incumbent_cmax_bound),
+        enable_route_delivery_pickup_neighbor_prune=bool(args.enable_route_delivery_pickup_neighbor_prune),
         sort_hit_tote_threshold=int(args.sort_hit_tote_threshold),
         enable_scale_adaptive_candidate_prune=bool(args.enable_scale_adaptive_candidate_prune) and not bool(args.disable_scale_adaptive_candidate_prune),
         enable_resource_lex_symmetry=not bool(args.disable_resource_lex_symmetry),
         enable_slot_lex_symmetry=not bool(args.disable_slot_lex_symmetry),
+        enable_slot_sku_signature_lex_symmetry=bool(args.enable_slot_sku_signature_lex_symmetry),
+        enable_station_load_lex_symmetry=bool(args.enable_station_load_lex_symmetry),
+        station_slot_count_cap=int(args.station_slot_count_cap),
+        enable_station_rank_workload_lb=bool(args.enable_station_rank_workload_lb),
+        enable_warm_route_time_upper_bound=bool(args.enable_warm_route_time_upper_bound),
+        warm_route_time_upper_bound_margin_sec=float(args.warm_route_time_upper_bound_margin_sec),
+        enable_route_time_big_m_linear_cuts=bool(args.enable_route_time_big_m_linear_cuts),
+        enable_route_load_big_m_linear_cuts=bool(args.enable_route_load_big_m_linear_cuts),
+        route_constraint_mode=str(args.route_constraint_mode),
+        enable_hard_station_topk=bool(args.enable_hard_station_topk),
+        enable_slot_specific_warm_station_protection=bool(args.enable_slot_specific_warm_station_protection),
+        enable_warm_start_station_projection=bool(args.enable_warm_start_station_projection),
         enable_anchor_first_order_robot=bool(args.enable_anchor_first_order_robot),
         enable_selected_workload_lbs=not bool(args.disable_selected_workload_lbs),
         enable_route_arrival_slot_linear=bool(args.enable_route_arrival_slot_linear),
@@ -963,6 +984,11 @@ def main() -> None:
         gurobi_node_method=int(args.gurobi_node_method) if int(args.gurobi_node_method) >= 0 else None,
         gurobi_crossover=int(args.gurobi_crossover) if int(args.gurobi_crossover) >= 0 else None,
         gurobi_start_node_limit=int(args.gurobi_start_node_limit) if int(args.gurobi_start_node_limit) >= 0 else None,
+        gurobi_seed=int(args.gurobi_seed) if int(args.gurobi_seed) >= 0 else None,
+        gurobi_rins=int(args.gurobi_rins) if int(args.gurobi_rins) >= 0 else None,
+        gurobi_no_rel_heur_time=float(args.gurobi_no_rel_heur_time) if float(args.gurobi_no_rel_heur_time) >= 0.0 else None,
+        gurobi_no_rel_heur_work=float(args.gurobi_no_rel_heur_work) if float(args.gurobi_no_rel_heur_work) >= 0.0 else None,
+        gurobi_improve_start_gap=float(args.gurobi_improve_start_gap) if float(args.gurobi_improve_start_gap) >= 0.0 else None,
         gurobi_cuts=int(args.gurobi_cuts) if int(args.gurobi_cuts) >= 0 else 1,
         gurobi_cut_passes=int(args.gurobi_cut_passes) if int(args.gurobi_cut_passes) >= 0 else 1,
         gurobi_presolve=int(args.gurobi_presolve) if int(args.gurobi_presolve) >= 0 else 1,
