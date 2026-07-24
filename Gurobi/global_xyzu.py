@@ -25,9 +25,12 @@ from Gurobi.sp3 import SP3_Bin_Hitter
 from Gurobi.master_domain import (
     MasterDomainError,
     normalize_master_domain_manifest,
+    prepared_domain_from_manifest,
     verify_manifest_problem,
     verify_manifest_warm_start,
 )
+from Gurobi.master_domain_numeric import numeric_bounds_from_manifest, require_same_keys
+from Gurobi.master_domain_route import assert_route_nodes_match, route_identity_from_manifest
 
 
 class RankAwareGlobalTimeCalculator(GlobalTimeCalculator):
@@ -101,6 +104,7 @@ class GlobalXYZUConfig:
     enable_warm_candidate_stack_prune: bool = False
     candidate_station_topk_per_stack: int = 999
     warm_start_sp4_time_limit_sec: int = 15
+    warm_start_sp4_guided_local_search: bool = True
     warm_start_subtask_ordering: str = "default"
     warm_start_use_sp2_mip_initial: bool = False
     warm_start_sp2_mip_time_limit_sec: float = 30.0
@@ -178,6 +182,7 @@ class GlobalXYZUConfig:
     enable_warm_prune_bound_repair: bool = False
     enable_warm_start_route_repair: bool = True
     enable_scale_adaptive_candidate_prune: bool = False
+    enable_sort_hit_tote_threshold: bool = True
     sort_hit_tote_threshold: int = 3
     route_pickup_neighbor_limit: int = 0
     enable_route_delivery_pickup_neighbor_prune: bool = False
@@ -203,6 +208,7 @@ class GlobalXYZUConfig:
     gurobi_best_obj_stop: Optional[float] = None
     master_domain_manifest: Optional[Dict[str, Any]] = None
     master_domain_strict: bool = False
+    tra_inner_no_station_wait: bool = False
 
 
 @dataclass
@@ -672,11 +678,16 @@ class GlobalXYZUSolver:
         model.Params.OutputFlag = 1 if bool(getattr(cfg, "gurobi_output", True)) else 0
         vars_payload = self._build_model(model, prepared, cfg)
         diagnostics.update(vars_payload.get("diagnostics", {}))
+        if bool(cfg.enable_warm_start) and not bool(fixgurobi_no_warm_start):
+            diagnostics.update(self._apply_warm_start(vars_payload, prepared, warm))
         diagnostics.update(self._collect_model_structure_stats(model))
         if bool(cfg.write_lp):
             model.write("global_xyzu_model.lp")
         diagnostics["compile_time_sec"] = float(time.perf_counter() - start_clock)
         model.update()
+        if master_domain is not None and bool(getattr(cfg, "master_domain_strict", False)):
+            prepared_domain_from_manifest(master_domain).assert_payload_compatible(vars_payload)
+            diagnostics["master_domain_payload_verified"] = True
         return CompiledGlobalXYZUModel(
             problem_template=copy.deepcopy(problem),
             cfg=cfg,
@@ -1714,6 +1725,9 @@ class GlobalXYZUSolver:
                         problem.subtask_list,
                         use_mip=False,
                         lkh_time_limit_seconds=warm_sp4_limit,
+                        enable_guided_local_search=bool(
+                            getattr(cfg, "warm_start_sp4_guided_local_search", True)
+                        ),
                         enable_greedy_fallback=True,
                     )
                     sp4_mode = "lkh"
@@ -1749,6 +1763,9 @@ class GlobalXYZUSolver:
                     problem.subtask_list,
                     use_mip=False,
                     lkh_time_limit_seconds=int(getattr(cfg, "warm_start_sp4_time_limit_sec", 15) or 15),
+                    enable_guided_local_search=bool(
+                        getattr(cfg, "warm_start_sp4_guided_local_search", True)
+                    ),
                     enable_greedy_fallback=True,
                 )
                 sp2_mode = f"{sp2_mode}_postsp4mip"
@@ -4793,6 +4810,16 @@ class GlobalXYZUSolver:
         slot_specific_warm_station_protection_count = 0
         master_domain = dict(getattr(cfg, "master_domain_manifest", None) or {})
         master_domain_strict = bool(getattr(cfg, "master_domain_strict", False))
+        master_numeric_bounds = (
+            numeric_bounds_from_manifest(master_domain)
+            if master_domain and master_domain_strict
+            else None
+        )
+        master_route_identity = (
+            route_identity_from_manifest(master_domain)
+            if master_domain and master_domain_strict
+            else None
+        )
         master_route_task_tuples = {
             (int(value[0]), int(value[1]), int(value[2]))
             for value in list(master_domain.get("route_task_tuples", []) or [])
@@ -4816,13 +4843,21 @@ class GlobalXYZUSolver:
                 depot_pt = shared_depot_pt if shared_depot_pt is not None else getattr(robot_obj, "start_point", None)
                 depot_x = float(getattr(depot_pt, "x", 0.0) if depot_pt is not None else 0.0)
                 depot_y = float(getattr(depot_pt, "y", 0.0) if depot_pt is not None else 0.0)
-                start_node = int(next_node_id)
-                end_node = int(next_node_id + 1)
-                next_node_id += 2
+                if master_route_identity is not None:
+                    if int(robot_id) not in master_route_identity.start_nodes or int(robot_id) not in master_route_identity.end_nodes:
+                        raise MasterDomainError(f"master route-node contract has no depot nodes for robot {robot_id}")
+                    start_node = int(master_route_identity.start_nodes[int(robot_id)])
+                    end_node = int(master_route_identity.end_nodes[int(robot_id)])
+                else:
+                    start_node = int(next_node_id)
+                    end_node = int(next_node_id + 1)
+                    next_node_id += 2
                 route_start_nodes[int(robot_id)] = int(start_node)
                 route_end_nodes[int(robot_id)] = int(end_node)
                 route_nodes[start_node] = RouteNodeSpec(start_node, "start", -1, -1, -1, -1, depot_x, depot_y, int(robot_id))
                 route_nodes[end_node] = RouteNodeSpec(end_node, "end", -1, -1, -1, -1, depot_x, depot_y, int(robot_id))
+            if route_nodes:
+                next_node_id = max(route_nodes) + 1
             next_task_key = 0
             station_point_by_id = {
                 int(getattr(st, "id", idx)): getattr(st, "point", None)
@@ -4906,11 +4941,22 @@ class GlobalXYZUSolver:
                         if station_pt is None:
                             continue
                         route_task_count_after_station_prune += 1
-                        p_node = next_node_id
-                        d_node = next_node_id + 1
-                        next_node_id += 2
-                        task_key = next_task_key
-                        next_task_key += 1
+                        route_tuple = (int(sid), int(stack_id), int(station_id))
+                        if master_route_identity is not None:
+                            identity = master_route_identity.tasks_by_tuple.get(route_tuple)
+                            if identity is None:
+                                raise MasterDomainError(
+                                    f"master route-node contract has no identity for task {route_tuple}"
+                                )
+                            task_key = int(identity.task_key)
+                            p_node = int(identity.pickup_node)
+                            d_node = int(identity.delivery_node)
+                        else:
+                            p_node = next_node_id
+                            d_node = next_node_id + 1
+                            next_node_id += 2
+                            task_key = next_task_key
+                            next_task_key += 1
                         route_tasks[task_key] = RouteTaskSpec(
                             task_key=int(task_key),
                             slot_id=int(sid),
@@ -4953,6 +4999,8 @@ class GlobalXYZUSolver:
                     raise MasterDomainError(
                         f"master route-task domain mismatch: missing={missing[:10]}, extra={extra[:10]}"
                     )
+                if master_route_identity is not None:
+                    assert_route_nodes_match(master_route_identity, route_nodes)
 
             def _route_travel_time(i: int, j: int) -> float:
                 # 路由时间采用仓库坐标曼哈顿距离 / 机器人速度。
@@ -5013,6 +5061,19 @@ class GlobalXYZUSolver:
                 prepared=prepared,
                 route_tasks=route_tasks,
             )
+            if master_numeric_bounds is not None:
+                require_same_keys(
+                    "pickup_service_lb_by_node",
+                    pickup_service_lb_by_node,
+                    master_numeric_bounds.pickup_service_lb_by_node,
+                )
+                require_same_keys(
+                    "pickup_service_ub_by_node",
+                    pickup_service_ub_by_node,
+                    master_numeric_bounds.pickup_service_ub_by_node,
+                )
+                pickup_service_lb_by_node = dict(master_numeric_bounds.pickup_service_lb_by_node)
+                pickup_service_ub_by_node = dict(master_numeric_bounds.pickup_service_ub_by_node)
             warm_for_prune = prepared.get("warm") or WarmStartState()
             warm_makespan_for_prune = float(getattr(warm_for_prune, "makespan", 0.0) or 0.0)
             cfg_slot_time_ub = float(getattr(cfg, "big_m_time", 0.0) or 0.0)
@@ -5427,6 +5488,34 @@ class GlobalXYZUSolver:
             (int(i), int(j)): float(value)
             for (i, j), value in dict(dynamic_time_diagnostics.get("route_arc_time_m", {}) or {}).items()
         }
+        if master_numeric_bounds is not None:
+            require_same_keys(
+                "route_node_time_ub",
+                route_node_time_ub,
+                master_numeric_bounds.route_node_time_ub,
+            )
+            require_same_keys(
+                "route_arc_time_m",
+                route_arc_time_m,
+                master_numeric_bounds.route_arc_time_m,
+            )
+            slot_time_ub = float(master_numeric_bounds.slot_time_ub)
+            route_big_m = float(master_numeric_bounds.route_big_m)
+            route_node_time_ub = dict(master_numeric_bounds.route_node_time_ub)
+            route_arc_time_m = dict(master_numeric_bounds.route_arc_time_m)
+            dynamic_time_diagnostics.update(
+                {
+                    "slot_time_ub": slot_time_ub,
+                    "slot_time_ub_source": "master_domain_v3",
+                    "route_big_m": route_big_m,
+                    "route_big_m_source": "master_domain_v3",
+                    "route_node_time_ub": dict(route_node_time_ub),
+                    "route_arc_time_m": dict(route_arc_time_m),
+                    "route_node_time_ub_max": float(max(route_node_time_ub.values(), default=0.0)),
+                    "route_arc_time_m_max": float(max(route_arc_time_m.values(), default=0.0)),
+                    "master_domain_numeric_bounds_applied": True,
+                }
+            )
         for sid in [int(slot.slot_id) for slot in slots]:
             if sid in arrival:
                 arrival[sid].UB = float(slot_time_ub)
@@ -5449,7 +5538,8 @@ class GlobalXYZUSolver:
         base_model_diagnostics["warm_route_time_upper_bound_override"] = float(warm_route_time_ub_override or 0.0)
         time_big_m_diagnostics = base_model_diagnostics
         order_ids = sorted(int(order_id) for order_id in slot_ids_by_order.keys())
-        if station_ids and max_rank > 0:
+        tra_inner_no_station_wait = bool(getattr(cfg, "tra_inner_no_station_wait", False))
+        if station_ids and max_rank > 0 and not tra_inner_no_station_wait:
             station_arrival_clock = model.addVars(station_ids, range(max_rank), lb=0.0, ub=float(slot_time_ub), vtype=GRB.CONTINUOUS, name="station_arrival_clock")
             station_finish_clock = model.addVars(station_ids, range(max_rank), lb=0.0, ub=float(slot_time_ub), vtype=GRB.CONTINUOUS, name="station_finish_clock")
         enable_order_time_windows = bool(getattr(cfg, "enable_order_time_windows", False))
@@ -5745,6 +5835,9 @@ class GlobalXYZUSolver:
         anchor_first_order_robot_count = 0
         sort_hit_tote_threshold_count = 0
         station_rank_workload_lb_count = 0
+        enable_sort_hit_tote_threshold = bool(
+            getattr(cfg, "enable_sort_hit_tote_threshold", True)
+        )
         sort_hit_tote_threshold = max(0, int(getattr(cfg, "sort_hit_tote_threshold", 3) or 0))
         route_constraint_mode = str(getattr(cfg, "route_constraint_mode", "indicator") or "indicator").strip().lower()
         if route_constraint_mode not in {"indicator", "linear"}:
@@ -5787,18 +5880,18 @@ class GlobalXYZUSolver:
                         gp.quicksum(carry[sid, int(tote_id)] for tote_id in stack_totes) <= int(getattr(OFSConfig, "ROBOT_CAPACITY", 8)) * stack_use_expr,
                         name=f"CarryStackBind_{sid}_{stack_id}",
                     )
-                # If a selected stack hits more than the configured tote threshold, it must use SORT;
-                # otherwise it must use FLIP. This keeps mode selection deterministic by hit count.
-                hit_big_m = max(1, len(stack_hit_totes))
-                model.addConstr(
-                    hit_count_expr <= float(sort_hit_tote_threshold) + float(hit_big_m) * sort_choice_expr,
-                    name=f"SortByHitThresholdUB_{sid}_{stack_id}",
-                )
-                model.addConstr(
-                    hit_count_expr >= float(sort_hit_tote_threshold + 1) * sort_choice_expr,
-                    name=f"SortByHitThresholdLB_{sid}_{stack_id}",
-                )
-                sort_hit_tote_threshold_count += 2
+                if enable_sort_hit_tote_threshold:
+                    # Legacy M1 predates this mode-selection constraint family.
+                    hit_big_m = max(1, len(stack_hit_totes))
+                    model.addConstr(
+                        hit_count_expr <= float(sort_hit_tote_threshold) + float(hit_big_m) * sort_choice_expr,
+                        name=f"SortByHitThresholdUB_{sid}_{stack_id}",
+                    )
+                    model.addConstr(
+                        hit_count_expr >= float(sort_hit_tote_threshold + 1) * sort_choice_expr,
+                        name=f"SortByHitThresholdLB_{sid}_{stack_id}",
+                    )
+                    sort_hit_tote_threshold_count += 2
                 for tote_id in stack_totes:
                     cover_keys = tote_sort_cover_map.get((sid, int(tote_id)), [])
                     sort_cover_expr = gp.quicksum(sort_var[key] for key in cover_keys)
@@ -6008,7 +6101,10 @@ class GlobalXYZUSolver:
             if not integrate_u_route:
                 # 非一体化 U 时才使用旧运输代理到站时间；一体化 U 时 arrival 由 delivery 节点时间驱动。
                 model.addConstr(arrival[sid] >= travel_proxy_expr + robot_service_expr, name=f"ArrivalProxy_{sid}")
-            model.addConstr(start[sid] >= arrival[sid], name=f"StartAfterArrival_{sid}")
+            if tra_inner_no_station_wait:
+                model.addConstr(start[sid] == arrival[sid], name=f"TRAInnerStartAtArrival_{sid}")
+            else:
+                model.addConstr(start[sid] >= arrival[sid], name=f"StartAfterArrival_{sid}")
             model.addConstr(finish[sid] == start[sid] + float(getattr(OFSConfig, "PICKING_TIME", 1.0)) * total_pick_qty_expr + station_service_expr, name=f"FinishDef_{sid}")
             model.addConstr(cmax >= finish[sid], name=f"Cmax_{sid}")
 
@@ -6302,6 +6398,54 @@ class GlobalXYZUSolver:
                             name=f"StationLoadLex_{left}_{right}",
                         )
                         station_load_lex_count += 1
+
+        if tra_inner_no_station_wait:
+            if bool(getattr(cfg, "enable_resource_lex_symmetry", True)):
+                station_coord_groups: Dict[Tuple[float, float], List[int]] = defaultdict(list)
+                for idx, station in enumerate(getattr(problem, "station_list", []) or []):
+                    station_id = int(getattr(station, "id", idx))
+                    if station_id not in station_ids:
+                        continue
+                    point = getattr(station, "point", None)
+                    station_coord_groups[
+                        (
+                            float(getattr(point, "x", 0.0) if point is not None else 0.0),
+                            float(getattr(point, "y", 0.0) if point is not None else 0.0),
+                        )
+                    ].append(station_id)
+                for group in station_coord_groups.values():
+                    ordered = sorted(int(value) for value in group)
+                    for left, right in zip(ordered, ordered[1:]):
+                        model.addConstr(
+                            gp.quicksum(y[int(slot.slot_id), left, rank] for slot in slots for rank in range(max_rank))
+                            >= gp.quicksum(y[int(slot.slot_id), right, rank] for slot in slots for rank in range(max_rank)),
+                            name=f"StationSlotCountLex_{left}_{right}",
+                        )
+                        station_slot_count_lex_count += 1
+            if bool(getattr(cfg, "enable_station_global_lex_symmetry", True)):
+                all_candidate_stack_ids = sorted(
+                    {
+                        int(stack_id)
+                        for stack_ids in candidate_stacks_by_order.values()
+                        for stack_id in stack_ids
+                    }
+                )
+                station_signature_groups: Dict[Tuple[float, ...], List[int]] = defaultdict(list)
+                for station_id in station_ids:
+                    signature = tuple(
+                        round(float(stack_station_dist.get((stack_id, station_id), 0.0)), 6)
+                        for stack_id in all_candidate_stack_ids
+                    )
+                    station_signature_groups[signature].append(station_id)
+                for group in station_signature_groups.values():
+                    ordered = sorted(int(value) for value in group)
+                    for left, right in zip(ordered, ordered[1:]):
+                        model.addConstr(
+                            gp.quicksum(y[int(slot.slot_id), left, rank] for slot in slots for rank in range(max_rank))
+                            >= gp.quicksum(y[int(slot.slot_id), right, rank] for slot in slots for rank in range(max_rank)),
+                            name=f"StationGlobalLex_{left}_{right}",
+                        )
+                        station_global_lex_count += 1
 
         if integrate_u_route and pass_x is not None and route_arc is not None and route_time is not None and route_load is not None:
             # -----------------------------
@@ -7025,6 +7169,8 @@ class GlobalXYZUSolver:
                 "route_owner_linear_count": int(route_owner_linear_count),
                 "station_clock_linear_count": int(station_clock_linear_count),
                 "station_rank_workload_lb_count": int(station_rank_workload_lb_count),
+                "tra_inner_no_station_wait": bool(tra_inner_no_station_wait),
+                "enable_sort_hit_tote_threshold": bool(enable_sort_hit_tote_threshold),
                 "sort_hit_tote_threshold": int(sort_hit_tote_threshold),
                 "sort_hit_tote_threshold_count": int(sort_hit_tote_threshold_count),
                 "global_selected_route_workload_lb_count": int(global_selected_route_workload_lb_count),

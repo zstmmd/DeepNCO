@@ -1,6 +1,6 @@
 # ADR 0001: M1-M9 TRA 验收与双层轮转契约
 
-- 状态：Proposed
+- 状态：Accepted
 - 日期：2026-07-15
 - 范围：M1-M9 的 TRA-Gurobi 与 TRA-Fast
 
@@ -52,10 +52,6 @@
 5. 用统一 verifier 和 manifest diff 把“Cmax 相同”提升为可复现实验结论。
 6. 将 canonical warm-start 保护集中到共享预处理阶段，并在 manifest 中显式记录；避免算法专属 warm-start 造成三套不同搜索空间。
 
-## 待确认
-
-1. 若 Gurobi 域审计在共享 master domain 上不能复现飞书 4.2 历史 Cmax，该 case 是否直接判定 domain audit 失败并停止 TRA 正式验收？
-
 ## 已确认
 
 - runtime 从第一轮双层轮转开始计时；canonical warm-start/master domain 构造和外部校验/导出单独报告，不计入 20% 门槛。轮转内部的精确求解、校准和修复计入。
@@ -66,6 +62,9 @@
 - 搜索过程禁止读取 4.2 Cmax；正式 runtime 由日志事后回放得到首次命中目标 Cmax 的累计轮转时间。
 - TRA-Fast 允许轮转内短时 Gurobi 精确校准，且计入 runtime；其加速来自稀疏触发，不来自放松可行域或省略最终可行性要求。
 - 计时结束后禁止补解；统一 verifier 只能验证计时内已有 incumbent。
+- 若自然 Gurobi 在共享 master domain 上不能复现飞书 4.2 Cmax，该 case 立即判定
+  domain audit 失败并停止后续 TRA 正式验收；先输出首个实体集合、数值界、目标
+  或约束 fingerprint 差异。不得通过历史结构 replay 把 Cmax 补回。
 
 ## 后果
 

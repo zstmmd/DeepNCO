@@ -10,6 +10,7 @@ from Gurobi.master_domain import (
     MasterDomainError,
     build_master_domain_manifest,
     normalize_master_domain_manifest,
+    prepared_domain_from_manifest,
 )
 from experiments.m_tra_contract import time_to_target_from_iter_rows
 from Gurobi.resource_time_alns.hybrid_gate import should_run_hybrid_exact
@@ -32,6 +33,7 @@ def _fake_compiled() -> SimpleNamespace:
             "candidate_stacks_by_order": {7: [15, 12]},
         },
         vars_payload={
+            "x": {("u7", 0): object(), ("u7", 1): object()},
             "route_tasks": route_tasks,
             "route_arcs": [(4, 5), (0, 4), (5, 1)],
             "protected_route_arcs": {(4, 5), (0, 4)},
@@ -48,6 +50,18 @@ def test_master_domain_manifest_is_canonical_and_self_verifying() -> None:
     assert first["candidate_stacks_by_order"] == {"7": [12, 15]}
     assert first["route_task_tuples"] == [[0, 12, 3], [1, 15, 4]]
     assert first["protected_route_arcs"] == [[0, 4], [4, 5]]
+    assert first["schema_version"] == 3
+    assert first["domain_partitions"]["x"]["count"] == 2
+    assert first["model_fingerprints"]["variable_count"] == 0
+    assert set(first["component_sha256"]) == {
+        "problem_contract",
+        "warm_start_contract",
+        "domain_semantics",
+        "domain_partitions",
+        "numeric_bounds",
+        "model_fingerprints",
+        "pruning_rules",
+    }
     assert len(first["manifest_sha256"]) == 64
     assert normalize_master_domain_manifest(first) == first
 
@@ -59,6 +73,34 @@ def test_master_domain_manifest_rejects_mutation() -> None:
 
     with pytest.raises(MasterDomainError, match="hash mismatch"):
         normalize_master_domain_manifest(mutated)
+
+
+def test_master_domain_v3_rejects_unknown_or_missing_top_level_fields() -> None:
+    manifest = build_master_domain_manifest(_fake_compiled(), canonical_seed=42)
+    unknown = copy.deepcopy(manifest)
+    unknown["consumer_override"] = True
+    with pytest.raises(MasterDomainError, match="fields differ"):
+        normalize_master_domain_manifest(unknown)
+
+    missing = copy.deepcopy(manifest)
+    missing.pop("numeric_bounds")
+    with pytest.raises(MasterDomainError, match="fields differ"):
+        normalize_master_domain_manifest(missing)
+
+
+def test_prepared_domain_is_read_only_and_rejects_consumer_side_domain_drift() -> None:
+    compiled = _fake_compiled()
+    manifest = build_master_domain_manifest(compiled, canonical_seed=42)
+    prepared = prepared_domain_from_manifest(manifest)
+
+    assert prepared.family_keys("x") == (("u7", 0), ("u7", 1))
+    assert prepared.candidate_stacks_by_order[7] == (12, 15)
+    prepared.assert_payload_compatible(compiled.vars_payload)
+
+    drifted = copy.deepcopy(compiled.vars_payload)
+    drifted["x"][("new-unit", 0)] = object()
+    with pytest.raises(MasterDomainError, match="domain differs.*x"):
+        prepared.assert_payload_compatible(drifted)
 
 
 def test_time_to_target_is_retrospective_and_requires_internal_validation() -> None:

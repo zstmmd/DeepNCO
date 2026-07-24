@@ -3,11 +3,12 @@ from __future__ import annotations
 import csv
 import json
 import os
-import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
+
+from experiments.m_tra_policy import sanitize_case_policy
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -149,26 +150,6 @@ def _solver_policy(case: CurrentMCase) -> Dict[str, Any]:
     }
 
 
-def _sort_hit_tote_threshold_from_export(export_dir: str, default: int = 3) -> int:
-    dump_path = ROOT_DIR / export_dir / "best_solution_full_dump.txt"
-    if not dump_path.exists():
-        return int(default)
-    min_sort_hit_count: int | None = None
-    with dump_path.open("r", encoding="utf-8") as f:
-        for line in f:
-            if "mode=SORT" not in line:
-                continue
-            match = re.search(r"hit_totes=\[(.*?)\]", line)
-            if not match:
-                continue
-            text = match.group(1).strip()
-            hit_count = 0 if not text else len([part for part in text.split(",") if part.strip()])
-            min_sort_hit_count = hit_count if min_sort_hit_count is None else min(min_sort_hit_count, hit_count)
-    if min_sort_hit_count is None:
-        return int(default)
-    return max(0, int(min_sort_hit_count) - 1)
-
-
 def build_runtime_alias_config(cases: Iterable[CurrentMCase] | None = None) -> Dict[str, Any]:
     configs: Dict[str, Any] = {}
     for case in cases or CURRENT_M_CASES:
@@ -197,6 +178,7 @@ def build_gurobi_baseline_rows(cases: Iterable[CurrentMCase] | None = None) -> L
     rows: List[Dict[str, Any]] = []
     for case in cases or CURRENT_M_CASES:
         summary = _read_json(case.gurobi_summary_abs_path)
+        sanitized_policy = sanitize_case_policy(case.case_id, summary)
         diagnostics = dict(summary.get("diagnostics", {}) or {})
         cmax = _safe_float(summary.get("global_makespan", diagnostics.get("model_cmax")))
         true_cmax = _safe_float(summary.get("true_global_makespan", cmax))
@@ -230,9 +212,34 @@ def build_gurobi_baseline_rows(cases: Iterable[CurrentMCase] | None = None) -> L
             "gurobi_summary_path": case.gurobi_summary_path,
             "gurobi_export_dir": case.gurobi_export_path,
             "config_path": case.config_path,
-            "sort_hit_tote_threshold": _sort_hit_tote_threshold_from_export(case.gurobi_export_path),
+            "enable_sort_hit_tote_threshold": bool(
+                sanitized_policy.values["enable_sort_hit_tote_threshold"]
+            ),
+            "sort_hit_tote_threshold": int(sanitized_policy.values["sort_hit_tote_threshold"]),
+            "domain_policy_sha256": sanitized_policy.policy_sha256,
+            "domain_policy_provenance": dict(sanitized_policy.provenance),
         }
-        row.update(_solver_policy(case))
+        row.update(
+            {
+                key: value
+                for key, value in sanitized_policy.values.items()
+                if key in {
+                    "candidate_stack_topk",
+                    "max_candidate_stacks_per_order",
+                    "candidate_station_topk_per_stack",
+                    "route_pickup_neighbor_limit",
+                    "route_arc_prune",
+                    "enable_route_load_interval_arc_prune",
+                    "enable_route_time_window_arc_prune",
+                    "enable_tight_slot_upper_bound",
+                    "enable_warm_candidate_stack_prune",
+                }
+            }
+        )
+        row["solver_mip_gap"] = _safe_float(
+            diagnostics.get("model_gap", summary.get("gap", 0.01)),
+            0.01,
+        )
         rows.append(row)
     return rows
 

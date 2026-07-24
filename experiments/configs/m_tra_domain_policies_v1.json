@@ -1,0 +1,2768 @@
+{
+  "cases": {
+    "M1": {
+      "case_id": "M1",
+      "policy_sha256": "3ba8c2a5025ab27135b49b11777849d5c725c1bfe8a7c7eb1c95c54d175e50b1",
+      "provenance": {
+        "big_m_time": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "bom_arrival_window_sec": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "candidate_stack_topk": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "candidate_station_topk_per_stack": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "deadline_penalty_weight": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_anchor_first_order_robot": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_global_arrival_workload_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_order_time_windows": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_resource_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_robot_finish_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_arrival_slot_linear": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_directional_arc_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_finish_cmax_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_incident_travel_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_load_interval_arc_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_pair_service_travel_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_service_sec_cuts": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_slot_stack_count_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_time_window_arc_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_scale_adaptive_candidate_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_selected_workload_lbs": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_sku_cover_cuts": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_slot_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_slot_min_arrival_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_sort_hit_tote_threshold": {
+          "reason": "M1 predates the SortByHitThreshold constraint family; the archived model has no such rows.",
+          "source": "legacy_profile"
+        },
+        "enable_station_global_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_tight_slot_upper_bound": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_tote_equivalence_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_uz_lb_cuts": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_warm_candidate_stack_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_warm_prune_bound_repair": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_warm_start": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_warm_start_route_repair": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "integrate_u_route": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "kitting_span_penalty_weight": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "max_candidate_stacks_per_order": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "max_rank": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "release_time_hard": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "route_arc_prune": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "route_big_m_time": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "route_lazy_constraint": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "route_lazy_level": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "route_pickup_neighbor_limit": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "slot_slack_per_order": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "sort_hit_tote_threshold": {
+          "reason": "Explicit M-suite legacy profile recovered from the archived command and effective diagnostics.",
+          "source": "legacy_profile"
+        },
+        "u_route_use_mip": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "u_same_slot_same_robot": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_sp4_time_limit_sec": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_subtask_ordering": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_use_sp4": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        }
+      },
+      "values": {
+        "big_m_time": 2000.0,
+        "bom_arrival_window_sec": 60.0,
+        "candidate_stack_topk": 999,
+        "candidate_station_topk_per_stack": 999,
+        "deadline_penalty_weight": 1000.0,
+        "enable_anchor_first_order_robot": false,
+        "enable_global_arrival_workload_lb": true,
+        "enable_order_time_windows": true,
+        "enable_resource_lex_symmetry": false,
+        "enable_robot_finish_lex_symmetry": true,
+        "enable_route_arrival_slot_linear": false,
+        "enable_route_directional_arc_prune": false,
+        "enable_route_finish_cmax_lb": false,
+        "enable_route_incident_travel_lb": false,
+        "enable_route_load_interval_arc_prune": true,
+        "enable_route_pair_service_travel_lb": false,
+        "enable_route_service_sec_cuts": false,
+        "enable_route_slot_stack_count_lb": true,
+        "enable_route_time_window_arc_prune": false,
+        "enable_scale_adaptive_candidate_prune": false,
+        "enable_selected_workload_lbs": true,
+        "enable_sku_cover_cuts": true,
+        "enable_slot_lex_symmetry": true,
+        "enable_slot_min_arrival_lb": false,
+        "enable_sort_hit_tote_threshold": false,
+        "enable_station_global_lex_symmetry": true,
+        "enable_tight_slot_upper_bound": true,
+        "enable_tote_equivalence_symmetry": true,
+        "enable_uz_lb_cuts": false,
+        "enable_warm_candidate_stack_prune": false,
+        "enable_warm_prune_bound_repair": false,
+        "enable_warm_start": true,
+        "enable_warm_start_route_repair": true,
+        "integrate_u_route": true,
+        "kitting_span_penalty_weight": 5.0,
+        "max_candidate_stacks_per_order": 0,
+        "max_rank": 0,
+        "release_time_hard": true,
+        "route_arc_prune": true,
+        "route_big_m_time": null,
+        "route_lazy_constraint": true,
+        "route_lazy_level": 1,
+        "route_pickup_neighbor_limit": 0,
+        "slot_slack_per_order": 1,
+        "sort_hit_tote_threshold": 1,
+        "u_route_use_mip": true,
+        "u_same_slot_same_robot": true,
+        "warm_start_sp4_time_limit_sec": 15,
+        "warm_start_subtask_ordering": "default",
+        "warm_start_use_sp4": true
+      }
+    },
+    "M2": {
+      "case_id": "M2",
+      "policy_sha256": "b1d260bfc93dfd0d5cb7b6dd342cd07836d6e1f8236da04225acfb6cd6c8decb",
+      "provenance": {
+        "big_m_time": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "bom_arrival_window_sec": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "candidate_stack_topk": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "candidate_station_topk_per_stack": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "deadline_penalty_weight": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_anchor_first_order_robot": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_global_arrival_workload_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_order_time_windows": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_resource_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_robot_finish_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_arrival_slot_linear": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_directional_arc_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_finish_cmax_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_incident_travel_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_load_interval_arc_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_pair_service_travel_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_service_sec_cuts": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_slot_stack_count_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_time_window_arc_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_scale_adaptive_candidate_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_selected_workload_lbs": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_sku_cover_cuts": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_slot_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_slot_min_arrival_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_sort_hit_tote_threshold": {
+          "reason": "Archived effective constraint count for SortByHitThreshold.",
+          "source": "summary.diagnostics"
+        },
+        "enable_station_clock_linear": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_station_global_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_tight_slot_upper_bound": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_tote_equivalence_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_uz_lb_cuts": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_warm_candidate_stack_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_warm_prune_bound_repair": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_warm_start": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_warm_start_route_repair": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "integer_cmax": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "integrate_u_route": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "kitting_span_penalty_weight": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "max_candidate_stacks_per_order": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "max_rank": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "release_time_hard": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "route_arc_prune": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "route_big_m_time": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "route_lazy_constraint": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "route_lazy_level": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "route_pickup_neighbor_limit": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "slot_slack_per_order": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "sort_hit_tote_threshold": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "u_route_use_mip": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "u_same_slot_same_robot": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_refine_sp2_after_sp4": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_sp2_mip_time_limit_sec": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_sp4_time_limit_sec": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_subtask_ordering": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_use_sp2_mip_initial": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_use_sp4": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        }
+      },
+      "values": {
+        "big_m_time": 2000.0,
+        "bom_arrival_window_sec": 60.0,
+        "candidate_stack_topk": 999,
+        "candidate_station_topk_per_stack": 999,
+        "deadline_penalty_weight": 1000.0,
+        "enable_anchor_first_order_robot": false,
+        "enable_global_arrival_workload_lb": true,
+        "enable_order_time_windows": true,
+        "enable_resource_lex_symmetry": false,
+        "enable_robot_finish_lex_symmetry": true,
+        "enable_route_arrival_slot_linear": false,
+        "enable_route_directional_arc_prune": false,
+        "enable_route_finish_cmax_lb": false,
+        "enable_route_incident_travel_lb": false,
+        "enable_route_load_interval_arc_prune": true,
+        "enable_route_pair_service_travel_lb": false,
+        "enable_route_service_sec_cuts": false,
+        "enable_route_slot_stack_count_lb": true,
+        "enable_route_time_window_arc_prune": false,
+        "enable_scale_adaptive_candidate_prune": false,
+        "enable_selected_workload_lbs": true,
+        "enable_sku_cover_cuts": true,
+        "enable_slot_lex_symmetry": false,
+        "enable_slot_min_arrival_lb": false,
+        "enable_sort_hit_tote_threshold": true,
+        "enable_station_clock_linear": false,
+        "enable_station_global_lex_symmetry": true,
+        "enable_tight_slot_upper_bound": true,
+        "enable_tote_equivalence_symmetry": true,
+        "enable_uz_lb_cuts": false,
+        "enable_warm_candidate_stack_prune": false,
+        "enable_warm_prune_bound_repair": false,
+        "enable_warm_start": true,
+        "enable_warm_start_route_repair": true,
+        "integer_cmax": false,
+        "integrate_u_route": true,
+        "kitting_span_penalty_weight": 5.0,
+        "max_candidate_stacks_per_order": 0,
+        "max_rank": 0,
+        "release_time_hard": true,
+        "route_arc_prune": true,
+        "route_big_m_time": null,
+        "route_lazy_constraint": true,
+        "route_lazy_level": 1,
+        "route_pickup_neighbor_limit": 0,
+        "slot_slack_per_order": 1,
+        "sort_hit_tote_threshold": 3,
+        "u_route_use_mip": true,
+        "u_same_slot_same_robot": true,
+        "warm_start_refine_sp2_after_sp4": false,
+        "warm_start_sp2_mip_time_limit_sec": 30.0,
+        "warm_start_sp4_time_limit_sec": 15,
+        "warm_start_subtask_ordering": "default",
+        "warm_start_use_sp2_mip_initial": false,
+        "warm_start_use_sp4": true
+      }
+    },
+    "M3": {
+      "case_id": "M3",
+      "policy_sha256": "2aff73b85b40dc393e3fbc1f3f14d0726335d0c635de77ae830f22b5b774b5c7",
+      "provenance": {
+        "big_m_time": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "bom_arrival_window_sec": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "candidate_stack_topk": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "candidate_station_topk_per_stack": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "deadline_penalty_weight": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_anchor_first_order_robot": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_global_arrival_workload_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_order_time_windows": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_resource_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_robot_finish_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_arrival_slot_linear": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_directional_arc_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_finish_cmax_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_incident_travel_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_load_interval_arc_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_pair_service_travel_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_service_sec_cuts": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_slot_stack_count_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_time_window_arc_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_scale_adaptive_candidate_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_selected_workload_lbs": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_sku_cover_cuts": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_slot_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_slot_min_arrival_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_sort_hit_tote_threshold": {
+          "reason": "Archived effective constraint count for SortByHitThreshold.",
+          "source": "summary.diagnostics"
+        },
+        "enable_station_clock_linear": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_station_global_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_tight_slot_upper_bound": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_tote_equivalence_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_uz_lb_cuts": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_warm_candidate_stack_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_warm_prune_bound_repair": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_warm_start": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_warm_start_route_repair": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "integer_cmax": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "integrate_u_route": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "kitting_span_penalty_weight": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "max_candidate_stacks_per_order": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "max_rank": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "release_time_hard": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "route_arc_prune": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "route_big_m_time": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "route_lazy_constraint": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "route_lazy_level": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "route_pickup_neighbor_limit": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "slot_slack_per_order": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "sort_hit_tote_threshold": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "u_route_use_mip": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "u_same_slot_same_robot": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_refine_sp2_after_sp4": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_sp2_mip_time_limit_sec": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_sp4_time_limit_sec": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_subtask_ordering": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_use_sp2_mip_initial": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_use_sp4": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        }
+      },
+      "values": {
+        "big_m_time": 2000.0,
+        "bom_arrival_window_sec": 60.0,
+        "candidate_stack_topk": 999,
+        "candidate_station_topk_per_stack": 1,
+        "deadline_penalty_weight": 1000.0,
+        "enable_anchor_first_order_robot": false,
+        "enable_global_arrival_workload_lb": true,
+        "enable_order_time_windows": true,
+        "enable_resource_lex_symmetry": false,
+        "enable_robot_finish_lex_symmetry": true,
+        "enable_route_arrival_slot_linear": true,
+        "enable_route_directional_arc_prune": false,
+        "enable_route_finish_cmax_lb": false,
+        "enable_route_incident_travel_lb": false,
+        "enable_route_load_interval_arc_prune": true,
+        "enable_route_pair_service_travel_lb": false,
+        "enable_route_service_sec_cuts": false,
+        "enable_route_slot_stack_count_lb": true,
+        "enable_route_time_window_arc_prune": false,
+        "enable_scale_adaptive_candidate_prune": false,
+        "enable_selected_workload_lbs": true,
+        "enable_sku_cover_cuts": true,
+        "enable_slot_lex_symmetry": false,
+        "enable_slot_min_arrival_lb": false,
+        "enable_sort_hit_tote_threshold": true,
+        "enable_station_clock_linear": false,
+        "enable_station_global_lex_symmetry": true,
+        "enable_tight_slot_upper_bound": true,
+        "enable_tote_equivalence_symmetry": true,
+        "enable_uz_lb_cuts": false,
+        "enable_warm_candidate_stack_prune": false,
+        "enable_warm_prune_bound_repair": false,
+        "enable_warm_start": true,
+        "enable_warm_start_route_repair": true,
+        "integer_cmax": false,
+        "integrate_u_route": true,
+        "kitting_span_penalty_weight": 5.0,
+        "max_candidate_stacks_per_order": 0,
+        "max_rank": 0,
+        "release_time_hard": true,
+        "route_arc_prune": true,
+        "route_big_m_time": null,
+        "route_lazy_constraint": true,
+        "route_lazy_level": 1,
+        "route_pickup_neighbor_limit": 0,
+        "slot_slack_per_order": 1,
+        "sort_hit_tote_threshold": 3,
+        "u_route_use_mip": true,
+        "u_same_slot_same_robot": true,
+        "warm_start_refine_sp2_after_sp4": false,
+        "warm_start_sp2_mip_time_limit_sec": 30.0,
+        "warm_start_sp4_time_limit_sec": 15,
+        "warm_start_subtask_ordering": "default",
+        "warm_start_use_sp2_mip_initial": false,
+        "warm_start_use_sp4": true
+      }
+    },
+    "M4": {
+      "case_id": "M4",
+      "policy_sha256": "306d58a76680d43fcb3632f4e43f62d03330e48b5feb335576cca512f8c2a4ae",
+      "provenance": {
+        "big_m_time": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "bom_arrival_window_sec": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "candidate_stack_topk": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "candidate_station_topk_per_stack": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "deadline_penalty_weight": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_anchor_first_order_robot": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_global_arrival_workload_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_order_time_windows": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_resource_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_robot_finish_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_arrival_slot_linear": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_directional_arc_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_finish_cmax_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_incident_travel_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_load_interval_arc_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_pair_service_travel_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_service_sec_cuts": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_slot_stack_count_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_time_window_arc_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_scale_adaptive_candidate_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_selected_workload_lbs": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_sku_cover_cuts": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_slot_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_slot_min_arrival_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_sort_hit_tote_threshold": {
+          "reason": "Archived effective constraint count for SortByHitThreshold.",
+          "source": "summary.diagnostics"
+        },
+        "enable_station_clock_linear": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_station_global_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_tight_slot_upper_bound": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_tote_equivalence_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_uz_lb_cuts": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_warm_candidate_stack_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_warm_prune_bound_repair": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_warm_start": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_warm_start_route_repair": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "integer_cmax": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "integrate_u_route": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "kitting_span_penalty_weight": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "max_candidate_stacks_per_order": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "max_rank": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "release_time_hard": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "route_arc_prune": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "route_big_m_time": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "route_lazy_constraint": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "route_lazy_level": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "route_pickup_neighbor_limit": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "slot_slack_per_order": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "sort_hit_tote_threshold": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "u_route_use_mip": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "u_same_slot_same_robot": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_refine_sp2_after_sp4": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_sp2_mip_time_limit_sec": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_sp4_time_limit_sec": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_subtask_ordering": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_use_sp2_mip_initial": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_use_sp4": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        }
+      },
+      "values": {
+        "big_m_time": 2000.0,
+        "bom_arrival_window_sec": 60.0,
+        "candidate_stack_topk": 999,
+        "candidate_station_topk_per_stack": 1,
+        "deadline_penalty_weight": 1000.0,
+        "enable_anchor_first_order_robot": false,
+        "enable_global_arrival_workload_lb": true,
+        "enable_order_time_windows": true,
+        "enable_resource_lex_symmetry": false,
+        "enable_robot_finish_lex_symmetry": true,
+        "enable_route_arrival_slot_linear": false,
+        "enable_route_directional_arc_prune": false,
+        "enable_route_finish_cmax_lb": false,
+        "enable_route_incident_travel_lb": false,
+        "enable_route_load_interval_arc_prune": true,
+        "enable_route_pair_service_travel_lb": false,
+        "enable_route_service_sec_cuts": false,
+        "enable_route_slot_stack_count_lb": true,
+        "enable_route_time_window_arc_prune": false,
+        "enable_scale_adaptive_candidate_prune": false,
+        "enable_selected_workload_lbs": true,
+        "enable_sku_cover_cuts": true,
+        "enable_slot_lex_symmetry": false,
+        "enable_slot_min_arrival_lb": false,
+        "enable_sort_hit_tote_threshold": true,
+        "enable_station_clock_linear": false,
+        "enable_station_global_lex_symmetry": true,
+        "enable_tight_slot_upper_bound": true,
+        "enable_tote_equivalence_symmetry": true,
+        "enable_uz_lb_cuts": false,
+        "enable_warm_candidate_stack_prune": false,
+        "enable_warm_prune_bound_repair": false,
+        "enable_warm_start": true,
+        "enable_warm_start_route_repair": true,
+        "integer_cmax": false,
+        "integrate_u_route": true,
+        "kitting_span_penalty_weight": 5.0,
+        "max_candidate_stacks_per_order": 0,
+        "max_rank": 0,
+        "release_time_hard": true,
+        "route_arc_prune": true,
+        "route_big_m_time": null,
+        "route_lazy_constraint": true,
+        "route_lazy_level": 1,
+        "route_pickup_neighbor_limit": 0,
+        "slot_slack_per_order": 1,
+        "sort_hit_tote_threshold": 3,
+        "u_route_use_mip": true,
+        "u_same_slot_same_robot": true,
+        "warm_start_refine_sp2_after_sp4": false,
+        "warm_start_sp2_mip_time_limit_sec": 30.0,
+        "warm_start_sp4_time_limit_sec": 15,
+        "warm_start_subtask_ordering": "default",
+        "warm_start_use_sp2_mip_initial": false,
+        "warm_start_use_sp4": true
+      }
+    },
+    "M5": {
+      "case_id": "M5",
+      "policy_sha256": "71b079fd3f5203e434fce6d273b7eb4cac8910ee505e6e44fc46bcaff4ec217c",
+      "provenance": {
+        "big_m_time": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "bom_arrival_window_sec": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "candidate_stack_topk": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "candidate_station_topk_per_stack": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "deadline_penalty_weight": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_anchor_first_order_robot": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_global_arrival_workload_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_order_time_windows": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_resource_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_robot_finish_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_arrival_slot_linear": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_directional_arc_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_finish_cmax_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_incident_travel_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_load_interval_arc_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_pair_service_travel_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_service_sec_cuts": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_slot_stack_count_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_time_window_arc_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_scale_adaptive_candidate_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_selected_workload_lbs": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_sku_cover_cuts": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_slot_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_slot_min_arrival_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_sort_hit_tote_threshold": {
+          "reason": "Archived effective constraint count for SortByHitThreshold.",
+          "source": "summary.diagnostics"
+        },
+        "enable_station_clock_linear": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_station_global_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_tight_slot_upper_bound": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_tote_equivalence_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_uz_lb_cuts": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_warm_candidate_stack_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_warm_prune_bound_repair": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_warm_start": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_warm_start_route_repair": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "integer_cmax": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "integrate_u_route": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "kitting_span_penalty_weight": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "max_candidate_stacks_per_order": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "max_rank": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "release_time_hard": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "route_arc_prune": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "route_big_m_time": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "route_lazy_constraint": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "route_lazy_level": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "route_pickup_neighbor_limit": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "slot_slack_per_order": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "sort_hit_tote_threshold": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "u_route_use_mip": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "u_same_slot_same_robot": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_refine_sp2_after_sp4": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_sp2_mip_time_limit_sec": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_sp4_time_limit_sec": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_subtask_ordering": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_use_sp2_mip_initial": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_use_sp4": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        }
+      },
+      "values": {
+        "big_m_time": 2000.0,
+        "bom_arrival_window_sec": 60.0,
+        "candidate_stack_topk": 999,
+        "candidate_station_topk_per_stack": 1,
+        "deadline_penalty_weight": 1000.0,
+        "enable_anchor_first_order_robot": false,
+        "enable_global_arrival_workload_lb": true,
+        "enable_order_time_windows": true,
+        "enable_resource_lex_symmetry": false,
+        "enable_robot_finish_lex_symmetry": true,
+        "enable_route_arrival_slot_linear": false,
+        "enable_route_directional_arc_prune": false,
+        "enable_route_finish_cmax_lb": false,
+        "enable_route_incident_travel_lb": false,
+        "enable_route_load_interval_arc_prune": true,
+        "enable_route_pair_service_travel_lb": false,
+        "enable_route_service_sec_cuts": false,
+        "enable_route_slot_stack_count_lb": true,
+        "enable_route_time_window_arc_prune": false,
+        "enable_scale_adaptive_candidate_prune": false,
+        "enable_selected_workload_lbs": true,
+        "enable_sku_cover_cuts": true,
+        "enable_slot_lex_symmetry": false,
+        "enable_slot_min_arrival_lb": false,
+        "enable_sort_hit_tote_threshold": true,
+        "enable_station_clock_linear": false,
+        "enable_station_global_lex_symmetry": true,
+        "enable_tight_slot_upper_bound": true,
+        "enable_tote_equivalence_symmetry": true,
+        "enable_uz_lb_cuts": false,
+        "enable_warm_candidate_stack_prune": false,
+        "enable_warm_prune_bound_repair": false,
+        "enable_warm_start": true,
+        "enable_warm_start_route_repair": true,
+        "integer_cmax": false,
+        "integrate_u_route": true,
+        "kitting_span_penalty_weight": 5.0,
+        "max_candidate_stacks_per_order": 0,
+        "max_rank": 0,
+        "release_time_hard": true,
+        "route_arc_prune": true,
+        "route_big_m_time": null,
+        "route_lazy_constraint": true,
+        "route_lazy_level": 1,
+        "route_pickup_neighbor_limit": 0,
+        "slot_slack_per_order": 1,
+        "sort_hit_tote_threshold": 3,
+        "u_route_use_mip": true,
+        "u_same_slot_same_robot": true,
+        "warm_start_refine_sp2_after_sp4": false,
+        "warm_start_sp2_mip_time_limit_sec": 30.0,
+        "warm_start_sp4_time_limit_sec": 15,
+        "warm_start_subtask_ordering": "default",
+        "warm_start_use_sp2_mip_initial": false,
+        "warm_start_use_sp4": true
+      }
+    },
+    "M6": {
+      "case_id": "M6",
+      "policy_sha256": "f7313885b6a86f1c22070a87f0140d0b00e4aafa158b889a3519f23943cf6c8d",
+      "provenance": {
+        "big_m_time": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "bom_arrival_window_sec": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "candidate_stack_topk": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "candidate_station_topk_per_stack": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "deadline_penalty_weight": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_anchor_first_order_robot": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_global_arrival_workload_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_hard_station_topk": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_order_time_windows": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_resource_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_robot_finish_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_arrival_slot_linear": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_delivery_pickup_neighbor_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_directional_arc_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_finish_cmax_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_incident_travel_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_load_big_m_linear_cuts": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_load_interval_arc_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_pair_service_travel_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_service_sec_cuts": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_slot_stack_count_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_time_big_m_linear_cuts": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_time_window_arc_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_scale_adaptive_candidate_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_selected_workload_lbs": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_sku_cover_cuts": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_sku_release_workload_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_slot_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_slot_min_arrival_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_slot_pair_arrival_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_slot_sku_arrival_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_slot_sku_signature_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_slot_specific_warm_station_protection": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_sort_hit_tote_threshold": {
+          "reason": "Archived effective constraint count for SortByHitThreshold.",
+          "source": "summary.diagnostics"
+        },
+        "enable_station_clock_linear": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_station_global_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_station_load_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_station_rank_workload_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_tight_slot_upper_bound": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_tote_equivalence_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_uz_lb_cuts": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_warm_candidate_stack_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_warm_prune_bound_repair": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_warm_route_time_upper_bound": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_warm_start": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_warm_start_route_repair": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_warm_start_station_projection": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "integer_cmax": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "integrate_u_route": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "kitting_span_penalty_weight": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "max_candidate_stacks_per_order": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "max_rank": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "release_time_hard": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "route_arc_prune": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "route_big_m_time": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "route_constraint_mode": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "route_lazy_constraint": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "route_lazy_level": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "route_pickup_neighbor_limit": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "slot_slack_per_order": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "sort_hit_tote_threshold": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "station_slot_count_cap": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "u_route_use_mip": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "u_same_slot_same_robot": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_route_time_upper_bound_margin_sec": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_refine_sp2_after_sp4": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_sp2_mip_time_limit_sec": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_sp4_time_limit_sec": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_subtask_ordering": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_use_sp2_mip_initial": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_use_sp4": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        }
+      },
+      "values": {
+        "big_m_time": 2000.0,
+        "bom_arrival_window_sec": 60.0,
+        "candidate_stack_topk": 999,
+        "candidate_station_topk_per_stack": 2,
+        "deadline_penalty_weight": 1000.0,
+        "enable_anchor_first_order_robot": false,
+        "enable_global_arrival_workload_lb": true,
+        "enable_hard_station_topk": false,
+        "enable_order_time_windows": true,
+        "enable_resource_lex_symmetry": false,
+        "enable_robot_finish_lex_symmetry": true,
+        "enable_route_arrival_slot_linear": false,
+        "enable_route_delivery_pickup_neighbor_prune": false,
+        "enable_route_directional_arc_prune": false,
+        "enable_route_finish_cmax_lb": true,
+        "enable_route_incident_travel_lb": true,
+        "enable_route_load_big_m_linear_cuts": false,
+        "enable_route_load_interval_arc_prune": true,
+        "enable_route_pair_service_travel_lb": true,
+        "enable_route_service_sec_cuts": false,
+        "enable_route_slot_stack_count_lb": true,
+        "enable_route_time_big_m_linear_cuts": false,
+        "enable_route_time_window_arc_prune": false,
+        "enable_scale_adaptive_candidate_prune": false,
+        "enable_selected_workload_lbs": true,
+        "enable_sku_cover_cuts": true,
+        "enable_sku_release_workload_lb": false,
+        "enable_slot_lex_symmetry": false,
+        "enable_slot_min_arrival_lb": true,
+        "enable_slot_pair_arrival_lb": false,
+        "enable_slot_sku_arrival_lb": false,
+        "enable_slot_sku_signature_lex_symmetry": false,
+        "enable_slot_specific_warm_station_protection": false,
+        "enable_sort_hit_tote_threshold": true,
+        "enable_station_clock_linear": false,
+        "enable_station_global_lex_symmetry": true,
+        "enable_station_load_lex_symmetry": false,
+        "enable_station_rank_workload_lb": false,
+        "enable_tight_slot_upper_bound": true,
+        "enable_tote_equivalence_symmetry": true,
+        "enable_uz_lb_cuts": true,
+        "enable_warm_candidate_stack_prune": false,
+        "enable_warm_prune_bound_repair": false,
+        "enable_warm_route_time_upper_bound": false,
+        "enable_warm_start": true,
+        "enable_warm_start_route_repair": true,
+        "enable_warm_start_station_projection": false,
+        "integer_cmax": false,
+        "integrate_u_route": true,
+        "kitting_span_penalty_weight": 5.0,
+        "max_candidate_stacks_per_order": 0,
+        "max_rank": 0,
+        "release_time_hard": true,
+        "route_arc_prune": false,
+        "route_big_m_time": null,
+        "route_constraint_mode": "indicator",
+        "route_lazy_constraint": true,
+        "route_lazy_level": 1,
+        "route_pickup_neighbor_limit": 0,
+        "slot_slack_per_order": 1,
+        "sort_hit_tote_threshold": 3,
+        "station_slot_count_cap": 0,
+        "u_route_use_mip": true,
+        "u_same_slot_same_robot": true,
+        "warm_route_time_upper_bound_margin_sec": 0.0,
+        "warm_start_refine_sp2_after_sp4": false,
+        "warm_start_sp2_mip_time_limit_sec": 30.0,
+        "warm_start_sp4_time_limit_sec": 15,
+        "warm_start_subtask_ordering": "default",
+        "warm_start_use_sp2_mip_initial": false,
+        "warm_start_use_sp4": true
+      }
+    },
+    "M7": {
+      "case_id": "M7",
+      "policy_sha256": "fda4110b91bc9930a5714399ad9dddd4bfa1440e6d104a2fd79fd42aa0da2a37",
+      "provenance": {
+        "big_m_time": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "bom_arrival_window_sec": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "candidate_stack_topk": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "candidate_station_topk_per_stack": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "deadline_penalty_weight": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_anchor_first_order_robot": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_global_arrival_workload_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_order_time_windows": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_resource_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_robot_finish_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_arrival_slot_linear": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_directional_arc_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_finish_cmax_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_incident_travel_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_load_interval_arc_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_pair_service_travel_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_service_sec_cuts": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_slot_stack_count_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_time_window_arc_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_scale_adaptive_candidate_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_selected_workload_lbs": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_sku_cover_cuts": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_slot_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_slot_min_arrival_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_sort_hit_tote_threshold": {
+          "reason": "Archived effective constraint count for SortByHitThreshold.",
+          "source": "summary.diagnostics"
+        },
+        "enable_station_clock_linear": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_station_global_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_tight_slot_upper_bound": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_tote_equivalence_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_uz_lb_cuts": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_warm_candidate_stack_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_warm_prune_bound_repair": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_warm_start": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_warm_start_route_repair": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "integer_cmax": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "integrate_u_route": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "kitting_span_penalty_weight": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "max_candidate_stacks_per_order": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "max_rank": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "release_time_hard": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "route_arc_prune": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "route_big_m_time": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "route_lazy_constraint": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "route_lazy_level": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "route_pickup_neighbor_limit": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "slot_slack_per_order": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "sort_hit_tote_threshold": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "u_route_use_mip": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "u_same_slot_same_robot": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_refine_sp2_after_sp4": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_sp2_mip_time_limit_sec": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_sp4_time_limit_sec": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_subtask_ordering": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_use_sp2_mip_initial": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_use_sp4": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        }
+      },
+      "values": {
+        "big_m_time": 2000.0,
+        "bom_arrival_window_sec": 60.0,
+        "candidate_stack_topk": 999,
+        "candidate_station_topk_per_stack": 1,
+        "deadline_penalty_weight": 1000.0,
+        "enable_anchor_first_order_robot": false,
+        "enable_global_arrival_workload_lb": true,
+        "enable_order_time_windows": true,
+        "enable_resource_lex_symmetry": false,
+        "enable_robot_finish_lex_symmetry": true,
+        "enable_route_arrival_slot_linear": false,
+        "enable_route_directional_arc_prune": false,
+        "enable_route_finish_cmax_lb": false,
+        "enable_route_incident_travel_lb": false,
+        "enable_route_load_interval_arc_prune": true,
+        "enable_route_pair_service_travel_lb": false,
+        "enable_route_service_sec_cuts": false,
+        "enable_route_slot_stack_count_lb": true,
+        "enable_route_time_window_arc_prune": true,
+        "enable_scale_adaptive_candidate_prune": false,
+        "enable_selected_workload_lbs": true,
+        "enable_sku_cover_cuts": true,
+        "enable_slot_lex_symmetry": false,
+        "enable_slot_min_arrival_lb": false,
+        "enable_sort_hit_tote_threshold": true,
+        "enable_station_clock_linear": false,
+        "enable_station_global_lex_symmetry": true,
+        "enable_tight_slot_upper_bound": true,
+        "enable_tote_equivalence_symmetry": true,
+        "enable_uz_lb_cuts": false,
+        "enable_warm_candidate_stack_prune": false,
+        "enable_warm_prune_bound_repair": false,
+        "enable_warm_start": true,
+        "enable_warm_start_route_repair": true,
+        "integer_cmax": false,
+        "integrate_u_route": true,
+        "kitting_span_penalty_weight": 5.0,
+        "max_candidate_stacks_per_order": 0,
+        "max_rank": 0,
+        "release_time_hard": true,
+        "route_arc_prune": true,
+        "route_big_m_time": null,
+        "route_lazy_constraint": true,
+        "route_lazy_level": 1,
+        "route_pickup_neighbor_limit": 5,
+        "slot_slack_per_order": 1,
+        "sort_hit_tote_threshold": 3,
+        "u_route_use_mip": true,
+        "u_same_slot_same_robot": true,
+        "warm_start_refine_sp2_after_sp4": false,
+        "warm_start_sp2_mip_time_limit_sec": 30.0,
+        "warm_start_sp4_time_limit_sec": 15,
+        "warm_start_subtask_ordering": "default",
+        "warm_start_use_sp2_mip_initial": false,
+        "warm_start_use_sp4": true
+      }
+    },
+    "M8": {
+      "case_id": "M8",
+      "policy_sha256": "17dcfda91ba60f4c76bd1b28b1cce94d8d63db5a045dab7574c5cd4da57f11f9",
+      "provenance": {
+        "big_m_time": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "bom_arrival_window_sec": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "candidate_stack_topk": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "candidate_station_topk_per_stack": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "deadline_penalty_weight": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_anchor_first_order_robot": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_global_arrival_workload_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_hard_station_topk": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_order_time_windows": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_resource_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_robot_finish_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_arrival_slot_linear": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_delivery_pickup_neighbor_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_directional_arc_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_finish_cmax_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_incident_travel_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_load_big_m_linear_cuts": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_load_interval_arc_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_pair_service_travel_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_service_sec_cuts": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_slot_stack_count_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_time_big_m_linear_cuts": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_time_window_arc_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_scale_adaptive_candidate_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_selected_workload_lbs": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_sku_cover_cuts": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_sku_release_workload_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_slot_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_slot_min_arrival_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_slot_pair_arrival_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_slot_sku_arrival_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_slot_sku_signature_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_slot_specific_warm_station_protection": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_sort_hit_tote_threshold": {
+          "reason": "Archived effective constraint count for SortByHitThreshold.",
+          "source": "summary.diagnostics"
+        },
+        "enable_station_clock_linear": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_station_global_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_station_load_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_station_rank_workload_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_tight_slot_upper_bound": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_tote_equivalence_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_uz_lb_cuts": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_warm_candidate_stack_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_warm_prune_bound_repair": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_warm_route_time_upper_bound": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_warm_start": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_warm_start_route_repair": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_warm_start_station_projection": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "integer_cmax": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "integrate_u_route": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "kitting_span_penalty_weight": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "max_candidate_stacks_per_order": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "max_rank": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "release_time_hard": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "route_arc_prune": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "route_big_m_time": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "route_constraint_mode": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "route_lazy_constraint": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "route_lazy_level": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "route_pickup_neighbor_limit": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "slot_slack_per_order": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "sort_hit_tote_threshold": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "station_slot_count_cap": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "u_route_use_mip": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "u_same_slot_same_robot": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_route_time_upper_bound_margin_sec": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_refine_sp2_after_sp4": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_sp2_mip_time_limit_sec": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_sp4_time_limit_sec": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_subtask_ordering": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_use_sp2_mip_initial": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_use_sp4": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        }
+      },
+      "values": {
+        "big_m_time": 2000.0,
+        "bom_arrival_window_sec": 60.0,
+        "candidate_stack_topk": 999,
+        "candidate_station_topk_per_stack": 1,
+        "deadline_penalty_weight": 1000.0,
+        "enable_anchor_first_order_robot": false,
+        "enable_global_arrival_workload_lb": true,
+        "enable_hard_station_topk": false,
+        "enable_order_time_windows": true,
+        "enable_resource_lex_symmetry": false,
+        "enable_robot_finish_lex_symmetry": true,
+        "enable_route_arrival_slot_linear": false,
+        "enable_route_delivery_pickup_neighbor_prune": false,
+        "enable_route_directional_arc_prune": false,
+        "enable_route_finish_cmax_lb": true,
+        "enable_route_incident_travel_lb": true,
+        "enable_route_load_big_m_linear_cuts": false,
+        "enable_route_load_interval_arc_prune": true,
+        "enable_route_pair_service_travel_lb": true,
+        "enable_route_service_sec_cuts": false,
+        "enable_route_slot_stack_count_lb": true,
+        "enable_route_time_big_m_linear_cuts": false,
+        "enable_route_time_window_arc_prune": false,
+        "enable_scale_adaptive_candidate_prune": false,
+        "enable_selected_workload_lbs": true,
+        "enable_sku_cover_cuts": true,
+        "enable_sku_release_workload_lb": false,
+        "enable_slot_lex_symmetry": false,
+        "enable_slot_min_arrival_lb": true,
+        "enable_slot_pair_arrival_lb": false,
+        "enable_slot_sku_arrival_lb": false,
+        "enable_slot_sku_signature_lex_symmetry": false,
+        "enable_slot_specific_warm_station_protection": true,
+        "enable_sort_hit_tote_threshold": true,
+        "enable_station_clock_linear": false,
+        "enable_station_global_lex_symmetry": true,
+        "enable_station_load_lex_symmetry": false,
+        "enable_station_rank_workload_lb": false,
+        "enable_tight_slot_upper_bound": true,
+        "enable_tote_equivalence_symmetry": true,
+        "enable_uz_lb_cuts": true,
+        "enable_warm_candidate_stack_prune": false,
+        "enable_warm_prune_bound_repair": false,
+        "enable_warm_route_time_upper_bound": false,
+        "enable_warm_start": true,
+        "enable_warm_start_route_repair": true,
+        "enable_warm_start_station_projection": false,
+        "integer_cmax": true,
+        "integrate_u_route": true,
+        "kitting_span_penalty_weight": 5.0,
+        "max_candidate_stacks_per_order": 0,
+        "max_rank": 0,
+        "release_time_hard": true,
+        "route_arc_prune": true,
+        "route_big_m_time": null,
+        "route_constraint_mode": "linear",
+        "route_lazy_constraint": true,
+        "route_lazy_level": 1,
+        "route_pickup_neighbor_limit": 5,
+        "slot_slack_per_order": 1,
+        "sort_hit_tote_threshold": 3,
+        "station_slot_count_cap": 0,
+        "u_route_use_mip": true,
+        "u_same_slot_same_robot": true,
+        "warm_route_time_upper_bound_margin_sec": 0.0,
+        "warm_start_refine_sp2_after_sp4": false,
+        "warm_start_sp2_mip_time_limit_sec": 30.0,
+        "warm_start_sp4_time_limit_sec": 15,
+        "warm_start_subtask_ordering": "default",
+        "warm_start_use_sp2_mip_initial": false,
+        "warm_start_use_sp4": true
+      }
+    },
+    "M9": {
+      "case_id": "M9",
+      "policy_sha256": "f62b91dea0dd2d3e565c340b777859f88fd8c700115049d155a9902b4e87434c",
+      "provenance": {
+        "big_m_time": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "bom_arrival_window_sec": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "candidate_stack_topk": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "candidate_station_topk_per_stack": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "deadline_penalty_weight": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_anchor_first_order_robot": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_global_arrival_workload_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_hard_station_topk": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_order_time_windows": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_resource_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_robot_finish_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_arrival_slot_linear": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_delivery_pickup_neighbor_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_directional_arc_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_finish_cmax_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_incident_travel_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_load_big_m_linear_cuts": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_load_interval_arc_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_pair_service_travel_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_service_sec_cuts": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_slot_stack_count_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_time_big_m_linear_cuts": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_route_time_window_arc_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_scale_adaptive_candidate_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_selected_workload_lbs": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_sku_cover_cuts": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_sku_release_workload_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_slot_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_slot_min_arrival_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_slot_pair_arrival_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_slot_sku_arrival_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_slot_sku_signature_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_slot_specific_warm_station_protection": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_sort_hit_tote_threshold": {
+          "reason": "Archived effective constraint count for SortByHitThreshold.",
+          "source": "summary.diagnostics"
+        },
+        "enable_station_clock_linear": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_station_global_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_station_load_lex_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_station_rank_workload_lb": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_tight_slot_upper_bound": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_tote_equivalence_symmetry": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_uz_lb_cuts": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_warm_candidate_stack_prune": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_warm_prune_bound_repair": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_warm_route_time_upper_bound": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "enable_warm_start": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_warm_start_route_repair": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "enable_warm_start_station_projection": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "integer_cmax": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "integrate_u_route": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "kitting_span_penalty_weight": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "max_candidate_stacks_per_order": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "max_rank": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "release_time_hard": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "route_arc_prune": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "route_big_m_time": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "route_constraint_mode": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "route_lazy_constraint": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "route_lazy_level": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "route_pickup_neighbor_limit": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "slot_slack_per_order": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "sort_hit_tote_threshold": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "station_slot_count_cap": {
+          "reason": "Archived effective diagnostic emitted by the baseline solve.",
+          "source": "summary.diagnostics"
+        },
+        "u_route_use_mip": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "u_same_slot_same_robot": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_route_time_upper_bound_margin_sec": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_refine_sp2_after_sp4": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_sp2_mip_time_limit_sec": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_sp4_time_limit_sec": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_subtask_ordering": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_use_sp2_mip_initial": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        },
+        "warm_start_use_sp4": {
+          "reason": "Archived baseline configuration value.",
+          "source": "summary.config"
+        }
+      },
+      "values": {
+        "big_m_time": 2000.0,
+        "bom_arrival_window_sec": 60.0,
+        "candidate_stack_topk": 999,
+        "candidate_station_topk_per_stack": 1,
+        "deadline_penalty_weight": 1000.0,
+        "enable_anchor_first_order_robot": false,
+        "enable_global_arrival_workload_lb": true,
+        "enable_hard_station_topk": false,
+        "enable_order_time_windows": true,
+        "enable_resource_lex_symmetry": false,
+        "enable_robot_finish_lex_symmetry": true,
+        "enable_route_arrival_slot_linear": false,
+        "enable_route_delivery_pickup_neighbor_prune": false,
+        "enable_route_directional_arc_prune": false,
+        "enable_route_finish_cmax_lb": true,
+        "enable_route_incident_travel_lb": true,
+        "enable_route_load_big_m_linear_cuts": false,
+        "enable_route_load_interval_arc_prune": true,
+        "enable_route_pair_service_travel_lb": true,
+        "enable_route_service_sec_cuts": false,
+        "enable_route_slot_stack_count_lb": true,
+        "enable_route_time_big_m_linear_cuts": false,
+        "enable_route_time_window_arc_prune": false,
+        "enable_scale_adaptive_candidate_prune": false,
+        "enable_selected_workload_lbs": true,
+        "enable_sku_cover_cuts": true,
+        "enable_sku_release_workload_lb": false,
+        "enable_slot_lex_symmetry": false,
+        "enable_slot_min_arrival_lb": true,
+        "enable_slot_pair_arrival_lb": false,
+        "enable_slot_sku_arrival_lb": false,
+        "enable_slot_sku_signature_lex_symmetry": false,
+        "enable_slot_specific_warm_station_protection": true,
+        "enable_sort_hit_tote_threshold": true,
+        "enable_station_clock_linear": false,
+        "enable_station_global_lex_symmetry": true,
+        "enable_station_load_lex_symmetry": false,
+        "enable_station_rank_workload_lb": false,
+        "enable_tight_slot_upper_bound": true,
+        "enable_tote_equivalence_symmetry": true,
+        "enable_uz_lb_cuts": true,
+        "enable_warm_candidate_stack_prune": false,
+        "enable_warm_prune_bound_repair": false,
+        "enable_warm_route_time_upper_bound": false,
+        "enable_warm_start": true,
+        "enable_warm_start_route_repair": true,
+        "enable_warm_start_station_projection": false,
+        "integer_cmax": true,
+        "integrate_u_route": true,
+        "kitting_span_penalty_weight": 5.0,
+        "max_candidate_stacks_per_order": 0,
+        "max_rank": 0,
+        "release_time_hard": true,
+        "route_arc_prune": true,
+        "route_big_m_time": null,
+        "route_constraint_mode": "linear",
+        "route_lazy_constraint": true,
+        "route_lazy_level": 1,
+        "route_pickup_neighbor_limit": 5,
+        "slot_slack_per_order": 1,
+        "sort_hit_tote_threshold": 3,
+        "station_slot_count_cap": 0,
+        "u_route_use_mip": true,
+        "u_same_slot_same_robot": true,
+        "warm_route_time_upper_bound_margin_sec": 0.0,
+        "warm_start_refine_sp2_after_sp4": false,
+        "warm_start_sp2_mip_time_limit_sec": 30.0,
+        "warm_start_sp4_time_limit_sec": 15,
+        "warm_start_subtask_ordering": "default",
+        "warm_start_use_sp2_mip_initial": false,
+        "warm_start_use_sp4": true
+      }
+    }
+  },
+  "description": "Target-blind M1-M9 model policies sanitized from archived effective diagnostics.",
+  "schema_version": 1
+}

@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "description": "Target-blind provisional TRA-Fast budgets at 80 percent of the TRA-Gurobi acceptance caps; replace source runtimes with accepted callback hit times after TRA-Gurobi harvest.",
+  "cases": {
+    "M1": {
+      "source_tra_gurobi_runtime_sec": 288.144,
+      "hard_limit_sec": 230.5152
+    },
+    "M2": {
+      "source_tra_gurobi_runtime_sec": 307.232,
+      "hard_limit_sec": 245.7856
+    },
+    "M3": {
+      "source_tra_gurobi_runtime_sec": 530.824,
+      "hard_limit_sec": 424.6592
+    },
+    "M4": {
+      "source_tra_gurobi_runtime_sec": 453.648,
+      "hard_limit_sec": 362.9184
+    },
+    "M5": {
+      "source_tra_gurobi_runtime_sec": 530.936,
+      "hard_limit_sec": 424.7488
+    },
+    "M6": {
+      "source_tra_gurobi_runtime_sec": 831.696,
+      "hard_limit_sec": 665.3568
+    },
+    "M7": {
+      "source_tra_gurobi_runtime_sec": 1051.368,
+      "hard_limit_sec": 841.0944
+    },
+    "M8": {
+      "source_tra_gurobi_runtime_sec": 1470.288,
+      "hard_limit_sec": 1176.2304
+    },
+    "M9": {
+      "source_tra_gurobi_runtime_sec": 2086.984,
+      "hard_limit_sec": 1669.5872
+    }
+  }
+}
