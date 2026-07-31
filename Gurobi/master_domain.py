@@ -633,8 +633,19 @@ def verify_manifest_problem(manifest: Mapping[str, Any], problem: Any) -> None:
         raise MasterDomainError(f"master domain problem hash mismatch: expected={expected}, actual={actual}")
 
 
-def verify_manifest_warm_start(manifest: Mapping[str, Any], warm: Any) -> None:
+def manifest_warm_start_hash_status(manifest: Mapping[str, Any], warm: Any) -> Dict[str, Any]:
     expected = str(manifest.get("warm_start_sha256", "") or "")
     actual, _protected_stacks = _warm_start_fingerprint(warm)
+    return {
+        "master_domain_expected_warm_start_sha256": expected,
+        "master_domain_actual_warm_start_sha256": actual,
+        "master_domain_warm_start_sha256_matches": bool((not expected) or expected == actual),
+    }
+
+
+def verify_manifest_warm_start(manifest: Mapping[str, Any], warm: Any) -> None:
+    status = manifest_warm_start_hash_status(manifest, warm)
+    expected = str(status["master_domain_expected_warm_start_sha256"])
+    actual = str(status["master_domain_actual_warm_start_sha256"])
     if expected and expected != actual:
         raise MasterDomainError(f"master domain warm-start hash mismatch: expected={expected}, actual={actual}")

@@ -1,0 +1,16 @@
+{
+  "case": "M6",
+  "global_makespan": 1063.9999999999989,
+  "manifest_sha256": "c001fc57e5a4edf53fe750a5dabcfe379532227b1d18b80fb560112a9d5e997e",
+  "robot_count": 5,
+  "run_id": "m6-formal-canonical-continuation360-seed42",
+  "schema_version": 1,
+  "seed": 42,
+  "snapshot_sha256": "5d43390c58f6ac3eb15c993636195fcf61e880cfc9c94a29432834ae6163307d",
+  "solver_cmax": 1063.9999998847027,
+  "solver_objective": 1064.3759998847017,
+  "station_count": 2,
+  "subtask_count": 24,
+  "task_count": 26,
+  "verified_cmax": 1063.9999999999989
+}

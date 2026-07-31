@@ -1,0 +1,21 @@
+{
+  "case": "M9",
+  "cmax_value": 2109.0,
+  "input_snapshot_sha256": "a04e4763aafd0f97adf667637d84b897eef5c79c7e0842740facf28b3881458c",
+  "input_solver_objective": 2110.1440000000025,
+  "input_verified_cmax": 2109.0,
+  "installed_start_count": 151523,
+  "manifest_sha256": "4d0bd2fc29367bc767ef9359c34e026454b3f50223172ccf7e422b58356be03b",
+  "mip_gap": 0.009442009644840462,
+  "missing_start_count": 0,
+  "model_runtime_sec": 10.765401840209961,
+  "obj_bound": 2090.22,
+  "obj_val": 2110.144000000002,
+  "pre_verify_cmax": 2109.0,
+  "pre_verify_errors": [],
+  "pre_verify_internal_feasible": true,
+  "runtime_sec": 10.766184041975066,
+  "sol_count": 1,
+  "status": "OPTIMAL",
+  "status_code": 2
+}

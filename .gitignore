@@ -8,6 +8,12 @@ tmp_*/
 log/
 result/
 
+# Formal solver artifacts are retained locally and excluded from source control.
+numerate_result/*
+!numerate_result/paper_tra_gurobi_m1_m9/
+numerate_result/paper_tra_gurobi_m1_m9/*
+!numerate_result/paper_tra_gurobi_m1_m9/.gitkeep
+
 *.lp
 *.ilp
 warm_start_time_window_diag.json

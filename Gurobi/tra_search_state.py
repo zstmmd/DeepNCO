@@ -40,6 +40,12 @@ class AcceptanceOutcome:
     uphill_shake: bool = False
 
 
+@dataclass(frozen=True)
+class CandidateSelection:
+    candidate: Optional[InnerCandidate]
+    dispositions: tuple[dict[str, str], ...]
+
+
 @dataclass
 class InnerSearchEvidence:
     attempts: int = 0
@@ -196,6 +202,7 @@ class SearchState:
     )
     status: str = "NO_FULL_FEASIBLE_INCUMBENT"
     error: str = ""
+    best_objective_bound: Optional[float] = None
 
     def __post_init__(self) -> None:
         self.explored_shells.add(str(self.search_shell.sha256))
@@ -383,10 +390,39 @@ class SearchState:
         *,
         allow_diverse_neighborhood_repeat: bool = False,
     ) -> Optional[InnerCandidate]:
+        return self.select_unattempted_candidate_with_dispositions(
+            reference_shell,
+            step,
+            candidates,
+            allow_diverse_neighborhood_repeat=allow_diverse_neighborhood_repeat,
+        ).candidate
+
+    def select_unattempted_candidate_with_dispositions(
+        self,
+        reference_shell: StructuralShell,
+        step: ProcedureStep,
+        candidates: Iterable[InnerCandidate],
+        *,
+        allow_diverse_neighborhood_repeat: bool = False,
+    ) -> CandidateSelection:
+        dispositions = []
         for candidate in self._submission_candidates(step, candidates):
+            shell_sha256 = str(candidate.shell.sha256)
             if str(candidate.shell.sha256) in self.explored_shells:
+                dispositions.append(
+                    {
+                        "shell_sha256": shell_sha256,
+                        "disposition": "explored_shell",
+                    }
+                )
                 continue
             if not self.candidate_within_certification_band(step, candidate):
+                dispositions.append(
+                    {
+                        "shell_sha256": shell_sha256,
+                        "disposition": "certification_band",
+                    }
+                )
                 continue
             comproc = getattr(candidate, "comproc", None)
             projected_cmax = float(
@@ -423,6 +459,12 @@ class SearchState:
                     - objective_tolerance(self.incumbent_cmax)
                 )
             ):
+                dispositions.append(
+                    {
+                        "shell_sha256": shell_sha256,
+                        "disposition": "neighborhood_submission_quota",
+                    }
+                )
                 continue
             if (
                 self.consecutive_submission_procedure
@@ -437,6 +479,12 @@ class SearchState:
                     - objective_tolerance(self.incumbent_cmax)
                 )
             ):
+                dispositions.append(
+                    {
+                        "shell_sha256": shell_sha256,
+                        "disposition": "process_submission_quota",
+                    }
+                )
                 continue
             if (
                 self.consecutive_transition_procedure is Procedure(step.procedure)
@@ -450,6 +498,12 @@ class SearchState:
                     >= float(self.incumbent_cmax)
                     - objective_tolerance(self.incumbent_cmax)
                 ):
+                    dispositions.append(
+                        {
+                            "shell_sha256": shell_sha256,
+                            "disposition": "transition_quota",
+                        }
+                    )
                     continue
             attempt_key = (
                 str(reference_shell.sha256),
@@ -458,6 +512,12 @@ class SearchState:
                 str(candidate.shell.sha256),
             )
             if attempt_key in self.attempted_shells:
+                dispositions.append(
+                    {
+                        "shell_sha256": shell_sha256,
+                        "disposition": "attempted_shell",
+                    }
+                )
                 continue
             self.attempted_shells.add(attempt_key)
             if submission_procedure is self.consecutive_submission_procedure:
@@ -488,8 +548,17 @@ class SearchState:
                 recourse_score,
                 calibration_eligible=self.incumbent_cmax is not None,
             )
-            return candidate
-        return None
+            dispositions.append(
+                {
+                    "shell_sha256": shell_sha256,
+                    "disposition": "selected",
+                }
+            )
+            return CandidateSelection(
+                candidate=candidate,
+                dispositions=tuple(dispositions),
+            )
+        return CandidateSelection(candidate=None, dispositions=tuple(dispositions))
 
     @staticmethod
     def _projected_candidate_key(
@@ -515,12 +584,63 @@ class SearchState:
             str(candidate.shell.sha256),
         )
 
+    @staticmethod
+    def _core_projection_key(candidate: InnerCandidate) -> str:
+        projection = getattr(getattr(candidate, "shell", None), "projection", None)
+        if projection is None:
+            return str(getattr(getattr(candidate, "shell", None), "sha256", ""))
+        if hasattr(projection, "as_canonical_payload"):
+            return repr(projection.as_canonical_payload())
+        return repr(projection)
+
+    @staticmethod
+    def _z_action_active_count(candidate: InnerCandidate) -> int:
+        z_actions = getattr(getattr(candidate, "shell", None), "z_actions", {}) or {}
+        active = 0
+        for family_values in dict(z_actions).values():
+            for value in dict(family_values or {}).values():
+                try:
+                    if abs(float(value)) > 1e-9:
+                        active += 1
+                except (TypeError, ValueError):
+                    continue
+        return active
+
     def _submission_candidates(
         self,
         step: ProcedureStep,
         candidates: Iterable[InnerCandidate],
     ) -> tuple[InnerCandidate, ...]:
         ranked = tuple(candidates)
+        if (
+            self.incumbent is None
+            and Procedure(step.procedure) is Procedure.F1
+            and NeighborhoodLevel(step.neighborhood) is NeighborhoodLevel.N1
+        ):
+            by_projection: dict[str, list[InnerCandidate]] = {}
+            for candidate in ranked:
+                by_projection.setdefault(
+                    self._core_projection_key(candidate),
+                    [],
+                ).append(candidate)
+            emitted: set[str] = set()
+            reordered: list[InnerCandidate] = []
+            for candidate in ranked:
+                projection_key = self._core_projection_key(candidate)
+                if projection_key in emitted:
+                    continue
+                emitted.add(projection_key)
+                group = by_projection[projection_key]
+                if len(group) > 1:
+                    group = sorted(
+                        group,
+                        key=lambda item: (
+                            self._z_action_active_count(item),
+                            self._projected_candidate_key(item),
+                        ),
+                    )
+                reordered.extend(group)
+            ranked = tuple(reordered)
         if (
             Procedure(step.procedure) is not Procedure.F2
             or NeighborhoodLevel(step.neighborhood) is not NeighborhoodLevel.N2
@@ -612,10 +732,35 @@ class SearchState:
         )
 
     def certified_prune(self, objective_bound: float) -> bool:
+        self.observe_objective_bound(objective_bound)
         # The inner objective includes secondary route terms. Its bound can
         # prove objective improvement impossible, but cannot rule out a new
         # equal-Cmax shell that is useful for the next rotation.
         return False
+
+    def observe_objective_bound(self, objective_bound: float) -> None:
+        bound = float(objective_bound)
+        if not math.isfinite(bound):
+            return
+        if self.best_objective_bound is None:
+            self.best_objective_bound = bound
+            return
+        # Minimization lower bounds are tighter when they increase.
+        self.best_objective_bound = max(float(self.best_objective_bound), bound)
+
+    def objective_gap_satisfied(self, mip_gap: float) -> bool:
+        if self.incumbent is None or self.best_objective_bound is None:
+            return False
+        gap_limit = float(mip_gap)
+        if not math.isfinite(gap_limit) or gap_limit < 0.0:
+            return False
+        objective = float(self.incumbent.objective)
+        bound = float(self.best_objective_bound)
+        if not math.isfinite(objective) or not math.isfinite(bound):
+            return False
+        denominator = max(1.0, abs(objective))
+        relative_gap = max(0.0, (objective - bound) / denominator)
+        return bool(relative_gap <= gap_limit)
 
     def observe_inner(
         self,

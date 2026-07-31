@@ -1,0 +1,57 @@
+{
+  "algorithm": "paper-tra-gurobi",
+  "case": "M6",
+  "domain_policy_sha256": "a5254952ed4d57090e4f23c6abeb803c963b553ce418f1d0f9f5ea8cfa65558d",
+  "event_ledger_path": "/Users/bytedance/Documents/trae_projects/deepnco-paper-tra-m1-m9-acceptance/numerate_result/paper_tra_gurobi_m1_m9/formal/M6_canonical_continuation360_seed42/feasible_solution_events.jsonl",
+  "manifest_path": "/Users/bytedance/Documents/trae_projects/deepnco-paper-tra-m1-m9-acceptance/numerate_result/paper_tra_gurobi_m1_m9/formal/M6_canonical_continuation360_seed42/master_domain_v3.json",
+  "result": {
+    "best_objective": 1064.3759998847017,
+    "best_verified_cmax": 1063.9999999999989,
+    "case": "M6",
+    "cycle_count": 0,
+    "deferred_remaining": 0,
+    "error": "",
+    "event_count": 133,
+    "inner_runtime_sec": 52.82064579206053,
+    "manifest_sha256": "c001fc57e5a4edf53fe750a5dabcfe379532227b1d18b80fb560112a9d5e997e",
+    "outer_runtime_sec": 729.3870815008413,
+    "procedure_count": 1,
+    "reserve_runtime_sec": 0.0,
+    "run_id": "m6-formal-canonical-continuation360-seed42",
+    "runtime_sec": 789.3804089169716,
+    "status": "FEASIBLE",
+    "unresolved_remaining": 0
+  },
+  "runtime_policy": {
+    "baseline_runtime_sec": 1039.62,
+    "case_id": "M6",
+    "hard_limit_sec": 831.6959999999999,
+    "inner_quota_sec": 249.50879999999995,
+    "outer_quota_sec": 457.4328,
+    "reserve_quota_sec": 124.75439999999998
+  },
+  "schema_version": 1,
+  "search_audit_ledger_path": "/Users/bytedance/Documents/trae_projects/deepnco-paper-tra-m1-m9-acceptance/numerate_result/paper_tra_gurobi_m1_m9/formal/M6_canonical_continuation360_seed42/search_audit_events.jsonl",
+  "seed": 42,
+  "solution_export": {
+    "case": "M6",
+    "export_complete": true,
+    "file_sha256": {
+      "best_solution_audit.json": "f7a35d5d3079ec95420acd542642c7f2a33f395276c7cdb6dfd217e376a2be3c",
+      "best_solution_audit.txt": "b7a1dbf32049cd6c756b52a75a83fb7e824c16c8c98d1bbfb04b905fc3cc7add",
+      "best_solution_full_dump.txt": "33bce772b4b6a7c0156ec9e9f440ffc65d1903b6ceeea1291328dce9cb340260",
+      "best_solution_objectives.json": "778de01022570ee4e2425bce923649446911c6cdf3f46da1d27b51eb0f83288e",
+      "best_solution_objectives.txt": "8facb27d65bd7a7d0a20eaeb5769e6b2aee681c3f9f5c54991d0cc943573d9b1",
+      "tra_makespan_verification.json": "e8a11030fe4311d56b07e18274626a224448ee1bacab70e865aa1d674feca3bd",
+      "tra_makespan_verification.txt": "e566acd58b32d438056654dd3c98d20f0cf9f7d49aab803d783fbe5526ee6529",
+      "xyzu_variable_values.json": "a8f16094f217e7f3e124cc5e25219f45d3556175ddaf0bfbcb82ee8fc36cd719"
+    },
+    "manifest_sha256": "c001fc57e5a4edf53fe750a5dabcfe379532227b1d18b80fb560112a9d5e997e",
+    "run_id": "m6-formal-canonical-continuation360-seed42",
+    "schema_version": 1,
+    "snapshot_sha256": "5d43390c58f6ac3eb15c993636195fcf61e880cfc9c94a29432834ae6163307d",
+    "status": "EXPORTED",
+    "verified_cmax": 1063.9999999999989,
+    "verifier_error_codes": []
+  }
+}

@@ -8,6 +8,7 @@ from typing import Any, Optional
 
 from gurobipy import GRB
 
+from Gurobi.tra_outer import objective_tolerance
 from Gurobi.tra_projection import INACTIVE_LABEL
 
 
@@ -64,6 +65,24 @@ class OuterBudgetPolicy:
 
     def restart_slice(self, suggested_sec: float, *, hard_limit_sec: float) -> float:
         return self._cap(suggested_sec, hard_limit_sec, self.restart_hard_fraction)
+
+    @staticmethod
+    def retry_is_bound_promoted(
+        *,
+        objective_bound: float,
+        incumbent_objective: Optional[float],
+    ) -> bool:
+        if incumbent_objective is None:
+            return False
+        if not math.isfinite(float(objective_bound)):
+            return False
+        if not math.isfinite(float(incumbent_objective)):
+            return False
+        return bool(
+            float(objective_bound)
+            < float(incumbent_objective)
+            - objective_tolerance(float(incumbent_objective))
+        )
 
     def should_continue(
         self,
@@ -143,6 +162,7 @@ class ReserveBudgetPolicy:
     """Compatibility facade for reserve restart budgeting."""
 
     restart_hard_fraction: float = 0.04
+    promoted_restart_hard_fraction: float = 0.15
     f2_n2_inner_hard_fraction: float = 0.135
     f2_n3_inner_hard_fraction: float = 0.135
     f1_inner_hard_fraction: float = 0.05
@@ -154,8 +174,14 @@ class ReserveBudgetPolicy:
         *,
         hard_limit_sec: float,
         reserve_retry: bool,
+        bound_promoted: bool = False,
     ) -> float:
-        policy = OuterBudgetPolicy(restart_hard_fraction=self.restart_hard_fraction)
+        fraction = (
+            self.promoted_restart_hard_fraction
+            if reserve_retry and bound_promoted
+            else self.restart_hard_fraction
+        )
+        policy = OuterBudgetPolicy(restart_hard_fraction=fraction)
         return policy.restart_slice(suggested_sec, hard_limit_sec=hard_limit_sec)
 
     def cap_deferred_inner(

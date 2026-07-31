@@ -1,0 +1,16 @@
+{
+  "case": "M3",
+  "global_makespan": 829.9999999999944,
+  "manifest_sha256": "fbebf5b3975500fafa8e4ef8f350e9f76bf0dcd32ba11186fb28a63a921392f4",
+  "robot_count": 4,
+  "run_id": "m3-formal-stack-arrival-repair-seed42",
+  "schema_version": 1,
+  "seed": 42,
+  "snapshot_sha256": "dd40e9cb5e728616b49dcfea46e1f71096efa0c506eff90e2ec725f246b4f530",
+  "solver_cmax": 829.9999991981931,
+  "solver_objective": 830.4099991981925,
+  "station_count": 3,
+  "subtask_count": 18,
+  "task_count": 20,
+  "verified_cmax": 829.9999999999944
+}

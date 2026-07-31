@@ -48,6 +48,37 @@ def positive_family_start_values(
     return selected
 
 
+SAFE_STRUCTURAL_START_FAMILIES = (
+    "a",
+    "x",
+    "sku_use",
+    "pair_activate",
+    "slot_robot",
+    "y",
+    "flip",
+    "sort",
+    "carry",
+    "hit",
+    "noise",
+    "flip_hit",
+)
+
+
+def safe_structural_start_values(
+    values_by_name: Mapping[str, float],
+    payload: Mapping[str, Any],
+) -> dict[str, float]:
+    """Keep structural binaries and let Gurobi rebuild timing/routing recourse."""
+
+    selected: dict[str, float] = {}
+    for family_name in SAFE_STRUCTURAL_START_FAMILIES:
+        family = payload.get(family_name)
+        if family is None:
+            continue
+        selected.update(positive_family_start_values(values_by_name, payload, family_name))
+    return selected
+
+
 def _name(variable: Any) -> str:
     return str(variable.VarName)
 
@@ -174,11 +205,7 @@ def build_full_start_vector(
         if str(name) in full_values and math.isfinite(float(value)):
             full_values[str(name)] = float(value)
     validation = validate_full_start(model, full_values)
-    safe_values = positive_family_start_values(
-        projection.values_by_name,
-        payload,
-        "y",
-    )
+    safe_values = safe_structural_start_values(projection.values_by_name, payload)
     return FullStartVector(
         values_by_name=full_values,
         safe_values_by_name=safe_values,

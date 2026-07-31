@@ -7,11 +7,17 @@ import pytest
 
 from Gurobi.tra_elite import candidate_preference_key, select_pareto_elites
 from Gurobi.tra_neighborhood import (
+    DualBlockSpec,
     NeighborhoodLevel,
     Procedure,
+    validate_dual_block_transition,
     validate_transition,
 )
-from Gurobi.tra_outer_start import positive_family_start_values, restore_station_wait_start
+from Gurobi.tra_outer_start import (
+    positive_family_start_values,
+    safe_structural_start_values,
+    restore_station_wait_start,
+)
 from Gurobi.tra_projection import (
     INACTIVE_LABEL,
     CoreProjection,
@@ -206,6 +212,103 @@ def test_n3_changes_at_most_four_carriers() -> None:
         validate_transition(before, five, Procedure.F2, NeighborhoodLevel.N3)
 
 
+def test_dual_f2_f3_transition_releases_x_group_and_r_assign_only() -> None:
+    before = CoreProjection(
+        x_group={"u0": 1, "u1": 2},
+        s_visit={(1, 10): 0, (2, 11): 1},
+        r_assign={1: 0, 2: 1},
+    )
+    after = CoreProjection(
+        x_group={"u0": 2, "u1": 1},
+        s_visit=before.s_visit,
+        r_assign={1: 1, 2: 0},
+    )
+
+    audit = validate_dual_block_transition(
+        before,
+        after,
+        DualBlockSpec("F2_F3", ("x_group", "r_assign"), hamming_limit=8),
+    )
+
+    assert audit.name == "F2_F3"
+    assert audit.released_blocks == ("x_group", "r_assign")
+    assert audit.changed_carriers_by_block == {
+        "x_group": 2,
+        "r_assign": 2,
+    }
+    assert audit.raw_one_hot_hamming == 8
+
+
+def test_dual_f2_f3_transition_rejects_fixed_s_visit_change() -> None:
+    before = CoreProjection(
+        x_group={"u0": 1, "u1": 2},
+        s_visit={(1, 10): 0, (2, 11): 1},
+        r_assign={1: 0, 2: 1},
+    )
+    after = CoreProjection(
+        x_group={"u0": 2, "u1": 1},
+        s_visit={(1, 10): 1, (2, 11): 1},
+        r_assign={1: 1, 2: 0},
+    )
+
+    with pytest.raises(ProjectionError, match="s_visit changed"):
+        validate_dual_block_transition(
+            before,
+            after,
+            DualBlockSpec("F2_F3", ("x_group", "r_assign"), hamming_limit=8),
+        )
+
+
+def test_dual_f2_f3_transition_rejects_hamming_overflow() -> None:
+    before = CoreProjection(
+        x_group={"u0": 1, "u1": 2, "u2": 3},
+        s_visit={(1, 10): 0, (2, 11): 1},
+        r_assign={1: 0, 2: 1, 3: 2},
+    )
+    after = CoreProjection(
+        x_group={"u0": 2, "u1": 3, "u2": 1},
+        s_visit=before.s_visit,
+        r_assign={1: 1, 2: 2, 3: 0},
+    )
+
+    with pytest.raises(ProjectionError, match="combined raw one-hot Hamming"):
+        validate_dual_block_transition(
+            before,
+            after,
+            DualBlockSpec("F2_F3", ("x_group", "r_assign"), hamming_limit=8),
+        )
+
+
+def test_all3_transition_releases_all_primary_blocks() -> None:
+    before = CoreProjection(
+        x_group={"u0": 1, "u1": 2},
+        s_visit={(1, 10): 0, (2, 11): 1},
+        r_assign={1: 0, 2: 1},
+    )
+    after = CoreProjection(
+        x_group={"u0": 2, "u1": 1},
+        s_visit={(1, 10): 1, (2, 11): 0},
+        r_assign={1: 1, 2: 0},
+    )
+
+    audit = validate_dual_block_transition(
+        before,
+        after,
+        DualBlockSpec(
+            "ALL3",
+            ("s_visit", "x_group", "r_assign"),
+            hamming_limit=12,
+        ),
+    )
+
+    assert audit.raw_one_hot_hamming == 12
+    assert audit.changed_carriers_by_block == {
+        "x_group": 2,
+        "s_visit": 2,
+        "r_assign": 2,
+    }
+
+
 def test_elite_pool_keeps_only_relax_risk_pareto_candidates() -> None:
     candidates = [
         _EliteCandidate(_EliteShell("low-risk"), relaxed_objective=15.0, repair_risk=_EliteRisk(1.0)),
@@ -337,3 +440,37 @@ def test_outer_start_submits_only_selected_primary_route_arcs() -> None:
     )
 
     assert selected == {"route_arc[1,2,40]": 1.0}
+
+
+def test_outer_safe_start_keeps_structural_binaries_without_route_recourse() -> None:
+    payload = {
+        "a": {10: _NamedVar("a[10]")},
+        "x": {("u1", 10): _NamedVar("x[u1,10]")},
+        "pair_activate": {(10, 20, 30): _NamedVar("pair[10,20,30]")},
+        "slot_robot": {(10, 40): _NamedVar("slot_robot[10,40]")},
+        "y": {(10, 30, 0): _NamedVar("y[10,30,0]")},
+        "carry": {(10, 100): _NamedVar("carry[10,100]")},
+        "route_arc": {(1, 2, 40): _NamedVar("route_arc[1,2,40]")},
+        "arrival": {10: _NamedVar("arrival[10]")},
+    }
+    values = {
+        "a[10]": 1.0,
+        "x[u1,10]": 1.0,
+        "pair[10,20,30]": 1.0,
+        "slot_robot[10,40]": 1.0,
+        "y[10,30,0]": 1.0,
+        "carry[10,100]": 1.0,
+        "route_arc[1,2,40]": 1.0,
+        "arrival[10]": 12.0,
+    }
+
+    selected = safe_structural_start_values(values, payload)
+
+    assert selected == {
+        "a[10]": 1.0,
+        "x[u1,10]": 1.0,
+        "pair[10,20,30]": 1.0,
+        "slot_robot[10,40]": 1.0,
+        "y[10,30,0]": 1.0,
+        "carry[10,100]": 1.0,
+    }

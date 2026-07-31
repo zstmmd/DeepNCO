@@ -1,0 +1,20 @@
+{
+  "case": "M6",
+  "export_complete": true,
+  "file_sha256": {
+    "best_solution_audit.json": "f7a35d5d3079ec95420acd542642c7f2a33f395276c7cdb6dfd217e376a2be3c",
+    "best_solution_audit.txt": "b7a1dbf32049cd6c756b52a75a83fb7e824c16c8c98d1bbfb04b905fc3cc7add",
+    "best_solution_full_dump.txt": "33bce772b4b6a7c0156ec9e9f440ffc65d1903b6ceeea1291328dce9cb340260",
+    "best_solution_objectives.json": "778de01022570ee4e2425bce923649446911c6cdf3f46da1d27b51eb0f83288e",
+    "best_solution_objectives.txt": "8facb27d65bd7a7d0a20eaeb5769e6b2aee681c3f9f5c54991d0cc943573d9b1",
+    "tra_makespan_verification.json": "e8a11030fe4311d56b07e18274626a224448ee1bacab70e865aa1d674feca3bd",
+    "tra_makespan_verification.txt": "e566acd58b32d438056654dd3c98d20f0cf9f7d49aab803d783fbe5526ee6529",
+    "xyzu_variable_values.json": "a8f16094f217e7f3e124cc5e25219f45d3556175ddaf0bfbcb82ee8fc36cd719"
+  },
+  "manifest_sha256": "c001fc57e5a4edf53fe750a5dabcfe379532227b1d18b80fb560112a9d5e997e",
+  "run_id": "m6-formal-canonical-continuation360-seed42",
+  "schema_version": 1,
+  "snapshot_sha256": "5d43390c58f6ac3eb15c993636195fcf61e880cfc9c94a29432834ae6163307d",
+  "verified_cmax": 1063.9999999999989,
+  "verifier_error_codes": []
+}

@@ -1,0 +1,31 @@
+{
+  "artifact_manifest_complete": true,
+  "audit_pass": true,
+  "case_id": "M6",
+  "cmax_equal": true,
+  "export_complete": true,
+  "export_snapshot_matches_target_event": true,
+  "failure_reasons": [],
+  "formal_runtime_sec": 789.3804089169716,
+  "gurobi_runtime_sec": 1039.62,
+  "hard_limit_sec": 831.696,
+  "harvest": {
+    "baseline_runtime_sec": 1039.62,
+    "best_verified_cmax": 1063.9999999999989,
+    "case": "M6",
+    "cmax_equal": true,
+    "first_solver_incumbent_target_time_sec": 733.9843595409766,
+    "first_verified_target_time_sec": 786.7073648329824,
+    "lower_than_target": false,
+    "run_id": "",
+    "runtime_limit_sec": 831.696,
+    "runtime_ok": true,
+    "target_cmax": 1064.0,
+    "timestamp_policy": "verifier_complete_wall_timestamp_sec"
+  },
+  "passed": true,
+  "runtime_ok": true,
+  "schema_version": 1,
+  "target_cmax": 1064.0,
+  "verification_pass": true
+}

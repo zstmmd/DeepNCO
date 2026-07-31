@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
 from Gurobi.tra_neighborhood import NeighborhoodLevel, Procedure
-from Gurobi.tra_outer import has_unresolved_improvement_potential
+from Gurobi.tra_inner import InnerCandidate
+from Gurobi.tra_model_state import ModelSnapshot
+from Gurobi.tra_outer import OuterDisposition, has_unresolved_improvement_potential
 from Gurobi.tra_outer_continuation import OuterContinuationState
 from Gurobi.tra_outer_sequence import ImmediateOuterSequence
+from Gurobi.tra_projection import CoreProjection, StructuralShell
+from Gurobi.tra_risk import RepairRisk
+from Gurobi.tra_reserve_phase import ReservePhase
 from Gurobi.tra_budget_policy import (
     OuterBudgetPolicy,
     RegularInnerBudgetPolicy,
@@ -19,6 +25,7 @@ from Gurobi.tra_search_state import (
     InnerSearchEvidence,
     RecourseCalibration,
     SearchState,
+    TRAIncumbent,
 )
 from Gurobi.tra_work_queue import (
     DeferredInnerStep,
@@ -44,6 +51,19 @@ def test_scheduler_keeps_strict_f1_f2_f3_order_and_escalates_per_block() -> None
         (Procedure.F2, NeighborhoodLevel.N2),
         (Procedure.F3, NeighborhoodLevel.N2),
     ]
+
+
+def test_rotation_yields_pending_outer_only_after_a_complete_f1_f2_f3_cycle() -> None:
+    scheduler = RotationScheduler(max_procedures=12)
+
+    assert not scheduler.should_yield_to_reserve(pending_outer_count=1)
+    scheduler.complete_step(improved=False)  # F1
+    assert not scheduler.should_yield_to_reserve(pending_outer_count=1)
+    scheduler.complete_step(improved=False)  # F2
+    assert not scheduler.should_yield_to_reserve(pending_outer_count=1)
+    scheduler.complete_step(improved=False)  # F3
+    assert scheduler.should_yield_to_reserve(pending_outer_count=1)
+    assert not scheduler.should_yield_to_reserve(pending_outer_count=0)
 
 
 def test_plateau_transition_keeps_other_processes_vns_progress() -> None:
@@ -72,6 +92,65 @@ def test_plateau_transition_rechecks_n2_on_other_blocks_from_n3() -> None:
     scheduler.complete_step(improved=False)
     assert scheduler.current_step().procedure is Procedure.F2
     assert scheduler.current_step().neighborhood is NeighborhoodLevel.N2
+
+
+def test_default_f1_plateau_transition_resets_f1_to_n1() -> None:
+    scheduler = RotationScheduler(max_procedures=12)
+
+    scheduler.complete_step(improved=True, primary_improved=False)  # F1 N1
+    scheduler.complete_step(improved=False)  # F2
+    scheduler.complete_step(improved=False)  # F3
+
+    step = scheduler.current_step()
+    assert step.procedure is Procedure.F1
+    assert step.neighborhood is NeighborhoodLevel.N1
+
+
+def test_diagnostic_f1_plateau_transition_escalates_to_n2_then_n3() -> None:
+    scheduler = RotationScheduler(
+        max_procedures=12,
+        enable_f1_plateau_escalation=True,
+    )
+
+    scheduler.complete_step(improved=True, primary_improved=False)  # F1 N1
+    scheduler.complete_step(improved=False)  # F2
+    scheduler.complete_step(improved=False)  # F3
+    assert scheduler.current_step() == ProcedureStep(
+        4,
+        2,
+        Procedure.F1,
+        NeighborhoodLevel.N2,
+    )
+
+    scheduler.complete_step(improved=True, primary_improved=False)  # F1 N2
+    scheduler.complete_step(improved=False)  # F2
+    scheduler.complete_step(improved=False)  # F3
+
+    assert scheduler.current_step() == ProcedureStep(
+        7,
+        3,
+        Procedure.F1,
+        NeighborhoodLevel.N3,
+    )
+
+
+def test_diagnostic_f2_plateau_transition_escalates_to_n2() -> None:
+    scheduler = RotationScheduler(
+        max_procedures=12,
+        plateau_escalation_procedures=(Procedure.F2,),
+    )
+
+    scheduler.complete_step(improved=False)  # F1
+    scheduler.complete_step(improved=True, primary_improved=False)  # F2 N1
+    scheduler.complete_step(improved=False)  # F3
+    scheduler.complete_step(improved=False)  # F1
+
+    assert scheduler.current_step() == ProcedureStep(
+        5,
+        2,
+        Procedure.F2,
+        NeighborhoodLevel.N2,
+    )
 
 
 def test_strict_improvement_resets_all_procedures_to_n1() -> None:
@@ -105,6 +184,61 @@ def test_reserve_improvement_restarts_strict_rotation_at_f1_n1() -> None:
     assert scheduler.stagnant_cycles == 0
     assert scheduler.current_step().procedure is Procedure.F1
     assert scheduler.current_step().neighborhood is NeighborhoodLevel.N1
+
+
+def test_external_restart_can_preserve_f1_escalation_only_when_requested() -> None:
+    scheduler = RotationScheduler(
+        max_procedures=12,
+        enable_f1_plateau_escalation=True,
+    )
+    for _ in range(3):
+        scheduler.complete_step(improved=False)
+    assert scheduler.current_step() == ProcedureStep(
+        4,
+        2,
+        Procedure.F1,
+        NeighborhoodLevel.N2,
+    )
+
+    scheduler.restart_after_external_improvement(preserve_f1_level=True)
+
+    assert scheduler.current_step() == ProcedureStep(
+        4,
+        2,
+        Procedure.F1,
+        NeighborhoodLevel.N2,
+    )
+
+    scheduler.restart_after_external_improvement()
+
+    assert scheduler.current_step() == ProcedureStep(
+        4,
+        2,
+        Procedure.F1,
+        NeighborhoodLevel.N1,
+    )
+
+
+def test_external_restart_can_preserve_configured_f2_level() -> None:
+    scheduler = RotationScheduler(
+        max_procedures=12,
+        plateau_escalation_procedures=(Procedure.F2,),
+    )
+    scheduler.complete_step(improved=False)  # F1 -> N2
+    scheduler.complete_step(improved=False)  # F2 -> N2
+    scheduler.complete_step(improved=False)  # F3 -> N2
+
+    scheduler.restart_after_external_improvement(
+        preserve_procedure_levels=(Procedure.F2,),
+    )
+    scheduler.complete_step(improved=False)  # F1
+
+    assert scheduler.current_step() == ProcedureStep(
+        5,
+        2,
+        Procedure.F2,
+        NeighborhoodLevel.N2,
+    )
 
 
 def test_unresolved_shell_gets_exactly_one_reserve_retry() -> None:
@@ -434,6 +568,152 @@ def test_outer_attempts_are_capped_at_four_percent_of_the_hard_budget() -> None:
         hard_limit_sec=288.0,
         reserve_retry=True,
     ) == pytest.approx(11.52)
+
+
+def test_outer_retry_promotes_only_a_finite_improving_objective_bound() -> None:
+    policy = OuterBudgetPolicy()
+
+    assert policy.retry_is_bound_promoted(
+        objective_bound=579.2,
+        incumbent_objective=589.22,
+    )
+    assert not policy.retry_is_bound_promoted(
+        objective_bound=589.22,
+        incumbent_objective=589.22,
+    )
+    assert not policy.retry_is_bound_promoted(
+        objective_bound=float("nan"),
+        incumbent_objective=589.22,
+    )
+    assert not policy.retry_is_bound_promoted(
+        objective_bound=579.2,
+        incumbent_objective=None,
+    )
+
+
+def test_promoted_outer_retry_gets_fifteen_percent_cap() -> None:
+    policy = ReserveBudgetPolicy()
+
+    assert policy.cap_outer_slice(
+        100.0,
+        hard_limit_sec=288.0,
+        reserve_retry=True,
+        bound_promoted=False,
+    ) == pytest.approx(11.52)
+    assert policy.cap_outer_slice(
+        100.0,
+        hard_limit_sec=288.0,
+        reserve_retry=True,
+        bound_promoted=True,
+    ) == pytest.approx(43.2)
+
+
+def test_reserve_phase_assigns_promoted_slice_to_improving_bound_retry() -> None:
+    shell = SimpleNamespace(sha256="candidate-shell")
+    state = SearchState(search_shell=SimpleNamespace(sha256="parent-shell"), start_values={})
+    state.incumbent = SimpleNamespace(
+        verified_cmax=589.0,
+        objective=589.22,
+        shell=state.search_shell,
+    )
+    state.queues.add_pending(
+        PendingOuterShell(
+            shell=shell,
+            start_values={},
+            step=ProcedureStep(9, 3, Procedure.F3, NeighborhoodLevel.N3),
+            reserve_retry=True,
+            relaxed_objective=579.2,
+            repair_risk_total=2.0,
+            validation_bound=579.2,
+        )
+    )
+    runtime = SimpleNamespace(
+        allocatable_remaining_sec=100.0,
+        hard_limit_sec=288.0,
+        slice_for=lambda *args, **kwargs: 100.0,
+    )
+    phase = ReservePhase(
+        templates=SimpleNamespace(),
+        runtime=runtime,
+        scheduler=SimpleNamespace(),
+        audit=SimpleNamespace(),
+        record_verified=lambda *args: None,
+    )
+    observed = {}
+
+    def run_outer(fake_state, time_limit_sec, *, bound_promoted):
+        observed["time_limit_sec"] = time_limit_sec
+        observed["bound_promoted"] = bound_promoted
+        fake_state.queues.pop_pending()
+        return None
+
+    phase._run_outer = run_outer
+
+    assert not phase.run(state)
+    assert observed == {
+        "time_limit_sec": pytest.approx(43.2),
+        "bound_promoted": True,
+    }
+
+
+@pytest.mark.parametrize(
+    ("enabled", "cmax_improved", "expected_preserve"),
+    [
+        (True, False, True),
+        (True, True, False),
+        (False, False, False),
+    ],
+)
+def test_reserve_preserves_f1_level_only_for_diagnostic_plateau_refinement(
+    enabled: bool,
+    cmax_improved: bool,
+    expected_preserve: bool,
+) -> None:
+    state = SearchState(
+        search_shell=SimpleNamespace(sha256="parent-shell"),
+        start_values={},
+    )
+    state.queues.add_pending(
+        PendingOuterShell(
+            shell=SimpleNamespace(sha256="candidate-shell"),
+            start_values={},
+            step=ProcedureStep(9, 3, Procedure.F3, NeighborhoodLevel.N3),
+            reserve_retry=False,
+            relaxed_objective=579.2,
+            repair_risk_total=2.0,
+            validation_bound=579.2,
+        )
+    )
+    scheduler = SimpleNamespace(
+        restart_after_external_improvement=Mock(),
+    )
+    phase = ReservePhase(
+        templates=SimpleNamespace(),
+        runtime=SimpleNamespace(
+            allocatable_remaining_sec=100.0,
+            hard_limit_sec=288.0,
+            slice_for=lambda *args, **kwargs: 10.0,
+        ),
+        scheduler=scheduler,
+        audit=SimpleNamespace(),
+        record_verified=lambda *args: None,
+        enable_f1_plateau_escalation=enabled,
+    )
+
+    def run_outer(fake_state, _time_limit_sec, *, bound_promoted):
+        assert bound_promoted is False
+        fake_state.queues.pop_pending()
+        return SimpleNamespace(
+            structural_change=True,
+            cmax_improved=cmax_improved,
+        )
+
+    phase._run_outer = run_outer
+
+    assert phase.run(state)
+    scheduler.restart_after_external_improvement.assert_called_once_with(
+        preserve_f1_level=expected_preserve
+    )
 
 
 def test_deferred_inner_slices_use_process_specific_hard_caps() -> None:
@@ -857,6 +1137,87 @@ def test_same_process_candidate_yields_after_three_structural_transitions() -> N
     ) is improving_projection
 
 
+def test_initial_f1_selection_prefers_sparse_z_for_same_core_projection() -> None:
+    projection = CoreProjection(
+        x_group={"u0": 0, "u1": 1},
+        s_visit={(0, 10): 0, (1, 11): 1},
+        r_assign={0: 0, 1: 0},
+    )
+    parent = StructuralShell(projection=projection)
+    dense_shell = StructuralShell(
+        projection=projection,
+        z_actions={
+            "hit": {(0, 1): 1, (0, 2): 1, (1, 3): 1},
+            "carry": {(0, 1): 1, (0, 2): 1, (1, 3): 1},
+        },
+    )
+    sparse_shell = StructuralShell(
+        projection=projection,
+        z_actions={
+            "hit": {(0, 1): 1, (1, 3): 1},
+            "carry": {(0, 1): 1, (1, 3): 1},
+        },
+    )
+
+    def candidate(shell: StructuralShell, projected_cmax: float) -> InnerCandidate:
+        return InnerCandidate(
+            shell=shell,
+            snapshot=ModelSnapshot(
+                values_by_name={},
+                solver_objective=855.0,
+                solver_cmax=projected_cmax,
+                callback_runtime_sec=0.0,
+            ),
+            relaxed_objective=855.0,
+            repair_risk=RepairRisk(
+                total=0.0,
+                station_overlap_sec=0.0,
+                station_workload_imbalance=0.0,
+                warm_disturbance_hamming=2,
+            ),
+            comproc=SimpleNamespace(
+                feasible=True,
+                projected_cmax=projected_cmax,
+                projected_objective=projected_cmax,
+                recourse_score=projected_cmax,
+            ),
+        )
+
+    dense = candidate(dense_shell, 100.0)
+    sparse = candidate(sparse_shell, 200.0)
+
+    initial_state = SearchState(search_shell=parent, start_values={})
+    assert (
+        initial_state.select_unattempted_candidate(
+            parent,
+            ProcedureStep(1, 1, Procedure.F1, NeighborhoodLevel.N1),
+            (dense, sparse),
+        )
+        is sparse
+    )
+
+    incumbent_state = SearchState(search_shell=parent, start_values={})
+    incumbent_state.incumbent = TRAIncumbent(
+        shell=parent,
+        snapshot=ModelSnapshot(
+            values_by_name={},
+            solver_objective=300.0,
+            solver_cmax=300.0,
+            callback_runtime_sec=0.0,
+        ),
+        verified_cmax=300.0,
+        objective=300.0,
+    )
+    assert (
+        incumbent_state.select_unattempted_candidate(
+            parent,
+            ProcedureStep(2, 1, Procedure.F1, NeighborhoodLevel.N1),
+            (dense, sparse),
+        )
+        is dense
+    )
+
+
 def test_diversified_search_yields_after_three_neighborhood_submissions() -> None:
     shell = SimpleNamespace(sha256="incumbent-a")
     state = SearchState(search_shell=shell, start_values={})
@@ -897,13 +1258,6 @@ def test_diversified_search_yields_after_three_neighborhood_submissions() -> Non
         (candidate("f3-d"),),
         allow_diverse_neighborhood_repeat=True,
     ) is None
-
-    f2_candidate = candidate("f2-a")
-    assert state.select_unattempted_candidate(
-        shell,
-        ProcedureStep(10, 4, Procedure.F2, NeighborhoodLevel.N2),
-        (f2_candidate,),
-    ) is f2_candidate
 
 
 def test_diversified_search_yields_after_one_submission_per_neighborhood() -> None:
@@ -1064,6 +1418,39 @@ def test_n3_candidate_above_the_target_blind_record_band_is_not_submitted() -> N
         step,
         (inside,),
     ) is inside
+
+
+def test_candidate_selection_reports_certification_band_rejection() -> None:
+    shell = SimpleNamespace(sha256="incumbent-a")
+    state = SearchState(search_shell=shell, start_values={})
+    state.incumbent = SimpleNamespace(
+        verified_cmax=589.0,
+        objective=589.2,
+        shell=shell,
+    )
+    state.search_incumbent = SimpleNamespace(verified_cmax=589.0)
+    step = ProcedureStep(11, 4, Procedure.F2, NeighborhoodLevel.N3)
+    outside = SimpleNamespace(
+        shell=SimpleNamespace(sha256="outside-band"),
+        comproc=SimpleNamespace(
+            projected_cmax=590.0,
+            recourse_score=622.0,
+        ),
+    )
+
+    selection = state.select_unattempted_candidate_with_dispositions(
+        shell,
+        step,
+        (outside,),
+    )
+
+    assert selection.candidate is None
+    assert selection.dispositions == (
+        {
+            "shell_sha256": "outside-band",
+            "disposition": "certification_band",
+        },
+    )
 
 
 def test_n3_band_uses_only_post_incumbent_observed_recourse_error() -> None:
@@ -1825,3 +2212,114 @@ def test_accepted_shell_restart_refreshes_projection_from_verified_incumbent() -
     assert pending.projected_cmax == 589.0
     assert pending.projected_objective == 589.2
     assert pending.start_values == {"verified": 1.0}
+
+
+def test_immediate_continuation_unresolved_shell_is_queued_for_reserve_retry() -> None:
+    parent_shell = SimpleNamespace(sha256="parent-shell")
+    candidate_shell = SimpleNamespace(sha256="candidate-shell")
+    state = SearchState(search_shell=parent_shell, start_values={})
+    candidate = SimpleNamespace(
+        shell=candidate_shell,
+        snapshot=SimpleNamespace(values_by_name={"candidate": 1.0}),
+        relaxed_objective=579.2,
+        repair_risk=SimpleNamespace(total=20.0),
+        comproc=SimpleNamespace(
+            feasible=True,
+            full_start=SimpleNamespace(values_by_name={"start": 1.0}),
+            projected_cmax=600.0,
+            projected_objective=600.2,
+        ),
+    )
+    unresolved = SimpleNamespace(
+        disposition=OuterDisposition.UNRESOLVED,
+        accepted=None,
+        solver_status_code=9,
+        objective_bound=579.1,
+        runtime_sec=1.0,
+    )
+    results = iter((unresolved, unresolved))
+    sequence = object.__new__(ImmediateOuterSequence)
+    sequence.runtime = SimpleNamespace(
+        hard_limit_sec=288.0,
+        slice_for=lambda *args, **kwargs: 10.0,
+    )
+    sequence.audit = SimpleNamespace(queue=lambda *args, **kwargs: None)
+    sequence.budget_policy = SimpleNamespace(
+        initial_slice=lambda *args, **kwargs: 10.0,
+        continuation_slice=lambda *args, **kwargs: 10.0,
+        should_continue=lambda *args, **kwargs: True,
+    )
+    sequence._solve = lambda **kwargs: next(results)
+
+    outcome = sequence.run(
+        candidate,
+        step=ProcedureStep(11, 4, Procedure.F2, NeighborhoodLevel.N1),
+        state=state,
+        suggested_initial_sec=10.0,
+        continuation_horizon=1,
+    )
+
+    assert outcome.continuation_attempted
+    assert outcome.restart_queued
+    pending = state.queues.pop_pending()
+    assert pending.shell.sha256 == "candidate-shell"
+    assert pending.reserve_retry is True
+
+
+def test_immediate_continuation_accepted_shell_with_promising_bound_is_queued() -> None:
+    parent_shell = SimpleNamespace(sha256="parent-shell")
+    candidate_shell = SimpleNamespace(sha256="candidate-shell")
+    state = SearchState(search_shell=parent_shell, start_values={})
+    candidate = SimpleNamespace(
+        shell=candidate_shell,
+        snapshot=SimpleNamespace(values_by_name={"candidate": 1.0}),
+        relaxed_objective=579.2,
+        repair_risk=SimpleNamespace(total=20.0),
+        comproc=SimpleNamespace(
+            feasible=True,
+            full_start=SimpleNamespace(values_by_name={"start": 1.0}),
+            projected_cmax=600.0,
+            projected_objective=600.2,
+        ),
+    )
+    accepted = SimpleNamespace(
+        shell=candidate_shell,
+        snapshot=SimpleNamespace(
+            values_by_name={"accepted": 1.0},
+            solver_objective=589.2,
+        ),
+        verified_cmax=589.0,
+    )
+    result = SimpleNamespace(
+        disposition=OuterDisposition.ACCEPTED,
+        accepted=accepted,
+        solver_status_code=9,
+        objective_bound=579.1,
+        runtime_sec=1.0,
+    )
+    results = iter((result, result))
+    sequence = object.__new__(ImmediateOuterSequence)
+    sequence.runtime = SimpleNamespace(
+        hard_limit_sec=288.0,
+        slice_for=lambda *args, **kwargs: 10.0,
+    )
+    sequence.audit = SimpleNamespace(queue=lambda *args, **kwargs: None)
+    sequence.budget_policy = SimpleNamespace(
+        initial_slice=lambda *args, **kwargs: 10.0,
+        continuation_slice=lambda *args, **kwargs: 10.0,
+        should_continue=lambda *args, **kwargs: True,
+    )
+    sequence._solve = lambda **kwargs: next(results)
+    sequence._accept = lambda *args, **kwargs: None
+
+    outcome = sequence.run(
+        candidate,
+        step=ProcedureStep(9, 3, Procedure.F3, NeighborhoodLevel.N3),
+        state=state,
+        suggested_initial_sec=10.0,
+        continuation_horizon=1,
+    )
+
+    assert outcome.continuation_attempted
+    assert outcome.restart_queued
+    assert state.queues.pop_pending().reserve_retry is True

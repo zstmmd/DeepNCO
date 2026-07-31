@@ -1,0 +1,64 @@
+{
+  "configs": {
+    "M2": {
+      "bom_batch_quantity_range": [
+        2,
+        3
+      ],
+      "bom_batch_quantity_unit": 1,
+      "bom_colocated_chunked_by_stack": true,
+      "bom_colocated_disjoint_stack_groups": false,
+      "bom_colocated_inventory": true,
+      "bom_colocated_sku_copy_count": 3,
+      "bom_colocated_stack_counts": [
+        5,
+        5,
+        5,
+        5,
+        5,
+        5
+      ],
+      "bom_colocated_support_multiplier": 2.0,
+      "bom_complexity": [
+        14,
+        1
+      ],
+      "data": [
+        6,
+        220
+      ],
+      "exact_order_sku_counts": [
+        14,
+        14,
+        14,
+        14,
+        14,
+        14
+      ],
+      "exact_order_sku_quantity_range": [
+        2,
+        3
+      ],
+      "inventory_cold_filler_probability": 0.0,
+      "inventory_initial_unassigned_skus_per_tote": 1,
+      "map_layout_mode": "middle_stack_grid",
+      "map_size": [
+        4,
+        4
+      ],
+      "middle_stack_shape": [
+        4,
+        4
+      ],
+      "resources": [
+        3,
+        2,
+        96
+      ],
+      "storage_gap_rows": 4,
+      "target_stack_count": 16,
+      "warehouse_block_height": 8
+    }
+  },
+  "schema_version": 1
+}

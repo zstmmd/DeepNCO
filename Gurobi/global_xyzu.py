@@ -24,6 +24,7 @@ from Gurobi.sp2 import SP2_Station_Assigner
 from Gurobi.sp3 import SP3_Bin_Hitter
 from Gurobi.master_domain import (
     MasterDomainError,
+    manifest_warm_start_hash_status,
     normalize_master_domain_manifest,
     prepared_domain_from_manifest,
     verify_manifest_problem,
@@ -179,6 +180,8 @@ class GlobalXYZUConfig:
     enable_selected_workload_lbs: bool = True
     enable_route_arrival_slot_linear: bool = False
     enable_station_clock_linear: bool = False
+    enable_required_slot_active_lb: bool = True
+    enable_slot_min_pick_workload_lb: bool = True
     enable_warm_prune_bound_repair: bool = False
     enable_warm_start_route_repair: bool = True
     enable_scale_adaptive_candidate_prune: bool = False
@@ -208,6 +211,7 @@ class GlobalXYZUConfig:
     gurobi_best_obj_stop: Optional[float] = None
     master_domain_manifest: Optional[Dict[str, Any]] = None
     master_domain_strict: bool = False
+    master_domain_enforce_warm_start_contract: bool = True
     tra_inner_no_station_wait: bool = False
 
 
@@ -628,8 +632,17 @@ class GlobalXYZUSolver:
             diagnostics["supported_scale"] = False
             diagnostics["warning"] = f"scale={scale_name} is outside the intended SMALL/SMALL2/TINY3/GUROBI-S scope"
         warm = self._build_warm_start(problem, cfg) if bool(cfg.enable_warm_start) else WarmStartState()
-        if master_domain is not None and bool(getattr(cfg, "master_domain_strict", False)) and bool(cfg.enable_warm_start):
-            verify_manifest_warm_start(master_domain, warm)
+        master_domain_warm_start_diag: Dict[str, Any] = {}
+        if master_domain is not None and bool(cfg.enable_warm_start):
+            master_domain_warm_start_diag = manifest_warm_start_hash_status(master_domain, warm)
+            if (
+                bool(getattr(cfg, "master_domain_strict", False))
+                and bool(getattr(cfg, "master_domain_enforce_warm_start_contract", True))
+            ):
+                verify_manifest_warm_start(master_domain, warm)
+        master_domain_warm_start_diag["master_domain_warm_start_contract_enforced"] = bool(
+            getattr(cfg, "master_domain_enforce_warm_start_contract", True)
+        )
         self._warm_start = warm
         self._warm_start_problem_snapshot = copy.deepcopy(problem) if bool(cfg.enable_warm_start) else None
         prepared = self._prepare(problem, cfg, warm)
@@ -672,6 +685,7 @@ class GlobalXYZUSolver:
                 "warm_start_sp4_runtime_sec": float(getattr(warm, "sp4_runtime_sec", 0.0) or 0.0),
                 "master_domain_sha256": str((master_domain or {}).get("manifest_sha256", "")),
                 "master_domain_strict": bool(getattr(cfg, "master_domain_strict", False)),
+                **master_domain_warm_start_diag,
             }
         )
         model = gp.Model("Global_XYZU_Integrated")
@@ -1797,6 +1811,9 @@ class GlobalXYZUSolver:
     def _prepare(self, problem: OFSProblemDTO, cfg: GlobalXYZUConfig, warm: WarmStartState) -> Dict[str, Any]:
         master_domain = dict(getattr(cfg, "master_domain_manifest", None) or {})
         master_domain_strict = bool(getattr(cfg, "master_domain_strict", False))
+        enforce_warm_start_contract = bool(
+            getattr(cfg, "master_domain_enforce_warm_start_contract", True)
+        )
         master_slot_counts = {
             int(order_id): int(count)
             for order_id, count in dict(master_domain.get("slot_count_by_order", {}) or {}).items()
@@ -2140,7 +2157,7 @@ class GlobalXYZUSolver:
                         f"master domain references missing stacks for order {order_id}: {missing_stack_ids}"
                     )
                 missing_warm_stacks = sorted(set(warm_stack_ids) - set(master_stack_ids))
-                if master_domain_strict and missing_warm_stacks:
+                if master_domain_strict and enforce_warm_start_contract and missing_warm_stacks:
                     raise MasterDomainError(
                         f"master domain does not protect warm-start stacks for order {order_id}: {missing_warm_stacks}"
                     )
@@ -5631,7 +5648,11 @@ class GlobalXYZUSolver:
                     )
                     slot_sku_signature_lex_count += 1
             required_active_count = int(math.ceil(float(len(sku_ids)) / max(1, int(cap_limit)))) if sku_ids else 0
-            if required_active_count >= len(slot_ids) and slot_ids:
+            if (
+                bool(getattr(cfg, "enable_required_slot_active_lb", True))
+                and required_active_count >= len(slot_ids)
+                and slot_ids
+            ):
                 for slot_id in slot_ids:
                     model.addConstr(a[int(slot_id)] == 1, name=f"RequiredSlotActive_{int(order_id)}_{int(slot_id)}")
                     required_slot_active_lb_count += 1
@@ -5643,7 +5664,10 @@ class GlobalXYZUSolver:
                 ]
                 or [0]
             )
-            if min_order_pick_qty > 0:
+            if (
+                bool(getattr(cfg, "enable_slot_min_pick_workload_lb", True))
+                and min_order_pick_qty > 0
+            ):
                 for slot_id in slot_ids:
                     slot_pick_qty = gp.quicksum(
                         int(unit.demand_qty) * x[str(unit.unit_id), int(slot_id)]

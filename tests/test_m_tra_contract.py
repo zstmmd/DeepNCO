@@ -12,7 +12,11 @@ from Gurobi.master_domain import (
     normalize_master_domain_manifest,
     prepared_domain_from_manifest,
 )
-from experiments.m_tra_contract import time_to_target_from_iter_rows
+from experiments.m_tra_contract import (
+    first_verified_target_time_from_events,
+    summarize_verified_events,
+    time_to_target_from_iter_rows,
+)
 from Gurobi.resource_time_alns.hybrid_gate import should_run_hybrid_exact
 
 
@@ -119,6 +123,45 @@ def test_time_to_target_does_not_use_unvalidated_best_z_by_default() -> None:
     rows = [{"iter_runtime_sec": 3.0, "best_z": 582}]
 
     assert math.isnan(time_to_target_from_iter_rows(rows, target_cmax=582))
+
+
+def test_verified_event_time_to_target_uses_verifier_complete_wall_time() -> None:
+    rows = [
+        {
+            "case": "M1",
+            "run_id": "run-1",
+            "internal_feasible": True,
+            "verified_cmax": 582.0,
+            "solver_incumbent_timestamp_sec": 20.0,
+            "wall_timestamp_sec": 31.5,
+        }
+    ]
+
+    assert first_verified_target_time_from_events(
+        rows,
+        case_id="M1",
+        target_cmax=582.0,
+        run_id="run-1",
+    ) == pytest.approx(31.5)
+
+
+def test_verified_event_summary_rejects_lower_than_frozen_cmax() -> None:
+    summary = summarize_verified_events(
+        [
+            {
+                "case": "M1",
+                "internal_feasible": True,
+                "verified_cmax": 581.0,
+                "wall_timestamp_sec": 10.0,
+            }
+        ],
+        case_id="M1",
+        target_cmax=582.0,
+    )
+
+    assert summary["cmax_equal"] is False
+    assert summary["lower_than_target"] is True
+    assert math.isnan(summary["first_verified_target_time_sec"])
 
 
 def test_hybrid_exact_gate_is_periodic_target_blind_and_one_per_iteration() -> None:

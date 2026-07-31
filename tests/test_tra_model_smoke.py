@@ -1,12 +1,40 @@
 from __future__ import annotations
 
+import math
+
+from gurobipy import GRB
+
 from Gurobi.global_xyzu import GlobalXYZUConfig
 from Gurobi.master_domain_fingerprint import build_domain_partitions
 from Gurobi.tra_initial import build_canonical_initial_state
 from Gurobi.tra_neighborhood import NeighborhoodLevel, Procedure
 from Gurobi.tra_outer import OuterDisposition
-from Gurobi.tra_templates import compile_paper_tra_templates
+from Gurobi.tra_templates import compile_paper_tra_templates, global_config_from_policy
 from problemDto.createInstance import CreateOFSProblem
+
+
+def _defined_start_count(model) -> int:
+    count = 0
+    for variable in model.getVars():
+        try:
+            value = float(variable.Start)
+        except Exception:
+            continue
+        if math.isfinite(value) and abs(value) < 0.5 * float(GRB.UNDEFINED):
+            count += 1
+    return count
+
+
+def test_policy_can_preserve_explicit_warm_start_guided_local_search() -> None:
+    cfg = global_config_from_policy(
+        {
+            "warm_start_sp4_guided_local_search": True,
+        },
+        gurobi_output=False,
+        gurobi_seed=42,
+    )
+
+    assert cfg.warm_start_sp4_guided_local_search is True
 
 
 def test_full_and_no_wait_templates_share_the_manifest_domain() -> None:
@@ -30,6 +58,8 @@ def test_full_and_no_wait_templates_share_the_manifest_domain() -> None:
     )
 
     assert templates.manifest["schema_version"] == 3
+    assert templates.full_compiled.cfg.enable_warm_start is True
+    assert templates.inner_compiled.cfg.enable_warm_start is False
     assert templates.inner_compiled.diagnostics["tra_inner_no_station_wait"] is True
     assert templates.full_compiled.diagnostics["tra_inner_no_station_wait"] is False
     full_names = {variable.VarName for variable in templates.full_compiled.model.getVars()}
@@ -43,6 +73,10 @@ def test_full_and_no_wait_templates_share_the_manifest_domain() -> None:
     assert (
         templates.full_compiled.diagnostics["tra_shared_route_constraints_sha256"]
         == templates.inner_compiled.diagnostics["tra_shared_route_constraints_sha256"]
+    )
+    assert _defined_start_count(templates.full_compiled.model) > 0
+    assert _defined_start_count(templates.outer.template.model) == _defined_start_count(
+        templates.full_compiled.model
     )
     assert templates.inner_compiled.diagnostics["master_domain_numeric_bounds_applied"] is True
     assert {
@@ -123,3 +157,89 @@ def test_full_and_no_wait_templates_share_the_manifest_domain() -> None:
         formal_elapsed_at_start=0.0,
     )
     assert exhausted.disposition is OuterDisposition.BUDGET_EXHAUSTED
+
+
+def test_compile_templates_can_reuse_frozen_master_domain_manifest() -> None:
+    problem = CreateOFSProblem.generate_problem_by_scale("TEST", seed=42)
+    cfg = GlobalXYZUConfig(
+        time_limit_sec=2.0,
+        mip_gap=0.1,
+        gurobi_output=False,
+        warm_start_sp4_time_limit_sec=1,
+        gurobi_threads=1,
+        gurobi_seed=42,
+        enable_resource_lex_symmetry=False,
+        enable_slot_lex_symmetry=False,
+    )
+    frozen = compile_paper_tra_templates(
+        problem,
+        cfg,
+        canonical_seed=42,
+        instance_name="TEST",
+    ).manifest
+
+    replay_cfg = GlobalXYZUConfig(
+        time_limit_sec=2.0,
+        mip_gap=0.1,
+        gurobi_output=False,
+        warm_start_sp4_time_limit_sec=1,
+        gurobi_threads=1,
+        gurobi_seed=42,
+        enable_resource_lex_symmetry=False,
+        enable_slot_lex_symmetry=False,
+        master_domain_manifest=dict(frozen),
+        master_domain_strict=True,
+    )
+    replayed = compile_paper_tra_templates(
+        problem,
+        replay_cfg,
+        canonical_seed=7,
+        instance_name="SHOULD_NOT_REBUILD_DOMAIN",
+    )
+
+    assert replayed.manifest == frozen
+    assert replayed.full_compiled.cfg.master_domain_strict is True
+    assert replayed.inner_compiled.cfg.master_domain_strict is True
+
+
+def test_frozen_master_domain_allows_regenerated_warm_fingerprint_mismatch() -> None:
+    problem = CreateOFSProblem.generate_problem_by_scale("TEST", seed=42)
+    cfg = GlobalXYZUConfig(
+        time_limit_sec=2.0,
+        mip_gap=0.1,
+        gurobi_output=False,
+        warm_start_sp4_time_limit_sec=1,
+        gurobi_threads=1,
+        gurobi_seed=42,
+        enable_resource_lex_symmetry=False,
+        enable_slot_lex_symmetry=False,
+    )
+    frozen = compile_paper_tra_templates(
+        problem,
+        cfg,
+        canonical_seed=42,
+        instance_name="TEST",
+    ).manifest
+
+    replay_cfg = GlobalXYZUConfig(
+        time_limit_sec=2.0,
+        mip_gap=0.1,
+        gurobi_output=False,
+        warm_start_sp4_time_limit_sec=0,
+        gurobi_threads=1,
+        gurobi_seed=42,
+        enable_resource_lex_symmetry=False,
+        enable_slot_lex_symmetry=False,
+        master_domain_manifest=dict(frozen),
+        master_domain_strict=True,
+    )
+    replayed = compile_paper_tra_templates(
+        problem,
+        replay_cfg,
+        canonical_seed=42,
+        instance_name="TEST",
+    )
+
+    assert replayed.manifest == frozen
+    assert replayed.full_compiled.diagnostics["master_domain_payload_verified"] is True
+    assert replayed.full_compiled.diagnostics["master_domain_warm_start_sha256_matches"] is False

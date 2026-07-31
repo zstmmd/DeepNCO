@@ -1,0 +1,20 @@
+{
+  "case": "M4",
+  "export_complete": true,
+  "file_sha256": {
+    "best_solution_audit.json": "fe8cff7abcc244c8ff9417c25423a5b50848d5decde082dd73239f7e998a04b5",
+    "best_solution_audit.txt": "b6d94055077a35e66abe7a244d6ca346f242d7c6e9021888cca7fec932b97c9f",
+    "best_solution_full_dump.txt": "971091c486dbd66fb6284cb87db1a5aee1807437aec03d74df8ac10de19fffab",
+    "best_solution_objectives.json": "c9ca5cbc0ea6050f8c0509f757c7094a315746cac4acb432e1b1d105d39bd199",
+    "best_solution_objectives.txt": "5f8ebf80f7dc3cbff5bf5dd3d5c71e5222905874bbfc1d1a429cffab95ff6e57",
+    "tra_makespan_verification.json": "9fb965e70e07a292e2f2f8c3d08ee61fd8bee7e4a947da0bf3f1b5c0a6241494",
+    "tra_makespan_verification.txt": "40784a64b3798d601dc13cfa4d8a0197f9fbe03fa817e6bc083036f78be29296",
+    "xyzu_variable_values.json": "bd519919b2f2338253704ebdbe86850c67c7668499b419fc54bfcd55293a066f"
+  },
+  "manifest_sha256": "7a31e750a9f9f5e19be4e10482b7b61f68a211e8f2d83899fe9e1706ae529063",
+  "run_id": "m4-formal-station-overload-engine-stop-seed42",
+  "schema_version": 1,
+  "snapshot_sha256": "9cb2fbc35603862c2660afae57eebbbbb4bc82b436e016545031bba0a2878af0",
+  "verified_cmax": 1097.9999999999973,
+  "verifier_error_codes": []
+}

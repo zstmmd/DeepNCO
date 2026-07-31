@@ -1,0 +1,240 @@
+[Paper TRA-Gurobi Verified Solution Dump]
+case=M8
+seed=42
+snapshot_sha256=d5f45d60ca7a9d8c2b976c757dd984218180c5253350debb0f3669121cd0bc47
+solver_objective=1411.844000
+solver_cmax=1411.000000
+verified_cmax=1411.000000
+global_makespan=1411.000000
+
+[SP1 Decisions]
+subtask_id=0, order_id=7, sku_units=6, sku_list=[154, 155, 156, 157, 158, 159]
+subtask_id=1, order_id=7, sku_units=4, sku_list=[172, 173, 174, 175]
+subtask_id=2, order_id=0, sku_units=6, sku_list=[0, 1, 2, 3, 4, 5]
+subtask_id=3, order_id=3, sku_units=4, sku_list=[84, 85, 86, 87]
+subtask_id=4, order_id=5, sku_units=6, sku_list=[116, 117, 118, 119, 120, 121]
+subtask_id=5, order_id=4, sku_units=6, sku_list=[102, 103, 104, 105, 106, 107]
+subtask_id=6, order_id=6, sku_units=6, sku_list=[132, 133, 134, 135, 136, 137]
+subtask_id=7, order_id=2, sku_units=6, sku_list=[56, 57, 58, 59, 64, 65]
+subtask_id=8, order_id=6, sku_units=6, sku_list=[138, 139, 140, 141, 142, 143]
+subtask_id=9, order_id=7, sku_units=6, sku_list=[166, 167, 168, 169, 170, 171]
+subtask_id=10, order_id=1, sku_units=4, sku_list=[40, 41, 42, 43]
+subtask_id=11, order_id=1, sku_units=6, sku_list=[26, 27, 28, 29, 30, 31]
+subtask_id=12, order_id=2, sku_units=6, sku_list=[50, 51, 52, 53, 54, 55]
+subtask_id=13, order_id=4, sku_units=4, sku_list=[94, 95, 108, 109]
+subtask_id=14, order_id=3, sku_units=6, sku_list=[66, 67, 68, 69, 70, 71]
+subtask_id=15, order_id=0, sku_units=6, sku_list=[6, 7, 8, 9, 10, 11]
+subtask_id=16, order_id=5, sku_units=6, sku_list=[122, 123, 128, 129, 130, 131]
+subtask_id=17, order_id=3, sku_units=6, sku_list=[72, 73, 74, 75, 76, 77]
+subtask_id=18, order_id=4, sku_units=6, sku_list=[96, 97, 98, 99, 100, 101]
+subtask_id=19, order_id=1, sku_units=6, sku_list=[34, 35, 36, 37, 38, 39]
+subtask_id=20, order_id=2, sku_units=4, sku_list=[60, 61, 62, 63]
+subtask_id=21, order_id=6, sku_units=4, sku_list=[150, 151, 152, 153]
+subtask_id=22, order_id=5, sku_units=6, sku_list=[110, 111, 112, 113, 114, 115]
+subtask_id=23, order_id=7, sku_units=6, sku_list=[160, 161, 162, 163, 164, 165]
+subtask_id=24, order_id=4, sku_units=6, sku_list=[88, 89, 90, 91, 92, 93]
+subtask_id=25, order_id=6, sku_units=6, sku_list=[144, 145, 146, 147, 148, 149]
+subtask_id=26, order_id=5, sku_units=4, sku_list=[124, 125, 126, 127]
+subtask_id=27, order_id=0, sku_units=6, sku_list=[12, 13, 14, 15, 16, 17]
+subtask_id=28, order_id=3, sku_units=6, sku_list=[78, 79, 80, 81, 82, 83]
+subtask_id=29, order_id=2, sku_units=6, sku_list=[44, 45, 46, 47, 48, 49]
+subtask_id=30, order_id=1, sku_units=6, sku_list=[22, 23, 24, 25, 32, 33]
+subtask_id=31, order_id=0, sku_units=4, sku_list=[18, 19, 20, 21]
+
+[SP2 Decisions]
+subtask_id=0, station_id=0, rank=0, robot_id=2
+subtask_id=1, station_id=0, rank=1, robot_id=2
+subtask_id=2, station_id=0, rank=2, robot_id=2
+subtask_id=3, station_id=0, rank=3, robot_id=2
+subtask_id=4, station_id=0, rank=4, robot_id=3
+subtask_id=5, station_id=0, rank=5, robot_id=0
+subtask_id=6, station_id=0, rank=6, robot_id=1
+subtask_id=7, station_id=0, rank=7, robot_id=3
+subtask_id=8, station_id=1, rank=0, robot_id=1
+subtask_id=9, station_id=1, rank=1, robot_id=2
+subtask_id=10, station_id=1, rank=2, robot_id=3
+subtask_id=11, station_id=1, rank=3, robot_id=2
+subtask_id=12, station_id=1, rank=4, robot_id=4
+subtask_id=13, station_id=1, rank=5, robot_id=0
+subtask_id=14, station_id=1, rank=6, robot_id=1
+subtask_id=15, station_id=1, rank=7, robot_id=1
+subtask_id=16, station_id=2, rank=0, robot_id=0
+subtask_id=17, station_id=2, rank=1, robot_id=4
+subtask_id=18, station_id=2, rank=2, robot_id=0
+subtask_id=19, station_id=2, rank=3, robot_id=1
+subtask_id=20, station_id=2, rank=4, robot_id=0
+subtask_id=21, station_id=2, rank=5, robot_id=1
+subtask_id=22, station_id=2, rank=6, robot_id=1
+subtask_id=23, station_id=2, rank=7, robot_id=0
+subtask_id=24, station_id=3, rank=0, robot_id=3
+subtask_id=25, station_id=3, rank=1, robot_id=3
+subtask_id=26, station_id=3, rank=2, robot_id=2
+subtask_id=27, station_id=3, rank=3, robot_id=0
+subtask_id=28, station_id=3, rank=4, robot_id=3
+subtask_id=29, station_id=3, rank=5, robot_id=1
+subtask_id=30, station_id=3, rank=6, robot_id=3
+subtask_id=31, station_id=3, rank=7, robot_id=2
+
+[SP3 Decisions]
+task_id=0, subtask_id=0, stack_id=73, station_id=0, mode=FLIP, target_totes=[316], hit_totes=[316], noise_totes=[], sort_range=None
+task_id=1, subtask_id=1, stack_id=137, station_id=0, mode=FLIP, target_totes=[318], hit_totes=[318], noise_totes=[], sort_range=None
+task_id=2, subtask_id=2, stack_id=112, station_id=0, mode=FLIP, target_totes=[1], hit_totes=[1], noise_totes=[], sort_range=None
+task_id=3, subtask_id=3, stack_id=86, station_id=0, mode=FLIP, target_totes=[135], hit_totes=[135], noise_totes=[], sort_range=None
+task_id=4, subtask_id=4, stack_id=109, station_id=0, mode=FLIP, target_totes=[232], hit_totes=[232], noise_totes=[], sort_range=None
+task_id=5, subtask_id=5, stack_id=88, station_id=0, mode=FLIP, target_totes=[185], hit_totes=[185], noise_totes=[], sort_range=None
+task_id=6, subtask_id=5, stack_id=94, station_id=0, mode=FLIP, target_totes=[183], hit_totes=[183], noise_totes=[], sort_range=None
+task_id=7, subtask_id=6, stack_id=131, station_id=0, mode=FLIP, target_totes=[276], hit_totes=[276], noise_totes=[], sort_range=None
+task_id=8, subtask_id=7, stack_id=136, station_id=0, mode=FLIP, target_totes=[92, 93], hit_totes=[92, 93], noise_totes=[], sort_range=None
+task_id=9, subtask_id=8, stack_id=74, station_id=1, mode=FLIP, target_totes=[274], hit_totes=[274], noise_totes=[], sort_range=None
+task_id=10, subtask_id=9, stack_id=137, station_id=1, mode=FLIP, target_totes=[317], hit_totes=[317], noise_totes=[], sort_range=None
+task_id=11, subtask_id=10, stack_id=118, station_id=1, mode=FLIP, target_totes=[48], hit_totes=[48], noise_totes=[], sort_range=None
+task_id=12, subtask_id=11, stack_id=139, station_id=1, mode=FLIP, target_totes=[49, 50], hit_totes=[49, 50], noise_totes=[], sort_range=None
+task_id=13, subtask_id=12, stack_id=103, station_id=1, mode=FLIP, target_totes=[96], hit_totes=[96], noise_totes=[], sort_range=None
+task_id=14, subtask_id=13, stack_id=88, station_id=1, mode=FLIP, target_totes=[184], hit_totes=[184], noise_totes=[], sort_range=None
+task_id=15, subtask_id=13, stack_id=65, station_id=1, mode=FLIP, target_totes=[180], hit_totes=[180], noise_totes=[], sort_range=None
+task_id=16, subtask_id=14, stack_id=130, station_id=1, mode=FLIP, target_totes=[141], hit_totes=[141], noise_totes=[], sort_range=None
+task_id=17, subtask_id=15, stack_id=56, station_id=1, mode=FLIP, target_totes=[5], hit_totes=[5], noise_totes=[], sort_range=None
+task_id=18, subtask_id=16, stack_id=59, station_id=2, mode=FLIP, target_totes=[227, 228], hit_totes=[227, 228], noise_totes=[], sort_range=None
+task_id=19, subtask_id=17, stack_id=130, station_id=2, mode=FLIP, target_totes=[142], hit_totes=[142], noise_totes=[], sort_range=None
+task_id=20, subtask_id=18, stack_id=94, station_id=2, mode=FLIP, target_totes=[182], hit_totes=[182], noise_totes=[], sort_range=None
+task_id=21, subtask_id=18, stack_id=115, station_id=2, mode=FLIP, target_totes=[187], hit_totes=[187], noise_totes=[], sort_range=None
+task_id=22, subtask_id=19, stack_id=140, station_id=2, mode=FLIP, target_totes=[52], hit_totes=[52], noise_totes=[], sort_range=None
+task_id=23, subtask_id=20, stack_id=103, station_id=2, mode=FLIP, target_totes=[97], hit_totes=[97], noise_totes=[], sort_range=None
+task_id=24, subtask_id=20, stack_id=77, station_id=2, mode=FLIP, target_totes=[90], hit_totes=[90], noise_totes=[], sort_range=None
+task_id=25, subtask_id=21, stack_id=142, station_id=2, mode=FLIP, target_totes=[270], hit_totes=[270], noise_totes=[], sort_range=None
+task_id=26, subtask_id=22, stack_id=124, station_id=2, mode=FLIP, target_totes=[226], hit_totes=[226], noise_totes=[], sort_range=None
+task_id=27, subtask_id=23, stack_id=119, station_id=2, mode=FLIP, target_totes=[322], hit_totes=[322], noise_totes=[], sort_range=None
+task_id=28, subtask_id=24, stack_id=115, station_id=3, mode=FLIP, target_totes=[186], hit_totes=[186], noise_totes=[], sort_range=None
+task_id=29, subtask_id=25, stack_id=127, station_id=3, mode=FLIP, target_totes=[272], hit_totes=[272], noise_totes=[], sort_range=None
+task_id=30, subtask_id=26, stack_id=104, station_id=3, mode=FLIP, target_totes=[230], hit_totes=[230], noise_totes=[], sort_range=None
+task_id=31, subtask_id=27, stack_id=79, station_id=3, mode=FLIP, target_totes=[7], hit_totes=[7], noise_totes=[], sort_range=None
+task_id=32, subtask_id=28, stack_id=128, station_id=3, mode=FLIP, target_totes=[140], hit_totes=[140], noise_totes=[], sort_range=None
+task_id=33, subtask_id=29, stack_id=133, station_id=3, mode=FLIP, target_totes=[91], hit_totes=[91], noise_totes=[], sort_range=None
+task_id=34, subtask_id=30, stack_id=140, station_id=3, mode=FLIP, target_totes=[51], hit_totes=[51], noise_totes=[], sort_range=None
+task_id=35, subtask_id=30, stack_id=97, station_id=3, mode=FLIP, target_totes=[46], hit_totes=[46], noise_totes=[], sort_range=None
+task_id=36, subtask_id=31, stack_id=95, station_id=3, mode=FLIP, target_totes=[0], hit_totes=[0], noise_totes=[], sort_range=None
+
+[SP4 Decisions]
+task_id=0, robot_id=2, trip_id=0, arrival_stack=8.000000, arrival_station=20.000000, start_process=20.000000, end_process=218.000000
+task_id=1, robot_id=2, trip_id=0, arrival_stack=176.000000, arrival_station=196.000000, start_process=218.000000, end_process=344.000000
+task_id=2, robot_id=2, trip_id=0, arrival_stack=168.000000, arrival_station=196.000000, start_process=344.000000, end_process=533.000000
+task_id=3, robot_id=2, trip_id=0, arrival_stack=161.000000, arrival_station=196.000000, start_process=533.000000, end_process=659.000000
+task_id=4, robot_id=3, trip_id=0, arrival_stack=180.000000, arrival_station=196.000000, start_process=659.000000, end_process=848.000000
+task_id=5, robot_id=0, trip_id=0, arrival_stack=159.000000, arrival_station=196.000000, start_process=848.000000, end_process=965.000000
+task_id=6, robot_id=0, trip_id=0, arrival_stack=166.000000, arrival_station=196.000000, start_process=965.000000, end_process=1028.000000
+task_id=7, robot_id=1, trip_id=0, arrival_stack=174.000000, arrival_station=196.000000, start_process=1028.000000, end_process=1208.000000
+task_id=8, robot_id=3, trip_id=0, arrival_stack=56.000000, arrival_station=196.000000, start_process=1208.000000, end_process=1406.000000
+task_id=9, robot_id=1, trip_id=0, arrival_stack=9.000000, arrival_station=21.000000, start_process=21.000000, end_process=201.000000
+task_id=10, robot_id=2, trip_id=0, arrival_stack=37.000000, arrival_station=166.000000, start_process=201.000000, end_process=408.000000
+task_id=11, robot_id=3, trip_id=0, arrival_stack=148.000000, arrival_station=166.000000, start_process=408.000000, end_process=525.000000
+task_id=12, robot_id=2, trip_id=0, arrival_stack=94.000000, arrival_station=166.000000, start_process=525.000000, end_process=696.000000
+task_id=13, robot_id=4, trip_id=0, arrival_stack=47.000000, arrival_station=166.000000, start_process=696.000000, end_process=876.000000
+task_id=14, robot_id=0, trip_id=0, arrival_stack=33.000000, arrival_station=166.000000, start_process=876.000000, end_process=948.000000
+task_id=15, robot_id=0, trip_id=0, arrival_stack=43.000000, arrival_station=166.000000, start_process=948.000000, end_process=1011.000000
+task_id=16, robot_id=1, trip_id=0, arrival_stack=53.000000, arrival_station=166.000000, start_process=1011.000000, end_process=1209.000000
+task_id=17, robot_id=1, trip_id=0, arrival_stack=28.000000, arrival_station=166.000000, start_process=1209.000000, end_process=1407.000000
+task_id=18, robot_id=0, trip_id=0, arrival_stack=10.000000, arrival_station=22.000000, start_process=22.000000, end_process=211.000000
+task_id=19, robot_id=4, trip_id=0, arrival_stack=17.000000, arrival_station=149.000000, start_process=211.000000, end_process=400.000000
+task_id=20, robot_id=0, trip_id=0, arrival_stack=79.000000, arrival_station=149.000000, start_process=400.000000, end_process=463.000000
+task_id=21, robot_id=0, trip_id=0, arrival_stack=87.000000, arrival_station=149.000000, start_process=463.000000, end_process=598.000000
+task_id=22, robot_id=1, trip_id=0, arrival_stack=131.000000, arrival_station=149.000000, start_process=598.000000, end_process=778.000000
+task_id=23, robot_id=0, trip_id=0, arrival_stack=75.000000, arrival_station=149.000000, start_process=778.000000, end_process=832.000000
+task_id=24, robot_id=0, trip_id=0, arrival_stack=112.000000, arrival_station=149.000000, start_process=832.000000, end_process=904.000000
+task_id=25, robot_id=1, trip_id=0, arrival_stack=126.000000, arrival_station=149.000000, start_process=904.000000, end_process=1039.000000
+task_id=26, robot_id=1, trip_id=0, arrival_stack=121.000000, arrival_station=149.000000, start_process=1039.000000, end_process=1219.000000
+task_id=27, robot_id=0, trip_id=0, arrival_stack=68.000000, arrival_station=149.000000, start_process=1219.000000, end_process=1408.000000
+task_id=28, robot_id=3, trip_id=0, arrival_stack=18.000000, arrival_station=34.000000, start_process=34.000000, end_process=232.000000
+task_id=29, robot_id=3, trip_id=0, arrival_stack=93.000000, arrival_station=149.000000, start_process=232.000000, end_process=412.000000
+task_id=30, robot_id=2, trip_id=0, arrival_stack=132.000000, arrival_station=149.000000, start_process=412.000000, end_process=547.000000
+task_id=31, robot_id=0, trip_id=0, arrival_stack=137.000000, arrival_station=149.000000, start_process=547.000000, end_process=727.000000
+task_id=32, robot_id=3, trip_id=0, arrival_stack=97.000000, arrival_station=149.000000, start_process=727.000000, end_process=925.000000
+task_id=33, robot_id=1, trip_id=0, arrival_stack=89.000000, arrival_station=149.000000, start_process=925.000000, end_process=1114.000000
+task_id=34, robot_id=3, trip_id=0, arrival_stack=104.000000, arrival_station=149.000000, start_process=1114.000000, end_process=1168.000000
+task_id=35, robot_id=3, trip_id=0, arrival_stack=114.000000, arrival_station=149.000000, start_process=1168.000000, end_process=1294.000000
+task_id=36, robot_id=2, trip_id=0, arrival_stack=128.000000, arrival_station=149.000000, start_process=1294.000000, end_process=1411.000000
+
+[SP4 Full Node Sequence By Robot]
+{"kind": "start", "node_id": 0, "robot_id": 0, "sequence_index": 0, "slot_id": -1, "stack_id": -1, "station_id": -1, "task_id": -1, "task_key": -1, "time": 0.0}
+{"kind": "pickup", "node_id": 244, "robot_id": 0, "sequence_index": 1, "slot_id": 20, "stack_id": 59, "station_id": 2, "task_id": 18, "task_key": 117, "time": 10.0}
+{"kind": "delivery", "node_id": 245, "robot_id": 0, "sequence_index": 2, "slot_id": 20, "stack_id": 59, "station_id": 2, "task_id": 18, "task_key": 117, "time": 22.0}
+{"kind": "pickup", "node_id": 236, "robot_id": 0, "sequence_index": 3, "slot_id": 19, "stack_id": 88, "station_id": 1, "task_id": 14, "task_key": 113, "time": 33.0}
+{"kind": "pickup", "node_id": 230, "robot_id": 0, "sequence_index": 4, "slot_id": 19, "stack_id": 65, "station_id": 1, "task_id": 15, "task_key": 110, "time": 43.0}
+{"kind": "delivery", "node_id": 231, "robot_id": 0, "sequence_index": 5, "slot_id": 19, "stack_id": 65, "station_id": 1, "task_id": 15, "task_key": 110, "time": 54.0}
+{"kind": "delivery", "node_id": 237, "robot_id": 0, "sequence_index": 6, "slot_id": 19, "stack_id": 88, "station_id": 1, "task_id": 14, "task_key": 113, "time": 54.0}
+{"kind": "pickup", "node_id": 350, "robot_id": 0, "sequence_index": 7, "slot_id": 29, "stack_id": 119, "station_id": 2, "task_id": 27, "task_key": 170, "time": 68.0}
+{"kind": "pickup", "node_id": 138, "robot_id": 0, "sequence_index": 8, "slot_id": 11, "stack_id": 103, "station_id": 2, "task_id": 23, "task_key": 64, "time": 75.0}
+{"kind": "pickup", "node_id": 210, "robot_id": 0, "sequence_index": 9, "slot_id": 17, "stack_id": 94, "station_id": 2, "task_id": 20, "task_key": 100, "time": 79.0}
+{"kind": "pickup", "node_id": 216, "robot_id": 0, "sequence_index": 10, "slot_id": 17, "stack_id": 115, "station_id": 2, "task_id": 21, "task_key": 103, "time": 87.0}
+{"kind": "delivery", "node_id": 217, "robot_id": 0, "sequence_index": 11, "slot_id": 17, "stack_id": 115, "station_id": 2, "task_id": 21, "task_key": 103, "time": 104.0}
+{"kind": "pickup", "node_id": 134, "robot_id": 0, "sequence_index": 12, "slot_id": 11, "stack_id": 77, "station_id": 2, "task_id": 24, "task_key": 62, "time": 112.0}
+{"kind": "delivery", "node_id": 139, "robot_id": 0, "sequence_index": 13, "slot_id": 11, "stack_id": 103, "station_id": 2, "task_id": 23, "task_key": 64, "time": 123.0}
+{"kind": "delivery", "node_id": 135, "robot_id": 0, "sequence_index": 14, "slot_id": 11, "stack_id": 77, "station_id": 2, "task_id": 24, "task_key": 62, "time": 123.0}
+{"kind": "delivery", "node_id": 351, "robot_id": 0, "sequence_index": 15, "slot_id": 29, "stack_id": 119, "station_id": 2, "task_id": 27, "task_key": 170, "time": 123.0}
+{"kind": "delivery", "node_id": 211, "robot_id": 0, "sequence_index": 16, "slot_id": 17, "stack_id": 94, "station_id": 2, "task_id": 20, "task_key": 100, "time": 123.0}
+{"kind": "pickup", "node_id": 34, "robot_id": 0, "sequence_index": 17, "slot_id": 2, "stack_id": 79, "station_id": 3, "task_id": 31, "task_key": 12, "time": 137.0}
+{"kind": "delivery", "node_id": 35, "robot_id": 0, "sequence_index": 18, "slot_id": 2, "stack_id": 79, "station_id": 3, "task_id": 31, "task_key": 12, "time": 149.0}
+{"kind": "pickup", "node_id": 200, "robot_id": 0, "sequence_index": 19, "slot_id": 16, "stack_id": 88, "station_id": 0, "task_id": 5, "task_key": 95, "time": 159.0}
+{"kind": "pickup", "node_id": 196, "robot_id": 0, "sequence_index": 20, "slot_id": 16, "stack_id": 94, "station_id": 0, "task_id": 6, "task_key": 93, "time": 166.0}
+{"kind": "delivery", "node_id": 201, "robot_id": 0, "sequence_index": 21, "slot_id": 16, "stack_id": 88, "station_id": 0, "task_id": 5, "task_key": 95, "time": 183.0}
+{"kind": "delivery", "node_id": 197, "robot_id": 0, "sequence_index": 22, "slot_id": 16, "stack_id": 94, "station_id": 0, "task_id": 6, "task_key": 93, "time": 196.0}
+{"kind": "end", "node_id": 1, "robot_id": 0, "sequence_index": 23, "slot_id": -1, "stack_id": -1, "station_id": -1, "task_id": -1, "task_key": -1, "time": 197.0}
+{"kind": "start", "node_id": 2, "robot_id": 1, "sequence_index": 0, "slot_id": -1, "stack_id": -1, "station_id": -1, "task_id": -1, "task_key": -1, "time": 0.0}
+{"kind": "pickup", "node_id": 310, "robot_id": 1, "sequence_index": 1, "slot_id": 25, "stack_id": 74, "station_id": 1, "task_id": 9, "task_key": 150, "time": 9.0}
+{"kind": "delivery", "node_id": 311, "robot_id": 1, "sequence_index": 2, "slot_id": 25, "stack_id": 74, "station_id": 1, "task_id": 9, "task_key": 150, "time": 21.0}
+{"kind": "pickup", "node_id": 30, "robot_id": 1, "sequence_index": 3, "slot_id": 1, "stack_id": 56, "station_id": 1, "task_id": 17, "task_key": 10, "time": 28.0}
+{"kind": "delivery", "node_id": 31, "robot_id": 1, "sequence_index": 4, "slot_id": 1, "stack_id": 56, "station_id": 1, "task_id": 17, "task_key": 10, "time": 38.0}
+{"kind": "pickup", "node_id": 150, "robot_id": 1, "sequence_index": 5, "slot_id": 12, "stack_id": 130, "station_id": 1, "task_id": 16, "task_key": 70, "time": 53.0}
+{"kind": "delivery", "node_id": 151, "robot_id": 1, "sequence_index": 6, "slot_id": 12, "stack_id": 130, "station_id": 1, "task_id": 16, "task_key": 70, "time": 71.0}
+{"kind": "pickup", "node_id": 110, "robot_id": 1, "sequence_index": 7, "slot_id": 8, "stack_id": 133, "station_id": 3, "task_id": 33, "task_key": 50, "time": 89.0}
+{"kind": "delivery", "node_id": 111, "robot_id": 1, "sequence_index": 8, "slot_id": 8, "stack_id": 133, "station_id": 3, "task_id": 33, "task_key": 50, "time": 107.0}
+{"kind": "pickup", "node_id": 276, "robot_id": 1, "sequence_index": 9, "slot_id": 22, "stack_id": 124, "station_id": 2, "task_id": 26, "task_key": 133, "time": 121.0}
+{"kind": "pickup", "node_id": 332, "robot_id": 1, "sequence_index": 10, "slot_id": 27, "stack_id": 142, "station_id": 2, "task_id": 25, "task_key": 161, "time": 126.0}
+{"kind": "pickup", "node_id": 76, "robot_id": 1, "sequence_index": 11, "slot_id": 5, "stack_id": 140, "station_id": 2, "task_id": 22, "task_key": 33, "time": 131.0}
+{"kind": "delivery", "node_id": 77, "robot_id": 1, "sequence_index": 12, "slot_id": 5, "stack_id": 140, "station_id": 2, "task_id": 22, "task_key": 33, "time": 149.0}
+{"kind": "delivery", "node_id": 333, "robot_id": 1, "sequence_index": 13, "slot_id": 27, "stack_id": 142, "station_id": 2, "task_id": 25, "task_key": 161, "time": 149.0}
+{"kind": "delivery", "node_id": 277, "robot_id": 1, "sequence_index": 14, "slot_id": 22, "stack_id": 124, "station_id": 2, "task_id": 26, "task_key": 133, "time": 149.0}
+{"kind": "pickup", "node_id": 294, "robot_id": 1, "sequence_index": 15, "slot_id": 24, "stack_id": 131, "station_id": 0, "task_id": 7, "task_key": 142, "time": 174.0}
+{"kind": "delivery", "node_id": 295, "robot_id": 1, "sequence_index": 16, "slot_id": 24, "stack_id": 131, "station_id": 0, "task_id": 7, "task_key": 142, "time": 196.0}
+{"kind": "end", "node_id": 3, "robot_id": 1, "sequence_index": 17, "slot_id": -1, "stack_id": -1, "station_id": -1, "task_id": -1, "task_key": -1, "time": 197.0}
+{"kind": "start", "node_id": 4, "robot_id": 2, "sequence_index": 0, "slot_id": -1, "stack_id": -1, "station_id": -1, "task_id": -1, "task_key": -1, "time": 0.0}
+{"kind": "pickup", "node_id": 368, "robot_id": 2, "sequence_index": 1, "slot_id": 30, "stack_id": 73, "station_id": 0, "task_id": 0, "task_key": 179, "time": 8.0}
+{"kind": "delivery", "node_id": 369, "robot_id": 2, "sequence_index": 2, "slot_id": 30, "stack_id": 73, "station_id": 0, "task_id": 0, "task_key": 179, "time": 20.0}
+{"kind": "pickup", "node_id": 340, "robot_id": 2, "sequence_index": 3, "slot_id": 28, "stack_id": 137, "station_id": 1, "task_id": 10, "task_key": 165, "time": 37.0}
+{"kind": "delivery", "node_id": 341, "robot_id": 2, "sequence_index": 4, "slot_id": 28, "stack_id": 137, "station_id": 1, "task_id": 10, "task_key": 165, "time": 56.0}
+{"kind": "pickup", "node_id": 62, "robot_id": 2, "sequence_index": 5, "slot_id": 4, "stack_id": 139, "station_id": 1, "task_id": 12, "task_key": 26, "time": 94.0}
+{"kind": "delivery", "node_id": 63, "robot_id": 2, "sequence_index": 6, "slot_id": 4, "stack_id": 139, "station_id": 1, "task_id": 12, "task_key": 26, "time": 116.0}
+{"kind": "pickup", "node_id": 50, "robot_id": 2, "sequence_index": 7, "slot_id": 3, "stack_id": 95, "station_id": 3, "task_id": 36, "task_key": 20, "time": 128.0}
+{"kind": "pickup", "node_id": 286, "robot_id": 2, "sequence_index": 8, "slot_id": 23, "stack_id": 104, "station_id": 3, "task_id": 30, "task_key": 138, "time": 132.0}
+{"kind": "delivery", "node_id": 287, "robot_id": 2, "sequence_index": 9, "slot_id": 23, "stack_id": 104, "station_id": 3, "task_id": 30, "task_key": 138, "time": 149.0}
+{"kind": "delivery", "node_id": 51, "robot_id": 2, "sequence_index": 10, "slot_id": 3, "stack_id": 95, "station_id": 3, "task_id": 36, "task_key": 20, "time": 149.0}
+{"kind": "pickup", "node_id": 182, "robot_id": 2, "sequence_index": 11, "slot_id": 15, "stack_id": 86, "station_id": 0, "task_id": 3, "task_key": 86, "time": 161.0}
+{"kind": "pickup", "node_id": 16, "robot_id": 2, "sequence_index": 12, "slot_id": 0, "stack_id": 112, "station_id": 0, "task_id": 2, "task_key": 3, "time": 168.0}
+{"kind": "pickup", "node_id": 376, "robot_id": 2, "sequence_index": 13, "slot_id": 31, "stack_id": 137, "station_id": 0, "task_id": 1, "task_key": 183, "time": 176.0}
+{"kind": "delivery", "node_id": 377, "robot_id": 2, "sequence_index": 14, "slot_id": 31, "stack_id": 137, "station_id": 0, "task_id": 1, "task_key": 183, "time": 196.0}
+{"kind": "delivery", "node_id": 17, "robot_id": 2, "sequence_index": 15, "slot_id": 0, "stack_id": 112, "station_id": 0, "task_id": 2, "task_key": 3, "time": 196.0}
+{"kind": "delivery", "node_id": 183, "robot_id": 2, "sequence_index": 16, "slot_id": 15, "stack_id": 86, "station_id": 0, "task_id": 3, "task_key": 86, "time": 196.0}
+{"kind": "end", "node_id": 5, "robot_id": 2, "sequence_index": 17, "slot_id": -1, "stack_id": -1, "station_id": -1, "task_id": -1, "task_key": -1, "time": 1326.0}
+{"kind": "start", "node_id": 6, "robot_id": 3, "sequence_index": 0, "slot_id": -1, "stack_id": -1, "station_id": -1, "task_id": -1, "task_key": -1, "time": 0.0}
+{"kind": "pickup", "node_id": 226, "robot_id": 3, "sequence_index": 1, "slot_id": 18, "stack_id": 115, "station_id": 3, "task_id": 28, "task_key": 108, "time": 18.0}
+{"kind": "delivery", "node_id": 227, "robot_id": 3, "sequence_index": 2, "slot_id": 18, "stack_id": 115, "station_id": 3, "task_id": 28, "task_key": 108, "time": 34.0}
+{"kind": "pickup", "node_id": 128, "robot_id": 3, "sequence_index": 3, "slot_id": 10, "stack_id": 136, "station_id": 0, "task_id": 8, "task_key": 59, "time": 56.0}
+{"kind": "delivery", "node_id": 129, "robot_id": 3, "sequence_index": 4, "slot_id": 10, "stack_id": 136, "station_id": 0, "task_id": 8, "task_key": 59, "time": 78.0}
+{"kind": "pickup", "node_id": 316, "robot_id": 3, "sequence_index": 5, "slot_id": 26, "stack_id": 127, "station_id": 3, "task_id": 29, "task_key": 153, "time": 93.0}
+{"kind": "pickup", "node_id": 172, "robot_id": 3, "sequence_index": 6, "slot_id": 14, "stack_id": 128, "station_id": 3, "task_id": 32, "task_key": 81, "time": 97.0}
+{"kind": "pickup", "node_id": 88, "robot_id": 3, "sequence_index": 7, "slot_id": 6, "stack_id": 140, "station_id": 3, "task_id": 34, "task_key": 39, "time": 104.0}
+{"kind": "pickup", "node_id": 82, "robot_id": 3, "sequence_index": 8, "slot_id": 6, "stack_id": 97, "station_id": 3, "task_id": 35, "task_key": 36, "time": 114.0}
+{"kind": "delivery", "node_id": 89, "robot_id": 3, "sequence_index": 9, "slot_id": 6, "stack_id": 140, "station_id": 3, "task_id": 34, "task_key": 39, "time": 128.0}
+{"kind": "delivery", "node_id": 83, "robot_id": 3, "sequence_index": 10, "slot_id": 6, "stack_id": 97, "station_id": 3, "task_id": 35, "task_key": 36, "time": 128.0}
+{"kind": "delivery", "node_id": 173, "robot_id": 3, "sequence_index": 11, "slot_id": 14, "stack_id": 128, "station_id": 3, "task_id": 32, "task_key": 81, "time": 128.0}
+{"kind": "delivery", "node_id": 317, "robot_id": 3, "sequence_index": 12, "slot_id": 26, "stack_id": 127, "station_id": 3, "task_id": 29, "task_key": 153, "time": 128.0}
+{"kind": "pickup", "node_id": 94, "robot_id": 3, "sequence_index": 13, "slot_id": 7, "stack_id": 118, "station_id": 1, "task_id": 11, "task_key": 42, "time": 148.0}
+{"kind": "delivery", "node_id": 95, "robot_id": 3, "sequence_index": 14, "slot_id": 7, "stack_id": 118, "station_id": 1, "task_id": 11, "task_key": 42, "time": 166.0}
+{"kind": "pickup", "node_id": 258, "robot_id": 3, "sequence_index": 15, "slot_id": 21, "stack_id": 109, "station_id": 0, "task_id": 4, "task_key": 124, "time": 180.0}
+{"kind": "delivery", "node_id": 259, "robot_id": 3, "sequence_index": 16, "slot_id": 21, "stack_id": 109, "station_id": 0, "task_id": 4, "task_key": 124, "time": 196.0}
+{"kind": "end", "node_id": 7, "robot_id": 3, "sequence_index": 17, "slot_id": -1, "stack_id": -1, "station_id": -1, "task_id": -1, "task_key": -1, "time": 1236.982393939367}
+{"kind": "start", "node_id": 8, "robot_id": 4, "sequence_index": 0, "slot_id": -1, "stack_id": -1, "station_id": -1, "task_id": -1, "task_key": -1, "time": 0.0}
+{"kind": "pickup", "node_id": 162, "robot_id": 4, "sequence_index": 1, "slot_id": 13, "stack_id": 130, "station_id": 2, "task_id": 19, "task_key": 76, "time": 17.0}
+{"kind": "delivery", "node_id": 163, "robot_id": 4, "sequence_index": 2, "slot_id": 13, "stack_id": 130, "station_id": 2, "task_id": 19, "task_key": 76, "time": 35.0}
+{"kind": "pickup", "node_id": 116, "robot_id": 4, "sequence_index": 3, "slot_id": 9, "stack_id": 103, "station_id": 1, "task_id": 13, "task_key": 53, "time": 47.0}
+{"kind": "delivery", "node_id": 117, "robot_id": 4, "sequence_index": 4, "slot_id": 9, "stack_id": 103, "station_id": 1, "task_id": 13, "task_key": 53, "time": 62.0}
+{"kind": "end", "node_id": 9, "robot_id": 4, "sequence_index": 5, "slot_id": -1, "stack_id": -1, "station_id": -1, "task_id": -1, "task_key": -1, "time": 66.0}

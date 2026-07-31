@@ -1,0 +1,199 @@
+{
+  "coverage_ok": true,
+  "coverage_subtasks": [
+    {
+      "coverage_ok": true,
+      "order_id": 4,
+      "provided_sku_units": 6,
+      "required_sku_units": 6,
+      "subtask_id": 0,
+      "unmet_sku_units": 0,
+      "unmet_skus": {}
+    },
+    {
+      "coverage_ok": true,
+      "order_id": 0,
+      "provided_sku_units": 4,
+      "required_sku_units": 4,
+      "subtask_id": 1,
+      "unmet_sku_units": 0,
+      "unmet_skus": {}
+    },
+    {
+      "coverage_ok": true,
+      "order_id": 3,
+      "provided_sku_units": 4,
+      "required_sku_units": 4,
+      "subtask_id": 2,
+      "unmet_sku_units": 0,
+      "unmet_skus": {}
+    },
+    {
+      "coverage_ok": true,
+      "order_id": 4,
+      "provided_sku_units": 4,
+      "required_sku_units": 4,
+      "subtask_id": 3,
+      "unmet_sku_units": 0,
+      "unmet_skus": {}
+    },
+    {
+      "coverage_ok": true,
+      "order_id": 0,
+      "provided_sku_units": 6,
+      "required_sku_units": 6,
+      "subtask_id": 4,
+      "unmet_sku_units": 0,
+      "unmet_skus": {}
+    },
+    {
+      "coverage_ok": true,
+      "order_id": 5,
+      "provided_sku_units": 6,
+      "required_sku_units": 6,
+      "subtask_id": 5,
+      "unmet_sku_units": 0,
+      "unmet_skus": {}
+    },
+    {
+      "coverage_ok": true,
+      "order_id": 2,
+      "provided_sku_units": 4,
+      "required_sku_units": 4,
+      "subtask_id": 6,
+      "unmet_sku_units": 0,
+      "unmet_skus": {}
+    },
+    {
+      "coverage_ok": true,
+      "order_id": 5,
+      "provided_sku_units": 4,
+      "required_sku_units": 4,
+      "subtask_id": 7,
+      "unmet_sku_units": 0,
+      "unmet_skus": {}
+    },
+    {
+      "coverage_ok": true,
+      "order_id": 3,
+      "provided_sku_units": 6,
+      "required_sku_units": 6,
+      "subtask_id": 8,
+      "unmet_sku_units": 0,
+      "unmet_skus": {}
+    },
+    {
+      "coverage_ok": true,
+      "order_id": 2,
+      "provided_sku_units": 6,
+      "required_sku_units": 6,
+      "subtask_id": 9,
+      "unmet_sku_units": 0,
+      "unmet_skus": {}
+    },
+    {
+      "coverage_ok": true,
+      "order_id": 4,
+      "provided_sku_units": 6,
+      "required_sku_units": 6,
+      "subtask_id": 10,
+      "unmet_sku_units": 0,
+      "unmet_skus": {}
+    },
+    {
+      "coverage_ok": true,
+      "order_id": 1,
+      "provided_sku_units": 6,
+      "required_sku_units": 6,
+      "subtask_id": 11,
+      "unmet_sku_units": 0,
+      "unmet_skus": {}
+    },
+    {
+      "coverage_ok": true,
+      "order_id": 0,
+      "provided_sku_units": 6,
+      "required_sku_units": 6,
+      "subtask_id": 12,
+      "unmet_sku_units": 0,
+      "unmet_skus": {}
+    },
+    {
+      "coverage_ok": true,
+      "order_id": 1,
+      "provided_sku_units": 6,
+      "required_sku_units": 6,
+      "subtask_id": 13,
+      "unmet_sku_units": 0,
+      "unmet_skus": {}
+    },
+    {
+      "coverage_ok": true,
+      "order_id": 0,
+      "provided_sku_units": 6,
+      "required_sku_units": 6,
+      "subtask_id": 14,
+      "unmet_sku_units": 0,
+      "unmet_skus": {}
+    },
+    {
+      "coverage_ok": true,
+      "order_id": 1,
+      "provided_sku_units": 4,
+      "required_sku_units": 4,
+      "subtask_id": 15,
+      "unmet_sku_units": 0,
+      "unmet_skus": {}
+    },
+    {
+      "coverage_ok": true,
+      "order_id": 3,
+      "provided_sku_units": 6,
+      "required_sku_units": 6,
+      "subtask_id": 16,
+      "unmet_sku_units": 0,
+      "unmet_skus": {}
+    },
+    {
+      "coverage_ok": true,
+      "order_id": 5,
+      "provided_sku_units": 6,
+      "required_sku_units": 6,
+      "subtask_id": 17,
+      "unmet_sku_units": 0,
+      "unmet_skus": {}
+    },
+    {
+      "coverage_ok": true,
+      "order_id": 2,
+      "provided_sku_units": 6,
+      "required_sku_units": 6,
+      "subtask_id": 18,
+      "unmet_sku_units": 0,
+      "unmet_skus": {}
+    }
+  ],
+  "duplicate_station_ranks": [],
+  "duplicate_tote_use_count": 0,
+  "duplicate_tote_uses": {},
+  "global_makespan": 1097.9999999999973,
+  "has_unreasonable_solution": false,
+  "invalid_rank_count": 0,
+  "invalid_rank_rows": [],
+  "invalid_station_assignment_count": 0,
+  "invalid_station_assignments": [],
+  "invalid_z_task_count": 0,
+  "invalid_z_tasks": [],
+  "issues": [],
+  "makespan_consistent": true,
+  "missing_sku_hit": false,
+  "snapshot_sha256": "9cb2fbc35603862c2660afae57eebbbbb4bc82b436e016545031bba0a2878af0",
+  "solver_cmax": 1097.999999890053,
+  "solver_objective": 1098.3349998900533,
+  "unassigned_robot_task_count": 0,
+  "unassigned_robot_tasks": [],
+  "unmet_sku_total": 0,
+  "unmet_subtask_count": 0,
+  "verification_failures": [],
+  "verified_cmax": 1097.9999999999973
+}

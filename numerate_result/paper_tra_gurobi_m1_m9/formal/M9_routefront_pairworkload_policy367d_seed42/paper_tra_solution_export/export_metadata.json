@@ -1,0 +1,20 @@
+{
+  "case": "M9",
+  "export_complete": true,
+  "file_sha256": {
+    "best_solution_audit.json": "4bbcb0325dc893c66748b66e1140f7fbc2785597cb37a21cb8bb7db543992056",
+    "best_solution_audit.txt": "d45cfa988c0e7847357e685738a54250d5d6904d888075f0c2afb51a97bc9d0a",
+    "best_solution_full_dump.txt": "ecdae1c1dc14eab2683a8e4de0d2f6b816e21fa2ac58fd015665a71dbde778d5",
+    "best_solution_objectives.json": "d454c80eef3a758ad060f08c03331265eb29afcdf12bb152ae91124df11c1e2e",
+    "best_solution_objectives.txt": "84c7d071da06f9ded4f55eb0b6d44476f99e8cf8f90e11d419d88ab94eb9a5f2",
+    "tra_makespan_verification.json": "db7bba55849c52d2657eae8a9af702a16bcfc4502bacf1f1326ebfa5fee1216a",
+    "tra_makespan_verification.txt": "9561a9f046e33cd1d123fa0dbdcf96ee3d20f3ece8e1e75948509c16434e1b54",
+    "xyzu_variable_values.json": "5fdf592bc8779b09533a7b34682c13ff2b3954e99a27dd14adb834c5cf2511c6"
+  },
+  "manifest_sha256": "4d0bd2fc29367bc767ef9359c34e026454b3f50223172ccf7e422b58356be03b",
+  "run_id": "m9-routefront-pairworkload-policy367d-seed42",
+  "schema_version": 1,
+  "snapshot_sha256": "a04e4763aafd0f97adf667637d84b897eef5c79c7e0842740facf28b3881458c",
+  "verified_cmax": 2109.0,
+  "verifier_error_codes": []
+}

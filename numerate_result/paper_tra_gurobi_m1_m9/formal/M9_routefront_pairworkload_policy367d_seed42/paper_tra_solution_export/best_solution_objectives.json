@@ -1,0 +1,16 @@
+{
+  "case": "M9",
+  "global_makespan": 2109.0,
+  "manifest_sha256": "4d0bd2fc29367bc767ef9359c34e026454b3f50223172ccf7e422b58356be03b",
+  "robot_count": 5,
+  "run_id": "m9-routefront-pairworkload-policy367d-seed42",
+  "schema_version": 1,
+  "seed": 42,
+  "snapshot_sha256": "a04e4763aafd0f97adf667637d84b897eef5c79c7e0842740facf28b3881458c",
+  "solver_cmax": 2109.0,
+  "solver_objective": 2110.1440000000025,
+  "station_count": 4,
+  "subtask_count": 44,
+  "task_count": 58,
+  "verified_cmax": 2109.0
+}

@@ -19,6 +19,18 @@ OLD_42_RUNTIME_SEC = {
     "M9": 2608.73,
 }
 
+OLD_42_GAP = {
+    "M1": 0.00541,
+    "M2": 0.00907,
+    "M3": 0.00985,
+    "M4": 0.00932,
+    "M5": 0.00950,
+    "M6": 0.00921,
+    "M7": 0.00940,
+    "M8": 0.008794437981997073,
+    "M9": 0.00978,
+}
+
 
 class PolicyError(ValueError):
     pass
@@ -38,6 +50,7 @@ MODEL_POLICY_FIELDS = frozenset(
         "enable_warm_candidate_stack_prune",
         "candidate_station_topk_per_stack",
         "warm_start_sp4_time_limit_sec",
+        "warm_start_sp4_guided_local_search",
         "warm_start_subtask_ordering",
         "warm_start_use_sp2_mip_initial",
         "warm_start_sp2_mip_time_limit_sec",
@@ -96,6 +109,8 @@ MODEL_POLICY_FIELDS = frozenset(
         "enable_warm_start_route_repair",
         "enable_scale_adaptive_candidate_prune",
         "enable_sort_hit_tote_threshold",
+        "enable_required_slot_active_lb",
+        "enable_slot_min_pick_workload_lb",
         "sort_hit_tote_threshold",
         "route_pickup_neighbor_limit",
         "enable_route_delivery_pickup_neighbor_prune",
@@ -134,12 +149,23 @@ def _legacy_profile(case_id: str) -> Dict[str, Any]:
         "enable_sort_hit_tote_threshold": case_id != "M1",
         # M1 keeps the old report-compatible numeric value, but the constraint family is disabled.
         "sort_hit_tote_threshold": 1 if case_id == "M1" else 3,
+        # All accepted M1-M9 baselines predate these unconditional model constraints.
+        "enable_required_slot_active_lb": False,
+        "enable_slot_min_pick_workload_lb": False,
     }
 
 
 def _legacy_reason(case_id: str, field_name: str) -> str:
     if case_id == "M1" and field_name == "enable_sort_hit_tote_threshold":
         return "M1 predates the SortByHitThreshold constraint family; the archived model has no such rows."
+    if field_name in {
+        "enable_required_slot_active_lb",
+        "enable_slot_min_pick_workload_lb",
+    }:
+        return (
+            f"{case_id} predates the {field_name} constraint family; "
+            "the archived model has no such rows."
+        )
     return "Explicit M-suite legacy profile recovered from the archived command and effective diagnostics."
 
 
@@ -255,6 +281,40 @@ def sanitize_case_policy(case_id: str, summary: Mapping[str, Any]) -> SanitizedC
                 else _legacy_reason(normalized_case, "enable_sort_hit_tote_threshold")
             ),
         }
+    for field_name in (
+        "enable_required_slot_active_lb",
+        "enable_slot_min_pick_workload_lb",
+    ):
+        count_field = {
+            "enable_required_slot_active_lb": "required_slot_active_lb_count",
+            "enable_slot_min_pick_workload_lb": "slot_min_pick_workload_lb_count",
+        }[field_name]
+        archived_count = diagnostics.get(count_field)
+        if archived_count is not None:
+            values[field_name] = bool(int(archived_count or 0) > 0)
+            provenance[field_name] = {
+                "source": "summary.diagnostics",
+                "reason": f"Archived effective constraint count for {count_field}.",
+            }
+        else:
+            values[field_name] = False
+            provenance[field_name] = {
+                "source": "legacy_profile",
+                "reason": _legacy_reason(normalized_case, field_name),
+            }
+
+    if (
+        normalized_case in {"M8", "M9"}
+        and "warm_start_sp4_guided_local_search" not in values
+    ):
+        values["warm_start_sp4_guided_local_search"] = True
+        provenance["warm_start_sp4_guided_local_search"] = {
+            "source": "summary.config",
+            "reason": (
+                f"Archived {normalized_case} baseline used the default guided "
+                "local search warm-route mode."
+            ),
+        }
 
     canonical = {
         "case_id": normalized_case,
@@ -274,6 +334,7 @@ def sanitize_case_policy(case_id: str, summary: Mapping[str, Any]) -> SanitizedC
 class RuntimeBudgetPolicy:
     case_id: str
     baseline_runtime_sec: float
+    objective_gap_stop: float
     hard_limit_sec: float
     inner_quota_sec: float
     outer_quota_sec: float
@@ -284,12 +345,14 @@ def runtime_budget_for_case(case_id: str) -> RuntimeBudgetPolicy:
     normalized_case = str(case_id).upper().replace("GUROBI-", "")
     try:
         baseline = float(OLD_42_RUNTIME_SEC[normalized_case])
+        objective_gap_stop = float(OLD_42_GAP[normalized_case])
     except KeyError as exc:
         raise PolicyError(f"unknown M-suite case: {case_id}") from exc
     hard_limit = 0.8 * baseline
     return RuntimeBudgetPolicy(
         case_id=normalized_case,
         baseline_runtime_sec=baseline,
+        objective_gap_stop=objective_gap_stop,
         hard_limit_sec=hard_limit,
         inner_quota_sec=0.30 * hard_limit,
         outer_quota_sec=0.55 * hard_limit,

@@ -1,0 +1,16 @@
+{
+  "case": "M4",
+  "global_makespan": 1097.9999999999973,
+  "manifest_sha256": "7a31e750a9f9f5e19be4e10482b7b61f68a211e8f2d83899fe9e1706ae529063",
+  "robot_count": 4,
+  "run_id": "m4-formal-station-overload-engine-stop-seed42",
+  "schema_version": 1,
+  "seed": 42,
+  "snapshot_sha256": "9cb2fbc35603862c2660afae57eebbbbb4bc82b436e016545031bba0a2878af0",
+  "solver_cmax": 1097.999999890053,
+  "solver_objective": 1098.3349998900533,
+  "station_count": 3,
+  "subtask_count": 19,
+  "task_count": 19,
+  "verified_cmax": 1097.9999999999973
+}

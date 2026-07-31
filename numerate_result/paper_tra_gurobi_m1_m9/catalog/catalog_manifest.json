@@ -1,0 +1,18 @@
+{
+  "baseline_definition_sha256": "017142772f9126ca4754fc6ebf7dad0ec29f8e3a83517ba1fd8251944670842e",
+  "baseline_file": "frozen_acceptance_baselines.json",
+  "baseline_sha256": "365aae8f23399fd42d333c63ed9742e8734d91a46176c70fa4d80a5815fca451",
+  "case_order": [
+    "M1",
+    "M2",
+    "M3",
+    "M4",
+    "M5",
+    "M6",
+    "M7",
+    "M8",
+    "M9"
+  ],
+  "domain_policy_sha256": "4d2391045a1d4890ad95d257ad78b8f0bde9e5e618554412e3e5640cf8baafcd",
+  "schema_version": 1
+}

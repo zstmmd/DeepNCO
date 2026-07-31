@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from experiments.m_tra_policy import (
+    OLD_42_GAP,
     OLD_42_RUNTIME_SEC,
     PolicyError,
     assert_target_blind_payload,
@@ -29,6 +30,16 @@ def test_m1_sort_threshold_is_explicitly_disabled_without_solution_export() -> N
     assert policy.provenance["enable_sort_hit_tote_threshold"]["source"] == "legacy_profile"
     assert "solution" not in policy.provenance["enable_sort_hit_tote_threshold"]["reason"].lower()
     assert "export" not in policy.provenance["enable_sort_hit_tote_threshold"]["reason"].lower()
+    assert policy.values["enable_required_slot_active_lb"] is False
+    assert policy.values["enable_slot_min_pick_workload_lb"] is False
+    assert (
+        policy.provenance["enable_required_slot_active_lb"]["source"]
+        == "legacy_profile"
+    )
+    assert (
+        policy.provenance["enable_slot_min_pick_workload_lb"]["source"]
+        == "legacy_profile"
+    )
 
 
 def test_m2_sort_threshold_prefers_effective_diagnostic_over_summary_config() -> None:
@@ -48,10 +59,52 @@ def test_m2_sort_threshold_prefers_effective_diagnostic_over_summary_config() ->
     assert policy.provenance["sort_hit_tote_threshold"]["source"] == "summary.diagnostics"
 
 
+def test_m8_legacy_lb_flags_follow_archived_constraint_counts() -> None:
+    policy = sanitize_case_policy(
+        "M8",
+        summary={
+            "config": {},
+            "diagnostics": {
+                "required_slot_active_lb_count": 32,
+                "slot_min_pick_workload_lb_count": 32,
+            },
+        },
+    )
+
+    assert policy.values["enable_required_slot_active_lb"] is True
+    assert policy.values["enable_slot_min_pick_workload_lb"] is True
+    assert (
+        policy.provenance["enable_required_slot_active_lb"]["source"]
+        == "summary.diagnostics"
+    )
+    assert (
+        policy.provenance["enable_slot_min_pick_workload_lb"]["source"]
+        == "summary.diagnostics"
+    )
+
+
+def test_m8_m9_preserve_archived_guided_local_search_default() -> None:
+    for case_id in ("M8", "M9"):
+        policy = sanitize_case_policy(
+            case_id,
+            summary={
+                "config": {},
+                "diagnostics": {},
+            },
+        )
+
+        assert policy.values["warm_start_sp4_guided_local_search"] is True
+        assert (
+            policy.provenance["warm_start_sp4_guided_local_search"]["source"]
+            == "summary.config"
+        )
+
+
 def test_runtime_budget_uses_old_42_runtime_only() -> None:
     budget = runtime_budget_for_case("M9")
 
     assert budget.baseline_runtime_sec == pytest.approx(OLD_42_RUNTIME_SEC["M9"])
+    assert budget.objective_gap_stop == pytest.approx(OLD_42_GAP["M9"])
     assert budget.hard_limit_sec == pytest.approx(0.8 * OLD_42_RUNTIME_SEC["M9"])
     assert budget.inner_quota_sec == pytest.approx(0.3 * budget.hard_limit_sec)
     assert budget.outer_quota_sec == pytest.approx(0.55 * budget.hard_limit_sec)

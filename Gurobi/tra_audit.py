@@ -97,6 +97,7 @@ class SearchAuditTrail:
         incumbent_objective: Optional[float],
         certified_prune: bool,
         selected_shell_sha256: Optional[str],
+        selection_dispositions: tuple[dict[str, str], ...] = (),
         requested_time_limit_sec: Optional[float] = None,
         effort_multiplier: Optional[float] = None,
         recourse_calibration_allowance_sec: float = 0.0,
@@ -134,6 +135,10 @@ class SearchAuditTrail:
                 ),
                 "candidate_count": len(result.candidates),
                 "selected_shell_sha256": selected_shell_sha256,
+                "selection_dispositions": [
+                    dict(disposition)
+                    for disposition in selection_dispositions
+                ],
                 "candidates": [self._candidate_row(candidate) for candidate in result.candidates],
                 "error": str(result.error or ""),
             },
@@ -147,9 +152,16 @@ class SearchAuditTrail:
         submitted_shell_sha256: str,
         reserve_retry: bool,
         requested_time_limit_sec: Optional[float] = None,
+        budget_mode: str = "regular",
         stage: str = "outer",
+        candidate_kind: Optional[str] = None,
     ) -> None:
         accepted = result.accepted
+        candidate_kind_payload = (
+            {}
+            if candidate_kind is None
+            else {"candidate_kind": str(candidate_kind)}
+        )
         self._append(
             stage,
             step,
@@ -158,6 +170,7 @@ class SearchAuditTrail:
                 "requested_time_limit_sec": (
                     None if requested_time_limit_sec is None else float(requested_time_limit_sec)
                 ),
+                "budget_mode": str(budget_mode),
                 "solver_status": str(result.solver_status),
                 "solver_status_code": int(result.solver_status_code),
                 "objective_bound": float(result.objective_bound),
@@ -187,6 +200,7 @@ class SearchAuditTrail:
                 ),
                 "accepted_cmax": None if accepted is None else float(accepted.verified_cmax),
                 "error": str(result.error or ""),
+                **candidate_kind_payload,
             },
         )
 
@@ -200,6 +214,15 @@ class SearchAuditTrail:
                 "shell_sha256": str(shell_sha256),
             },
         )
+
+    def diagnostic(
+        self,
+        step: Optional[ProcedureStep],
+        *,
+        stage: str,
+        payload: Mapping[str, Any],
+    ) -> None:
+        self._append(str(stage), step, payload)
 
     def finish(self, payload: Mapping[str, Any]) -> None:
         self._append("finish", None, payload)

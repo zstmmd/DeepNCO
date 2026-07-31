@@ -1,0 +1,20 @@
+{
+  "case": "M1",
+  "export_complete": true,
+  "file_sha256": {
+    "best_solution_audit.json": "eae6809711c49acc1614ac4b9c580524f8436282dea28f830fe05bdb2f9fdee0",
+    "best_solution_audit.txt": "044a8df8335ad4667d8f68f3800868ef808d5c6e2f19797f164c56f22e64c421",
+    "best_solution_full_dump.txt": "a5d6c55cee1390875e88fafd8e0140df6be7db0ab489eca85c4d333965ac0076",
+    "best_solution_objectives.json": "c34ba1f093784ff32835fee8d7e38d0c03c4ddc56eaef4ce64e2ebe53383a8ac",
+    "best_solution_objectives.txt": "f6f32bf4abfb214f8f3fce53d88b2979402917c91021f95b348e9d2c106631c5",
+    "tra_makespan_verification.json": "cd689fcb5820895429a8fb20f6867e1d7f41451c15fafca7d98ba8f6dd189eab",
+    "tra_makespan_verification.txt": "4decc2642613b85f6b7c59ce0d015cc1bb182bb39ca837e46a78b4f5ebfaa013",
+    "xyzu_variable_values.json": "307111947e94378c73ca714c227eb11c277094d2270a7e498e8d226226ce233c"
+  },
+  "manifest_sha256": "8edf3e951a99bae1746452e596710c207c87049a29c58e75cab66b33377d0b53",
+  "run_id": "m1-formal-canonical-robot-repair-seed42",
+  "schema_version": 1,
+  "snapshot_sha256": "684bc874e66d196fd97eeb605beeeb6b9d0059c87f9fd0e9a3733fde3b62af17",
+  "verified_cmax": 581.999999999076,
+  "verifier_error_codes": []
+}

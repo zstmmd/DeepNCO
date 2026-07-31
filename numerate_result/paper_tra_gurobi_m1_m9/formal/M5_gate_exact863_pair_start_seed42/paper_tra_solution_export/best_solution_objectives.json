@@ -1,0 +1,16 @@
+{
+  "case": "M5",
+  "global_makespan": 863.0,
+  "manifest_sha256": "77883a8a79c903f1f8a25bbb1a66d17db0b000fb563fd92abf2afd4d290f49cf",
+  "robot_count": 4,
+  "run_id": "m5-formal-gate-exact863-pair-start-seed42",
+  "schema_version": 1,
+  "seed": 42,
+  "snapshot_sha256": "697085b2ade4d9b1f8a1645769655984f7175f06ab2619ac116550292f445eba",
+  "solver_cmax": 863.0,
+  "solver_objective": 863.3499999999995,
+  "station_count": 3,
+  "subtask_count": 16,
+  "task_count": 18,
+  "verified_cmax": 863.0
+}

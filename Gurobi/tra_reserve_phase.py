@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Optional
+from typing import Iterable, Optional
 
 from gurobipy import GRB
 
 from Gurobi.tra_audit import SearchAuditTrail
-from Gurobi.tra_budget_policy import ReserveBudgetPolicy
-from Gurobi.tra_neighborhood import NeighborhoodLevel
+from Gurobi.tra_budget_policy import OuterBudgetPolicy, ReserveBudgetPolicy
+from Gurobi.tra_neighborhood import NeighborhoodLevel, Procedure
 from Gurobi.tra_outer import OuterDisposition
 from Gurobi.tra_refinement import retain_accepted_shell_refinement
 from Gurobi.tra_regular_phase import VerifiedRecorder
@@ -30,6 +30,8 @@ class ReservePhase:
         audit: SearchAuditTrail,
         record_verified: VerifiedRecorder,
         budget_policy: Optional[ReserveBudgetPolicy] = None,
+        enable_f1_plateau_escalation: bool = False,
+        plateau_escalation_procedures: Iterable[Procedure] = (),
     ) -> None:
         self.templates = templates
         self.runtime = runtime
@@ -37,6 +39,13 @@ class ReservePhase:
         self.audit = audit
         self.record_verified = record_verified
         self.budget_policy = budget_policy or ReserveBudgetPolicy()
+        self.enable_f1_plateau_escalation = bool(enable_f1_plateau_escalation)
+        self.plateau_escalation_procedures = {
+            Procedure(procedure)
+            for procedure in plateau_escalation_procedures
+        }
+        if self.enable_f1_plateau_escalation:
+            self.plateau_escalation_procedures.add(Procedure.F1)
 
     def run(self, state: SearchState) -> bool:
         prefer_deferred = True
@@ -53,19 +62,52 @@ class ReservePhase:
             )
             if reserve_stage is ReserveStage.OUTER:
                 pending = state.queues.peek_pending()
+                bound_promoted = bool(
+                    pending.reserve_retry
+                    and OuterBudgetPolicy.retry_is_bound_promoted(
+                        objective_bound=pending.validation_bound,
+                        incumbent_objective=state.incumbent_objective,
+                    )
+                )
                 reserve_slice = self.budget_policy.cap_outer_slice(
                     reserve_slice,
                     hard_limit_sec=self.runtime.hard_limit_sec,
                     reserve_retry=pending.reserve_retry,
+                    bound_promoted=bound_promoted,
                 )
             if reserve_slice <= 1e-3:
                 return False
             if state.queues.pending_count and state.queues.deferred_count and allow_deferred:
                 prefer_deferred = reserve_stage is ReserveStage.OUTER
             if reserve_stage is ReserveStage.OUTER:
-                acceptance = self._run_outer(state, reserve_slice)
+                acceptance = self._run_outer(
+                    state,
+                    reserve_slice,
+                    bound_promoted=bound_promoted,
+                )
                 if acceptance is not None and acceptance.structural_change:
-                    self.scheduler.restart_after_external_improvement()
+                    preserve_f1 = bool(
+                        self.enable_f1_plateau_escalation
+                        and not acceptance.cmax_improved
+                    )
+                    extra_preserved = (
+                        tuple(
+                            sorted(
+                                (
+                                    procedure
+                                    for procedure in self.plateau_escalation_procedures
+                                    if procedure is not Procedure.F1
+                                ),
+                                key=lambda item: item.value,
+                            )
+                        )
+                        if not acceptance.cmax_improved
+                        else ()
+                    )
+                    kwargs = {"preserve_f1_level": preserve_f1}
+                    if extra_preserved:
+                        kwargs["preserve_procedure_levels"] = extra_preserved
+                    self.scheduler.restart_after_external_improvement(**kwargs)
                     return True
                 if state.status == "ENGINE_FAILED":
                     return False
@@ -77,6 +119,8 @@ class ReservePhase:
         self,
         state: SearchState,
         time_limit_sec: float,
+        *,
+        bound_promoted: bool = False,
     ) -> Optional[AcceptanceOutcome]:
         item = state.queues.pop_pending()
         if item.reserve_retry:
@@ -113,6 +157,11 @@ class ReservePhase:
             submitted_shell_sha256=item.shell.sha256,
             reserve_retry=item.reserve_retry,
             requested_time_limit_sec=time_limit_sec,
+            budget_mode=(
+                "reserve_bound_promoted"
+                if bound_promoted
+                else "reserve_standard"
+            ),
             stage="reserve_outer",
         )
         if result.disposition is OuterDisposition.ACCEPTED and result.accepted is not None:
@@ -229,12 +278,15 @@ class ReservePhase:
         candidate = None
         submission_step = reserve_step
         archived_submission = False
+        selection_dispositions: list[dict[str, str]] = []
         if not certified_prune:
-            candidate = state.select_unattempted_candidate(
+            selection = state.select_unattempted_candidate_with_dispositions(
                 item.reference_shell,
                 reserve_step,
                 inner.candidates,
             )
+            candidate = selection.candidate
+            selection_dispositions.extend(selection.dispositions)
             state.candidate_archive.remember(
                 item.reference_shell,
                 reserve_step,
@@ -258,7 +310,7 @@ class ReservePhase:
                         procedure=reserve_step.procedure,
                         neighborhood=archived.step.neighborhood,
                     )
-                    candidate = state.select_unattempted_candidate(
+                    archive_selection = state.select_unattempted_candidate_with_dispositions(
                         archived.reference_shell,
                         archived_step,
                         (archived.candidate,),
@@ -267,6 +319,10 @@ class ReservePhase:
                                 archived_step
                             )
                         ),
+                    )
+                    candidate = archive_selection.candidate
+                    selection_dispositions.extend(
+                        archive_selection.dispositions
                     )
                     if candidate is None:
                         continue
@@ -283,6 +339,7 @@ class ReservePhase:
             incumbent_objective=state.incumbent_objective,
             certified_prune=certified_prune,
             selected_shell_sha256=None if candidate is None else candidate.shell.sha256,
+            selection_dispositions=tuple(selection_dispositions),
             requested_time_limit_sec=time_limit_sec,
             effort_multiplier=1.0,
             recourse_calibration_allowance_sec=(

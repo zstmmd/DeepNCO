@@ -5,7 +5,12 @@ from dataclasses import dataclass
 import pytest
 
 from Gurobi.tra_neighborhood import NeighborhoodLevel, Procedure, validate_transition
-from Gurobi.tra_projection import CoreProjection, ProjectionRegistry, StructuralShell
+from Gurobi.tra_projection import (
+    INACTIVE_LABEL,
+    CoreProjection,
+    ProjectionRegistry,
+    StructuralShell,
+)
 from Gurobi.tra_vns import PaperVNSGenerator, rotating_search_seed
 
 
@@ -165,6 +170,53 @@ def test_f3_n3_preserves_label_counts_before_full_incumbent_exists() -> None:
     assert sorted(seed.projection.r_assign.values()) == sorted(
         shell.projection.r_assign.values()
     )
+
+
+def test_f1_n2_filters_swaps_that_assign_one_slot_to_multiple_stations() -> None:
+    families = {
+        "x": {
+            ("u1", 10): _Var("x[u1,10]"),
+            ("u2", 11): _Var("x[u2,11]"),
+        },
+        "pair_activate": {
+            (slot, stack, station): _Var(f"pair[{slot},{stack},{station}]")
+            for slot, stack in ((10, 20), (10, 21), (11, 22), (11, 23))
+            for station in (30, 31)
+        },
+        "slot_robot": {
+            (10, 40): _Var("robot[10,40]"),
+            (11, 41): _Var("robot[11,41]"),
+        },
+    }
+    shell = StructuralShell(
+        projection=CoreProjection(
+            x_group={"u1": 10, "u2": 11},
+            s_visit={
+                (10, 20): 30,
+                (10, 21): INACTIVE_LABEL,
+                (11, 22): 31,
+                (11, 23): INACTIVE_LABEL,
+            },
+            r_assign={10: 40, 11: 41},
+        )
+    )
+    generator = PaperVNSGenerator(ProjectionRegistry(families))
+
+    seeds = generator.generate(
+        shell,
+        procedure=Procedure.F1,
+        neighborhood=NeighborhoodLevel.N2,
+        limit=10,
+    )
+
+    assert seeds
+    for seed in seeds:
+        active_stations = {}
+        for (slot_id, _stack_id), station_id in seed.projection.s_visit.items():
+            if station_id == INACTIVE_LABEL:
+                continue
+            active_stations.setdefault(slot_id, set()).add(station_id)
+        assert all(len(stations) == 1 for stations in active_stations.values())
 
 
 def test_rotating_search_seed_preserves_first_window_and_changes_later_windows() -> None:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from typing import Dict, Iterable, Optional
 
 from Gurobi.tra_neighborhood import NeighborhoodLevel, Procedure
 
@@ -23,6 +23,7 @@ class RuntimeLedger:
     reserve_quota_sec: float
     safety_buffer_sec: float = 0.0
     minimum_solver_slice_sec: float = 0.0
+    objective_gap_stop: Optional[float] = None
     clock: callable = time.perf_counter
     started_at: Optional[float] = None
     inner_used_sec: float = 0.0
@@ -117,9 +118,23 @@ class RetryRegistry:
 class RotationScheduler:
     ORDER = (Procedure.F1, Procedure.F2, Procedure.F3)
 
-    def __init__(self, *, max_procedures: int = 50, stagnant_cycle_limit: int = 3) -> None:
+    def __init__(
+        self,
+        *,
+        max_procedures: int = 50,
+        stagnant_cycle_limit: int = 3,
+        enable_f1_plateau_escalation: bool = False,
+        plateau_escalation_procedures: Iterable[Procedure] = (),
+    ) -> None:
         self.max_procedures = int(max_procedures)
         self.stagnant_cycle_limit = int(stagnant_cycle_limit)
+        self.enable_f1_plateau_escalation = bool(enable_f1_plateau_escalation)
+        self.plateau_escalation_procedures = {
+            Procedure(procedure)
+            for procedure in plateau_escalation_procedures
+        }
+        if self.enable_f1_plateau_escalation:
+            self.plateau_escalation_procedures.add(Procedure.F1)
         self.procedure_count = 0
         self.cycle = 1
         self._position = 0
@@ -152,7 +167,16 @@ class RotationScheduler:
             self._cycle_improved = True
             for item in self.ORDER:
                 if item is procedure:
-                    self._level_by_procedure[item] = NeighborhoodLevel.N1
+                    if (
+                        item in self.plateau_escalation_procedures
+                    ):
+                        self._level_by_procedure[item] = {
+                            NeighborhoodLevel.N1: NeighborhoodLevel.N2,
+                            NeighborhoodLevel.N2: NeighborhoodLevel.N3,
+                            NeighborhoodLevel.N3: NeighborhoodLevel.N3,
+                        }[self._level_by_procedure[item]]
+                    else:
+                        self._level_by_procedure[item] = NeighborhoodLevel.N1
                 elif self._level_by_procedure[item] is NeighborhoodLevel.N3:
                     self._level_by_procedure[item] = NeighborhoodLevel.N2
         else:
@@ -179,15 +203,39 @@ class RotationScheduler:
             return True
         return bool(deferred_empty) and self.stagnant_cycles >= self.stagnant_cycle_limit
 
-    def restart_after_external_improvement(self) -> None:
+    def should_yield_to_reserve(self, *, pending_outer_count: int) -> bool:
+        return bool(
+            self.procedure_count >= len(self.ORDER)
+            and self._position == 0
+            and int(pending_outer_count) > 0
+        )
+
+    def restart_after_external_improvement(
+        self,
+        *,
+        preserve_f1_level: bool = False,
+        preserve_procedure_levels: Iterable[Procedure] = (),
+    ) -> None:
         """Resume a strict F1/F2/F3 cycle after a reserve-phase incumbent change."""
 
+        preserved = {
+            Procedure(procedure)
+            for procedure in preserve_procedure_levels
+        }
+        if bool(preserve_f1_level):
+            preserved.add(Procedure.F1)
+        levels = {
+            procedure: self._level_by_procedure[procedure]
+            for procedure in preserved
+        }
         if self._position != 0:
             self.cycle += 1
         self._position = 0
         self._cycle_improved = False
         self.stagnant_cycles = 0
         self._level_by_procedure = {item: NeighborhoodLevel.N1 for item in self.ORDER}
+        for procedure, level in levels.items():
+            self._level_by_procedure[procedure] = level
 
     @property
     def remaining_regular_steps(self) -> int:

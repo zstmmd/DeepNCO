@@ -5,7 +5,12 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Hashable, Mapping
 
-from Gurobi.tra_projection import CoreProjection, ProjectionError, raw_one_hot_hamming
+from Gurobi.tra_projection import (
+    INACTIVE_LABEL,
+    CoreProjection,
+    ProjectionError,
+    raw_one_hot_hamming,
+)
 
 
 class Procedure(str, Enum):
@@ -45,6 +50,21 @@ class TransitionAudit:
     raw_one_hot_hamming: int
 
 
+@dataclass(frozen=True)
+class DualBlockSpec:
+    name: str
+    released_blocks: tuple[str, str]
+    hamming_limit: int
+
+
+@dataclass(frozen=True)
+class DualBlockTransitionAudit:
+    name: str
+    released_blocks: tuple[str, str]
+    changed_carriers_by_block: Mapping[str, int]
+    raw_one_hot_hamming: int
+
+
 def _same_domain(before: Mapping[Hashable, int], after: Mapping[Hashable, int], block_name: str) -> None:
     if set(before) != set(after):
         missing = sorted((str(value) for value in set(before) - set(after)))[:5]
@@ -71,6 +91,70 @@ def _validate_f2_relocate_keeps_source_nonempty(
         raise ProjectionError("F2 N1 relocate would leave its source slot empty")
 
 
+def _validate_f1_station_consistency(projection: CoreProjection) -> None:
+    station_by_slot: dict[int, int] = {}
+    for (slot_id, _stack_id), station_id in projection.s_visit.items():
+        station = int(station_id)
+        if station == INACTIVE_LABEL:
+            continue
+        slot = int(slot_id)
+        previous = station_by_slot.setdefault(slot, station)
+        if previous != station:
+            raise ProjectionError(
+                f"F1 s_visit assigns slot {slot} to multiple stations"
+            )
+
+
+def validate_dual_block_transition(
+    before: CoreProjection,
+    after: CoreProjection,
+    spec: DualBlockSpec,
+) -> DualBlockTransitionAudit:
+    """Validate diagnostic dual-block neighborhood semantics."""
+
+    released_blocks = tuple(str(block) for block in spec.released_blocks)
+    if len(released_blocks) not in (2, 3) or len(set(released_blocks)) != len(released_blocks):
+        raise ProjectionError(
+            "diagnostic transition requires two or three distinct released blocks"
+        )
+    known_blocks = {"x_group", "s_visit", "r_assign"}
+    unknown = [block for block in released_blocks if block not in known_blocks]
+    if unknown:
+        raise ProjectionError(f"unknown released blocks: {unknown}")
+
+    changed_by_block: dict[str, int] = {}
+    total_hamming = 0
+    for block_name in ("x_group", "s_visit", "r_assign"):
+        old = before.block(block_name)
+        new = after.block(block_name)
+        _same_domain(old, new, block_name)
+        if block_name not in released_blocks:
+            if dict(old) != dict(new):
+                raise ProjectionError(
+                    f"{block_name} changed outside dual-block release {released_blocks}"
+                )
+            continue
+        changed = sum(int(old[key]) != int(new[key]) for key in old)
+        hamming = raw_one_hot_hamming(old, new)
+        changed_by_block[block_name] = int(changed)
+        total_hamming += int(hamming)
+
+    if "s_visit" in released_blocks:
+        _validate_f1_station_consistency(after)
+    limit = max(0, int(spec.hamming_limit))
+    if total_hamming <= 0 or total_hamming > limit:
+        raise ProjectionError(
+            f"combined raw one-hot Hamming {total_hamming} exceeds limit {limit}"
+        )
+
+    return DualBlockTransitionAudit(
+        name=str(spec.name),
+        released_blocks=released_blocks,
+        changed_carriers_by_block=changed_by_block,
+        raw_one_hot_hamming=int(total_hamming),
+    )
+
+
 def validate_transition(
     before: CoreProjection,
     after: CoreProjection,
@@ -87,6 +171,8 @@ def validate_transition(
     old = before.block(released_block)
     new = after.block(released_block)
     _same_domain(old, new, released_block)
+    if procedure is Procedure.F1:
+        _validate_f1_station_consistency(after)
     changed = [key for key in old if int(old[key]) != int(new[key])]
     hamming = raw_one_hot_hamming(old, new)
 

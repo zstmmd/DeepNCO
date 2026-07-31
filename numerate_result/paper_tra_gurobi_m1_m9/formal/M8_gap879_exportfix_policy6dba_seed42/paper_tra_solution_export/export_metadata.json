@@ -1,0 +1,20 @@
+{
+  "case": "M8",
+  "export_complete": true,
+  "file_sha256": {
+    "best_solution_audit.json": "f15f7c2da161c3deedd215f82909341c0b48f96e3cb4891344509670b4346f7d",
+    "best_solution_audit.txt": "1dbfc490adbb03b7d7b96050ed4b5fe21227124a5472ff1353d12c5a471809aa",
+    "best_solution_full_dump.txt": "b9884e703e5cb82bba111494663fb840c1f8fe7136b367ae0223084075fdacd7",
+    "best_solution_objectives.json": "dc57390b430c65b7e9fb1ac9dd4e74e5644035512575de7345a8e5ffde1d69f2",
+    "best_solution_objectives.txt": "27e87dd6c9af7128410024cbd47903c7b76c5f144d42d8196da9f510fa055cb0",
+    "tra_makespan_verification.json": "8de2874e41672195ad55771ce37e8c8656ec69ad2ab5b8b0a3ec191ffee84877",
+    "tra_makespan_verification.txt": "a4e946bc13c93cb98bf4f58bb3353eec6093acd14c2ca71397e6953636448c54",
+    "xyzu_variable_values.json": "a175132d0f29d071b8ab61373c88953e291b9a1454bece01aafb5982b0eb3e60"
+  },
+  "manifest_sha256": "b4364bb34e278d6ba4e233e8160b940dfd969fafba2401b24e82d2b5000066b4",
+  "run_id": "m8-gap879-exportfix-policy6dba-seed42",
+  "schema_version": 1,
+  "snapshot_sha256": "d5f45d60ca7a9d8c2b976c757dd984218180c5253350debb0f3669121cd0bc47",
+  "verified_cmax": 1411.0,
+  "verifier_error_codes": []
+}

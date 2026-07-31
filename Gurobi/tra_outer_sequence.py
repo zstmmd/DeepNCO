@@ -8,7 +8,12 @@ from gurobipy import GRB
 
 from Gurobi.tra_audit import SearchAuditTrail
 from Gurobi.tra_budget_policy import OuterBudgetPolicy
-from Gurobi.tra_outer import OuterDisposition, OuterSolveResult, objective_tolerance
+from Gurobi.tra_outer import (
+    OuterDisposition,
+    OuterSolveResult,
+    has_unresolved_improvement_potential,
+    objective_tolerance,
+)
 from Gurobi.tra_scheduler import ProcedureStep, RuntimeLedger
 from Gurobi.tra_search_state import AcceptanceOutcome, SearchState
 from Gurobi.tra_templates import PaperTRATemplates
@@ -80,6 +85,7 @@ class ImmediateOuterSequence:
             submitted_shell_sha256=candidate.shell.sha256,
             reserve_retry=False,
             requested_time_limit_sec=time_limit_sec,
+            budget_mode="regular",
             stage="outer_continuation" if resume else "outer",
         )
         return result
@@ -277,7 +283,17 @@ class ImmediateOuterSequence:
                     )
 
         restart_queued = False
-        if not continuation_attempted:
+        retry_eligible = result.disposition is OuterDisposition.UNRESOLVED
+        if (
+            result.disposition is OuterDisposition.ACCEPTED
+            and result.accepted is not None
+        ):
+            retry_eligible = has_unresolved_improvement_potential(
+                solver_status_code=result.solver_status_code,
+                objective_bound=result.objective_bound,
+                accepted_objective=result.accepted.snapshot.solver_objective,
+            )
+        if retry_eligible:
             restart_queued = self._queue_restart(
                 candidate=candidate,
                 step=step,

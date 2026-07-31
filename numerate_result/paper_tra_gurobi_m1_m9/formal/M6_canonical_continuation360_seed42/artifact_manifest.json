@@ -1,0 +1,59 @@
+{
+  "complete": true,
+  "files": {
+    "feasible_solution_events.jsonl": {
+      "bytes": 659936,
+      "sha256": "8fa809262e1c099104dc6c372b86cb054240be28f8c6f635b9f250069f3cb3da"
+    },
+    "master_domain_v3.json": {
+      "bytes": 19471935,
+      "sha256": "4782b6bd6cfbe4444dd999711a935f4f806285aee5e9f9579b263050a12db710"
+    },
+    "paper_tra_solution_export/best_solution_audit.json": {
+      "bytes": 5590,
+      "sha256": "f7a35d5d3079ec95420acd542642c7f2a33f395276c7cdb6dfd217e376a2be3c"
+    },
+    "paper_tra_solution_export/best_solution_audit.txt": {
+      "bytes": 139,
+      "sha256": "b7a1dbf32049cd6c756b52a75a83fb7e824c16c8c98d1bbfb04b905fc3cc7add"
+    },
+    "paper_tra_solution_export/best_solution_full_dump.txt": {
+      "bytes": 20884,
+      "sha256": "33bce772b4b6a7c0156ec9e9f440ffc65d1903b6ceeea1291328dce9cb340260"
+    },
+    "paper_tra_solution_export/best_solution_objectives.json": {
+      "bytes": 536,
+      "sha256": "778de01022570ee4e2425bce923649446911c6cdf3f46da1d27b51eb0f83288e"
+    },
+    "paper_tra_solution_export/best_solution_objectives.txt": {
+      "bytes": 285,
+      "sha256": "8facb27d65bd7a7d0a20eaeb5769e6b2aee681c3f9f5c54991d0cc943573d9b1"
+    },
+    "paper_tra_solution_export/export_metadata.json": {
+      "bytes": 1220,
+      "sha256": "fdceffe2ccee6f8c0b69aab3d0c6c999f695aa2e06a4d1aee6fa7d87351c5206"
+    },
+    "paper_tra_solution_export/tra_makespan_verification.json": {
+      "bytes": 10112,
+      "sha256": "e8a11030fe4311d56b07e18274626a224448ee1bacab70e865aa1d674feca3bd"
+    },
+    "paper_tra_solution_export/tra_makespan_verification.txt": {
+      "bytes": 155,
+      "sha256": "e566acd58b32d438056654dd3c98d20f0cf9f7d49aab803d783fbe5526ee6529"
+    },
+    "paper_tra_solution_export/xyzu_variable_values.json": {
+      "bytes": 2515148,
+      "sha256": "a8f16094f217e7f3e124cc5e25219f45d3556175ddaf0bfbcb82ee8fc36cd719"
+    },
+    "search_audit_events.jsonl": {
+      "bytes": 28758,
+      "sha256": "db2656827e309b79e0e8e2e81de34e3479d80515f59de6ec6d53c9ec945621c1"
+    },
+    "tra_gurobi_summary.json": {
+      "bytes": 2979,
+      "sha256": "dfd139a038da009804896a5ecd9af231d2931e38625af1a125f7d05cc0259846"
+    }
+  },
+  "schema_version": 1,
+  "solver_case_root": "/Users/bytedance/Documents/trae_projects/deepnco-paper-tra-m1-m9-acceptance/numerate_result/paper_tra_gurobi_m1_m9/formal/M6_canonical_continuation360_seed42"
+}

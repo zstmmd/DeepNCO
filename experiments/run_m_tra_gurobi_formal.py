@@ -17,6 +17,7 @@ from Gurobi.tra_engine import PaperTRAEngine
 from Gurobi.tra_events import EventLedger, SearchAuditLedger
 from Gurobi.tra_scheduler import RuntimeLedger
 from Gurobi.tra_templates import compile_paper_tra_templates, global_config_from_policy
+from Gurobi.tra_artifacts import write_verified_solution_export
 from experiments.m_tra_policy import (
     PolicyError,
     assert_target_blind_payload,
@@ -79,8 +80,25 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--run-id", default="")
     parser.add_argument("--max-procedures", type=int, default=50)
+    parser.add_argument("--master-domain-manifest", default="")
     parser.add_argument("--gurobi-output", action="store_true")
     return parser
+
+
+def build_formal_engine(
+    templates: Any,
+    runtime: RuntimeLedger,
+    *,
+    max_procedures: int,
+) -> PaperTRAEngine:
+    return PaperTRAEngine(
+        templates,
+        runtime,
+        max_procedures=int(max_procedures),
+        enable_f1_live_seed_starts=False,
+        enable_f1_plateau_escalation=False,
+        enable_station_balance_repair=True,
+    )
 
 
 def main() -> None:
@@ -92,12 +110,15 @@ def main() -> None:
     runtime_config_path = Path(args.runtime_config)
     policy_path = Path(args.domain_policy)
     output_dir = Path(args.output_dir)
+    master_domain_path = Path(args.master_domain_manifest) if str(args.master_domain_manifest or "").strip() else None
     if not runtime_config_path.is_absolute():
         runtime_config_path = ROOT_DIR / runtime_config_path
     if not policy_path.is_absolute():
         policy_path = ROOT_DIR / policy_path
     if not output_dir.is_absolute():
         output_dir = ROOT_DIR / output_dir
+    if master_domain_path is not None and not master_domain_path.is_absolute():
+        master_domain_path = ROOT_DIR / master_domain_path
     output_dir.mkdir(parents=True, exist_ok=True)
 
     _install_runtime_configs(runtime_config_path)
@@ -109,6 +130,9 @@ def main() -> None:
         gurobi_output=bool(args.gurobi_output),
         gurobi_seed=int(args.seed),
     )
+    if master_domain_path is not None:
+        cfg.master_domain_manifest = _read_json(master_domain_path)
+        cfg.master_domain_strict = True
 
     # Canonical warm generation, both model compiles, and manifest verification are pre-timer.
     templates = compile_paper_tra_templates(
@@ -129,8 +153,9 @@ def main() -> None:
         reserve_quota_sec=float(budget.reserve_quota_sec),
         safety_buffer_sec=1.5,
         minimum_solver_slice_sec=2.0,
+        objective_gap_stop=float(budget.objective_gap_stop),
     )
-    engine = PaperTRAEngine(
+    engine = build_formal_engine(
         templates,
         runtime,
         max_procedures=int(args.max_procedures),
@@ -145,6 +170,34 @@ def main() -> None:
             run_id=str(args.run_id or "") or None,
         )
 
+    export_error = ""
+    if engine.best_verified_snapshot is None:
+        solution_export = {
+            "status": "NO_VERIFIED_SNAPSHOT",
+            "export_complete": False,
+        }
+    else:
+        try:
+            solution_export = write_verified_solution_export(
+                output_dir / "paper_tra_solution_export",
+                verified=engine.best_verified_snapshot,
+                case_id=case_id,
+                seed=int(args.seed),
+                run_id=result.run_id,
+                manifest_sha256=result.manifest_sha256,
+            )
+            solution_export = {
+                "status": "EXPORTED",
+                **solution_export,
+            }
+        except Exception as exc:
+            export_error = str(exc)
+            solution_export = {
+                "status": "EXPORT_FAILED",
+                "export_complete": False,
+                "error": export_error,
+            }
+
     summary = {
         "schema_version": 1,
         "algorithm": "paper-tra-gurobi",
@@ -155,6 +208,7 @@ def main() -> None:
         "manifest_path": str(manifest_path),
         "event_ledger_path": str(event_path),
         "search_audit_ledger_path": str(audit_path),
+        "solution_export": solution_export,
         "result": asdict(result),
     }
     assert_target_blind_payload(
@@ -170,6 +224,8 @@ def main() -> None:
         json.dump(_json_safe(summary), stream, ensure_ascii=True, indent=2, sort_keys=True)
         stream.write("\n")
     print(json.dumps(_json_safe(summary), ensure_ascii=True, sort_keys=True))
+    if export_error:
+        raise RuntimeError(f"verified solution export failed: {export_error}")
 
 
 if __name__ == "__main__":

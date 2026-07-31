@@ -1,0 +1,20 @@
+{
+  "case": "M5",
+  "export_complete": true,
+  "file_sha256": {
+    "best_solution_audit.json": "b027c367d4275f895fa2d5ce9eabd00ad6cf8e089cce38ba02cad00ba9ffd0c6",
+    "best_solution_audit.txt": "8fdf73dbe22c885d7f3a72e16c6e0d72f19b709c156556036f9c52c70f5e1d23",
+    "best_solution_full_dump.txt": "1590a6a049dd821e665576d3e16f91212c9f298ecf7193f0c1cc26385c29d3d6",
+    "best_solution_objectives.json": "ca115bb4cda2ee28ced725411a0c1f0ee42fe13efbfd05fee9aea9ccf642244c",
+    "best_solution_objectives.txt": "28678be2b022a67d95a8aa7acfef376506902a89bdf9ba0b98f26e53dc6bd6be",
+    "tra_makespan_verification.json": "c526e4fa4cd5c3a2e8fcb228115959cf9ffce392535f2e988bc0c679334661c4",
+    "tra_makespan_verification.txt": "0c4361053fa5973ad8757a04ecc3b57a151d3f813cd94a0782526db9d9aded2b",
+    "xyzu_variable_values.json": "3afa1445b836933592f4cfdff5660803b36a6bb017e5b7eb6580a87bbfcd2e7f"
+  },
+  "manifest_sha256": "77883a8a79c903f1f8a25bbb1a66d17db0b000fb563fd92abf2afd4d290f49cf",
+  "run_id": "m5-formal-gate-exact863-pair-start-seed42",
+  "schema_version": 1,
+  "snapshot_sha256": "697085b2ade4d9b1f8a1645769655984f7175f06ab2619ac116550292f445eba",
+  "verified_cmax": 863.0,
+  "verifier_error_codes": []
+}

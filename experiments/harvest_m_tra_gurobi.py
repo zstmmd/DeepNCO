@@ -6,6 +6,7 @@ import math
 from pathlib import Path
 
 from Gurobi.tra_events import read_event_rows
+from experiments.m_tra_contract import summarize_verified_events
 from experiments.m_tra_policy import runtime_budget_for_case
 
 
@@ -19,25 +20,14 @@ def harvest(
     baseline_runtime_sec: float | None = None,
     runtime_limit_sec: float | None = None,
 ) -> dict:
-    matching_times = []
-    verified_values = []
-    for row in read_event_rows(event_path):
-        if str(row.get("case", "")) != case_id:
-            continue
-        if run_id and str(row.get("run_id", "")) != run_id:
-            continue
-        if not bool(row.get("internal_feasible", False)):
-            continue
-        value = float(row.get("verified_cmax", float("nan")))
-        timestamp = float(
-            row.get("solver_incumbent_timestamp_sec", float("nan"))
-        )
-        if math.isfinite(value):
-            verified_values.append(value)
-        if math.isfinite(value) and math.isfinite(timestamp) and abs(value - float(target_cmax)) <= float(tolerance):
-            matching_times.append(timestamp)
-    first_time = min(matching_times) if matching_times else float("nan")
-    best_cmax = min(verified_values) if verified_values else float("nan")
+    event_summary = summarize_verified_events(
+        read_event_rows(event_path),
+        case_id=case_id,
+        target_cmax=float(target_cmax),
+        run_id=run_id,
+        tolerance=float(tolerance),
+    )
+    first_time = float(event_summary["first_verified_target_time_sec"])
     budget = runtime_budget_for_case(case_id)
     baseline_runtime = (
         float(budget.baseline_runtime_sec)
@@ -50,12 +40,8 @@ def harvest(
         else float(runtime_limit_sec)
     )
     return {
-        "case": case_id,
-        "run_id": run_id,
-        "target_cmax": float(target_cmax),
-        "best_verified_cmax": best_cmax,
-        "cmax_equal": math.isfinite(best_cmax) and abs(best_cmax - float(target_cmax)) <= float(tolerance),
-        "lower_than_target": math.isfinite(best_cmax) and best_cmax < float(target_cmax) - float(tolerance),
+        **event_summary,
+        "timestamp_policy": "verifier_complete_wall_timestamp_sec",
         "first_verified_target_time_sec": first_time,
         "baseline_runtime_sec": baseline_runtime,
         "runtime_limit_sec": runtime_limit,

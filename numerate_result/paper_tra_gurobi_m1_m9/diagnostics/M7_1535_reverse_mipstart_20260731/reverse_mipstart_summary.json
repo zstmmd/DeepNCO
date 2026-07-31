@@ -1,0 +1,22 @@
+{
+  "case": "M7",
+  "cmax_value": 1535.0,
+  "input_snapshot_sha256": "7e0a78b253fa94778eb2a854cf269c0e9fb1ecc8218757b098f93cbe1bf8cfe1",
+  "input_solver_objective": 1535.4859888463059,
+  "input_verified_cmax": 1535.0,
+  "installed_start_count": 54085,
+  "manifest_sha256": "0cc3fe87e80df5610a87dfa76b4b1aafda32556118b40790fcb4f565150b78b0",
+  "mip_gap": 0.007402216627177882,
+  "missing_start_count": 0,
+  "model_runtime_sec": 91.99415898323059,
+  "obj_bound": 1524.12,
+  "obj_val": 1535.4859999999987,
+  "pre_verify_cmax": 1535.0,
+  "pre_verify_errors": [],
+  "pre_verify_internal_feasible": true,
+  "runtime_sec": 92.00332237500697,
+  "sol_count": 1,
+  "source_run": "M7_direct_pair_skip_robot_cont_seed42",
+  "status": "OPTIMAL",
+  "status_code": 2
+}

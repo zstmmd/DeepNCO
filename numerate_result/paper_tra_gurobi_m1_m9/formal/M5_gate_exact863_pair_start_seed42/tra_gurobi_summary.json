@@ -1,0 +1,57 @@
+{
+  "algorithm": "paper-tra-gurobi",
+  "case": "M5",
+  "domain_policy_sha256": "7878eaf90cc5c27da26b5d4a5f5c06551e5f9e7e4200578d2a816916517174cb",
+  "event_ledger_path": "/Users/bytedance/Documents/trae_projects/deepnco-paper-tra-m1-m9-acceptance/numerate_result/paper_tra_gurobi_m1_m9/formal/M5_gate_exact863_pair_start_seed42/feasible_solution_events.jsonl",
+  "manifest_path": "/Users/bytedance/Documents/trae_projects/deepnco-paper-tra-m1-m9-acceptance/numerate_result/paper_tra_gurobi_m1_m9/formal/M5_gate_exact863_pair_start_seed42/master_domain_v3.json",
+  "result": {
+    "best_objective": 863.3499999999995,
+    "best_verified_cmax": 863.0,
+    "case": "M5",
+    "cycle_count": 0,
+    "deferred_remaining": 0,
+    "error": "",
+    "event_count": 143,
+    "inner_runtime_sec": 123.34862316690851,
+    "manifest_sha256": "77883a8a79c903f1f8a25bbb1a66d17db0b000fb563fd92abf2afd4d290f49cf",
+    "outer_runtime_sec": 399.87012616638094,
+    "procedure_count": 1,
+    "reserve_runtime_sec": 0.0,
+    "run_id": "m5-formal-gate-exact863-pair-start-seed42",
+    "runtime_sec": 528.2712331661023,
+    "status": "FEASIBLE",
+    "unresolved_remaining": 0
+  },
+  "runtime_policy": {
+    "baseline_runtime_sec": 663.67,
+    "case_id": "M5",
+    "hard_limit_sec": 530.936,
+    "inner_quota_sec": 159.2808,
+    "outer_quota_sec": 292.01480000000004,
+    "reserve_quota_sec": 79.6404
+  },
+  "schema_version": 1,
+  "search_audit_ledger_path": "/Users/bytedance/Documents/trae_projects/deepnco-paper-tra-m1-m9-acceptance/numerate_result/paper_tra_gurobi_m1_m9/formal/M5_gate_exact863_pair_start_seed42/search_audit_events.jsonl",
+  "seed": 42,
+  "solution_export": {
+    "case": "M5",
+    "export_complete": true,
+    "file_sha256": {
+      "best_solution_audit.json": "b027c367d4275f895fa2d5ce9eabd00ad6cf8e089cce38ba02cad00ba9ffd0c6",
+      "best_solution_audit.txt": "8fdf73dbe22c885d7f3a72e16c6e0d72f19b709c156556036f9c52c70f5e1d23",
+      "best_solution_full_dump.txt": "1590a6a049dd821e665576d3e16f91212c9f298ecf7193f0c1cc26385c29d3d6",
+      "best_solution_objectives.json": "ca115bb4cda2ee28ced725411a0c1f0ee42fe13efbfd05fee9aea9ccf642244c",
+      "best_solution_objectives.txt": "28678be2b022a67d95a8aa7acfef376506902a89bdf9ba0b98f26e53dc6bd6be",
+      "tra_makespan_verification.json": "c526e4fa4cd5c3a2e8fcb228115959cf9ffce392535f2e988bc0c679334661c4",
+      "tra_makespan_verification.txt": "0c4361053fa5973ad8757a04ecc3b57a151d3f813cd94a0782526db9d9aded2b",
+      "xyzu_variable_values.json": "3afa1445b836933592f4cfdff5660803b36a6bb017e5b7eb6580a87bbfcd2e7f"
+    },
+    "manifest_sha256": "77883a8a79c903f1f8a25bbb1a66d17db0b000fb563fd92abf2afd4d290f49cf",
+    "run_id": "m5-formal-gate-exact863-pair-start-seed42",
+    "schema_version": 1,
+    "snapshot_sha256": "697085b2ade4d9b1f8a1645769655984f7175f06ab2619ac116550292f445eba",
+    "status": "EXPORTED",
+    "verified_cmax": 863.0,
+    "verifier_error_codes": []
+  }
+}

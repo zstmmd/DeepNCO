@@ -1,0 +1,57 @@
+{
+  "algorithm": "paper-tra-gurobi",
+  "case": "M2",
+  "domain_policy_sha256": "4fc19a8ad2f093762ab111354c51403007a4bb95be8219dccc76931438d94aea",
+  "event_ledger_path": "/Users/bytedance/Documents/trae_projects/deepnco-paper-tra-m1-m9-acceptance/numerate_result/paper_tra_gurobi_m1_m9/formal/M2_canonical_robot_repair_seed42/feasible_solution_events.jsonl",
+  "manifest_path": "/Users/bytedance/Documents/trae_projects/deepnco-paper-tra-m1-m9-acceptance/numerate_result/paper_tra_gurobi_m1_m9/formal/M2_canonical_robot_repair_seed42/master_domain_v3.json",
+  "result": {
+    "best_objective": 805.2599999999999,
+    "best_verified_cmax": 805.0,
+    "case": "M2",
+    "cycle_count": 4,
+    "deferred_remaining": 1,
+    "error": "",
+    "event_count": 108,
+    "inner_runtime_sec": 47.71661554405,
+    "manifest_sha256": "877ae1f1f368f6c54eaeb5dae1acd4f9b4eb6aee7be8e371e2044ba88c6e553e",
+    "outer_runtime_sec": 243.77381279389374,
+    "procedure_count": 10,
+    "reserve_runtime_sec": 0.0,
+    "run_id": "m2-formal-canonical-robot-repair-seed42",
+    "runtime_sec": 304.11983991705347,
+    "status": "FEASIBLE",
+    "unresolved_remaining": 0
+  },
+  "runtime_policy": {
+    "baseline_runtime_sec": 384.04,
+    "case_id": "M2",
+    "hard_limit_sec": 307.232,
+    "inner_quota_sec": 92.1696,
+    "outer_quota_sec": 168.97760000000002,
+    "reserve_quota_sec": 46.0848
+  },
+  "schema_version": 1,
+  "search_audit_ledger_path": "/Users/bytedance/Documents/trae_projects/deepnco-paper-tra-m1-m9-acceptance/numerate_result/paper_tra_gurobi_m1_m9/formal/M2_canonical_robot_repair_seed42/search_audit_events.jsonl",
+  "seed": 42,
+  "solution_export": {
+    "case": "M2",
+    "export_complete": true,
+    "file_sha256": {
+      "best_solution_audit.json": "ea5a4d353c4b58265c29d00d02cca7feb7d00a40a346302bba71163355ff68db",
+      "best_solution_audit.txt": "1873fcd2cb0427b827f8510feceb65d9da8303897e3c5eb7478a4dc7000811cb",
+      "best_solution_full_dump.txt": "a180275118bf6444f8cd26e68216962da3661b45386200045d22ac886e586aff",
+      "best_solution_objectives.json": "71d099fe0433a979ecd088255bed6013b725bd78362a871df8d308a29780013b",
+      "best_solution_objectives.txt": "01b522b276fe66b77e1b87372cfa26e1739529ac9cfcca3d5ed80267c6fbfade",
+      "tra_makespan_verification.json": "57a2258537f3ae6c0e3ff0f75211446afb31a5f964bae2655291427775730a82",
+      "tra_makespan_verification.txt": "0f4f5283ed3ab8d025c9be98075cc2af2495f293eb9b4f74cf6b8ddd6123dd53",
+      "xyzu_variable_values.json": "127e0bee8aafc79418377d0835d69f41840b9bc5f662a78facff0e512f3e82a3"
+    },
+    "manifest_sha256": "877ae1f1f368f6c54eaeb5dae1acd4f9b4eb6aee7be8e371e2044ba88c6e553e",
+    "run_id": "m2-formal-canonical-robot-repair-seed42",
+    "schema_version": 1,
+    "snapshot_sha256": "0f41e5035ef4affe6417d7aec921f873ab78d00d253ff5cdaa09b77b5fe2f620",
+    "status": "EXPORTED",
+    "verified_cmax": 805.0,
+    "verifier_error_codes": []
+  }
+}

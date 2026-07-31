@@ -1,0 +1,16 @@
+{
+  "case": "M1",
+  "global_makespan": 581.999999999076,
+  "manifest_sha256": "8edf3e951a99bae1746452e596710c207c87049a29c58e75cab66b33377d0b53",
+  "robot_count": 3,
+  "run_id": "m1-formal-canonical-robot-repair-seed42",
+  "schema_version": 1,
+  "seed": 42,
+  "snapshot_sha256": "684bc874e66d196fd97eeb605beeeb6b9d0059c87f9fd0e9a3733fde3b62af17",
+  "solver_cmax": 581.9999980015494,
+  "solver_objective": 582.2219980015491,
+  "station_count": 2,
+  "subtask_count": 12,
+  "task_count": 12,
+  "verified_cmax": 581.999999999076
+}

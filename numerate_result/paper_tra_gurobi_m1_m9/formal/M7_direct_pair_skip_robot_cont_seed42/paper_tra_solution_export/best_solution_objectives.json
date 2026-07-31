@@ -1,0 +1,16 @@
+{
+  "case": "M7",
+  "global_makespan": 1535.0,
+  "manifest_sha256": "0cc3fe87e80df5610a87dfa76b4b1aafda32556118b40790fcb4f565150b78b0",
+  "robot_count": 5,
+  "run_id": "m7-formal-direct-pair-skip-robot-cont-seed42",
+  "schema_version": 1,
+  "seed": 42,
+  "snapshot_sha256": "7e0a78b253fa94778eb2a854cf269c0e9fb1ecc8218757b098f93cbe1bf8cfe1",
+  "solver_cmax": 1534.9999888463071,
+  "solver_objective": 1535.4859888463059,
+  "station_count": 3,
+  "subtask_count": 24,
+  "task_count": 26,
+  "verified_cmax": 1535.0
+}

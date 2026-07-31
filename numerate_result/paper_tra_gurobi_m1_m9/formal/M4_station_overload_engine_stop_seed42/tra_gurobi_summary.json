@@ -1,0 +1,57 @@
+{
+  "algorithm": "paper-tra-gurobi",
+  "case": "M4",
+  "domain_policy_sha256": "cad681f086a4b3b79c08ff26235ddfb0b817114442645454da29ee69b1b370c3",
+  "event_ledger_path": "/Users/bytedance/Documents/trae_projects/deepnco-paper-tra-m1-m9-acceptance/numerate_result/paper_tra_gurobi_m1_m9/formal/M4_station_overload_engine_stop_seed42/feasible_solution_events.jsonl",
+  "manifest_path": "/Users/bytedance/Documents/trae_projects/deepnco-paper-tra-m1-m9-acceptance/numerate_result/paper_tra_gurobi_m1_m9/formal/M4_station_overload_engine_stop_seed42/master_domain_v3.json",
+  "result": {
+    "best_objective": 1098.3349998900533,
+    "best_verified_cmax": 1097.9999999999973,
+    "case": "M4",
+    "cycle_count": 0,
+    "deferred_remaining": 0,
+    "error": "",
+    "event_count": 80,
+    "inner_runtime_sec": 49.49422645801678,
+    "manifest_sha256": "7a31e750a9f9f5e19be4e10482b7b61f68a211e8f2d83899fe9e1706ae529063",
+    "outer_runtime_sec": 303.7689690020634,
+    "procedure_count": 0,
+    "reserve_runtime_sec": 0.0,
+    "run_id": "m4-formal-station-overload-engine-stop-seed42",
+    "runtime_sec": 359.10892995796166,
+    "status": "FEASIBLE",
+    "unresolved_remaining": 0
+  },
+  "runtime_policy": {
+    "baseline_runtime_sec": 567.06,
+    "case_id": "M4",
+    "hard_limit_sec": 453.64799999999997,
+    "inner_quota_sec": 136.09439999999998,
+    "outer_quota_sec": 249.5064,
+    "reserve_quota_sec": 68.04719999999999
+  },
+  "schema_version": 1,
+  "search_audit_ledger_path": "/Users/bytedance/Documents/trae_projects/deepnco-paper-tra-m1-m9-acceptance/numerate_result/paper_tra_gurobi_m1_m9/formal/M4_station_overload_engine_stop_seed42/search_audit_events.jsonl",
+  "seed": 42,
+  "solution_export": {
+    "case": "M4",
+    "export_complete": true,
+    "file_sha256": {
+      "best_solution_audit.json": "fe8cff7abcc244c8ff9417c25423a5b50848d5decde082dd73239f7e998a04b5",
+      "best_solution_audit.txt": "b6d94055077a35e66abe7a244d6ca346f242d7c6e9021888cca7fec932b97c9f",
+      "best_solution_full_dump.txt": "971091c486dbd66fb6284cb87db1a5aee1807437aec03d74df8ac10de19fffab",
+      "best_solution_objectives.json": "c9ca5cbc0ea6050f8c0509f757c7094a315746cac4acb432e1b1d105d39bd199",
+      "best_solution_objectives.txt": "5f8ebf80f7dc3cbff5bf5dd3d5c71e5222905874bbfc1d1a429cffab95ff6e57",
+      "tra_makespan_verification.json": "9fb965e70e07a292e2f2f8c3d08ee61fd8bee7e4a947da0bf3f1b5c0a6241494",
+      "tra_makespan_verification.txt": "40784a64b3798d601dc13cfa4d8a0197f9fbe03fa817e6bc083036f78be29296",
+      "xyzu_variable_values.json": "bd519919b2f2338253704ebdbe86850c67c7668499b419fc54bfcd55293a066f"
+    },
+    "manifest_sha256": "7a31e750a9f9f5e19be4e10482b7b61f68a211e8f2d83899fe9e1706ae529063",
+    "run_id": "m4-formal-station-overload-engine-stop-seed42",
+    "schema_version": 1,
+    "snapshot_sha256": "9cb2fbc35603862c2660afae57eebbbbb4bc82b436e016545031bba0a2878af0",
+    "status": "EXPORTED",
+    "verified_cmax": 1097.9999999999973,
+    "verifier_error_codes": []
+  }
+}

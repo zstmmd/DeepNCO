@@ -33,6 +33,13 @@ class PersistentCompiledTemplate:
         self.payload = self.solver._remap_vars_payload_for_model(compiled.vars_payload, self.model)
         self.registry = ProjectionRegistry.from_payload(self.payload)
         self._vars_by_name = {str(variable.VarName): variable for variable in self.model.getVars()}
+        source_starts = {
+            str(variable.VarName): self._read_start(variable)
+            for variable in compiled.model.getVars()
+        }
+        for name, variable in self._vars_by_name.items():
+            variable.Start = source_starts.get(name, float(GRB.UNDEFINED))
+        self.model.update()
         self._initial_bounds = {
             name: (float(variable.LB), float(variable.UB))
             for name, variable in self._vars_by_name.items()

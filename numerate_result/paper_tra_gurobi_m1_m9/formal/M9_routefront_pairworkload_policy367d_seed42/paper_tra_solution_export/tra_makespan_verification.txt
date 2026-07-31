@@ -1,0 +1,7 @@
+[Paper TRA-Gurobi Makespan Verification]
+status=PASS
+task_count=58
+max_task_end=2109.000000
+global_makespan=2109.000000
+coverage_ok=True
+unmet_sku_total=0

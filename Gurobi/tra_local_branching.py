@@ -5,7 +5,7 @@ from typing import Any, Dict, Hashable
 import gurobipy as gp
 
 from Gurobi.tra_model_state import PersistentCompiledTemplate
-from Gurobi.tra_neighborhood import NeighborhoodLevel, Procedure
+from Gurobi.tra_neighborhood import DualBlockSpec, NeighborhoodLevel, Procedure
 from Gurobi.tra_projection import (
     INACTIVE_LABEL,
     ProjectionError,
@@ -96,6 +96,45 @@ def fix_complement_blocks(
         template.add_station_marginal_fixings(plan, prefix=f"TRA_{procedure.value}")
     if released != "r_assign":
         template.fix_binary_families(plan, families=("slot_robot",))
+
+
+def fix_dual_complement_blocks(
+    template: PersistentCompiledTemplate,
+    shell: StructuralShell,
+    spec: DualBlockSpec,
+) -> None:
+    plan = shell.fixing_plan(template.registry)
+    released = {str(block) for block in spec.released_blocks}
+    if "x_group" not in released:
+        template.fix_binary_families(plan, families=("x",))
+    if "s_visit" not in released:
+        template.fix_binary_families(plan, families=("pair_activate",))
+        template.add_station_marginal_fixings(plan, prefix=f"TRA_{spec.name}")
+    if "r_assign" not in released:
+        template.fix_binary_families(plan, families=("slot_robot",))
+
+
+def apply_dual_block_neighborhood(
+    template: PersistentCompiledTemplate,
+    shell: StructuralShell,
+    spec: DualBlockSpec,
+) -> None:
+    """Apply a diagnostic local branch that releases two primary blocks."""
+
+    fix_dual_complement_blocks(template, shell, spec)
+    distances = []
+    for block_name in spec.released_blocks:
+        block = str(block_name)
+        distance = local_hamming_expression(template.registry, shell, block)
+        template.add_constraint(
+            distance >= 2,
+            name=f"TRA_{spec.name}_{block}_HammingLB",
+        )
+        distances.append(distance)
+    template.add_constraint(
+        gp.quicksum(distances) <= max(0, int(spec.hamming_limit)),
+        name=f"TRA_{spec.name}_CombinedHammingUB",
+    )
 
 
 def apply_local_neighborhood(

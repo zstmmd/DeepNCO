@@ -1,0 +1,20 @@
+{
+  "case": "M3",
+  "export_complete": true,
+  "file_sha256": {
+    "best_solution_audit.json": "b314167868b499b127bfb2e3b00b3b2223122f101a7ea3ffcec15098ae565801",
+    "best_solution_audit.txt": "d8b0d9f2c0067e00ba1d5bb01c04abcf7d2daf3bc6b18cfa884c293ab2430265",
+    "best_solution_full_dump.txt": "d90aab7b858db33ca3ecad34eb28f90a09f4a2d29ec293e966e5947c2d397359",
+    "best_solution_objectives.json": "1cd9d5eae5d6e7cac47c2c97af697d9e32036d430d693c657cb8df0f178d7ed1",
+    "best_solution_objectives.txt": "e6d1143ec4a39990f435673f9befd5e23090d3fecec13592c303ab1e5dff652b",
+    "tra_makespan_verification.json": "af2833b4c3f59cd4654291db7633a0962a740c6e0f5ea2244ccb64d17da8d09e",
+    "tra_makespan_verification.txt": "d7fbc82cc61dd87d0020c49c5fe59687e12b345149e520f99bfc738a3877b9f3",
+    "xyzu_variable_values.json": "37fee4335eee4003c4192b5d226293b5fe4def9ac27db066bf584208a195de7d"
+  },
+  "manifest_sha256": "fbebf5b3975500fafa8e4ef8f350e9f76bf0dcd32ba11186fb28a63a921392f4",
+  "run_id": "m3-formal-stack-arrival-repair-seed42",
+  "schema_version": 1,
+  "snapshot_sha256": "dd40e9cb5e728616b49dcfea46e1f71096efa0c506eff90e2ec725f246b4f530",
+  "verified_cmax": 829.9999999999944,
+  "verifier_error_codes": []
+}

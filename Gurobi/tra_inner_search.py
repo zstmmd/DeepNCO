@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 import math
 from typing import Any
 
@@ -96,6 +96,84 @@ def project_inner_start(
         for name, value in values_by_name.items()
         if str(name) not in excluded_names
     }
+
+
+def initial_inner_start_values(
+    procedure: Procedure,
+    *,
+    projected_start: Mapping[str, float],
+    vns_start_values: Sequence[Mapping[str, float]],
+    f1_live_seed_starts: Sequence[Mapping[str, float]],
+) -> dict[str, float]:
+    values = {
+        str(name): float(value)
+        for name, value in projected_start.items()
+    }
+    if Procedure(procedure) is Procedure.F1:
+        if f1_live_seed_starts:
+            values.update(
+                {
+                    str(name): float(value)
+                    for name, value in f1_live_seed_starts[0].items()
+                }
+            )
+        return values
+    if vns_start_values:
+        values.update(
+            {
+                str(name): float(value)
+                for name, value in vns_start_values[0].items()
+            }
+        )
+    return values
+
+
+def phase_two_inner_start_values(
+    procedure: Procedure,
+    *,
+    projected_start: Mapping[str, float],
+    vns_start_values: Sequence[Mapping[str, float]],
+    f1_live_seed_starts: Sequence[Mapping[str, float]],
+    phase_two_attempt: int,
+) -> dict[str, float]:
+    """Return the deterministic start for one phase-two round."""
+
+    values = {
+        str(name): float(value)
+        for name, value in projected_start.items()
+    }
+    seed_index = max(0, int(phase_two_attempt))
+    starts = (
+        f1_live_seed_starts
+        if Procedure(procedure) is Procedure.F1
+        else vns_start_values
+    )
+    if seed_index < len(starts):
+        values.update(
+            {
+                str(name): float(value)
+                for name, value in starts[seed_index].items()
+            }
+        )
+    return values
+
+
+def phase_two_start_seed_sha256(
+    procedure: Procedure,
+    *,
+    vns_seed_sha256: Sequence[str],
+    f1_live_seed_sha256: Sequence[str],
+    phase_two_attempt: int,
+) -> str:
+    """Return the source-start hash associated with one phase-two round."""
+
+    seed_index = max(0, int(phase_two_attempt))
+    hashes = (
+        f1_live_seed_sha256
+        if Procedure(procedure) is Procedure.F1 and f1_live_seed_sha256
+        else vns_seed_sha256
+    )
+    return str(hashes[seed_index]) if seed_index < len(hashes) else ""
 
 
 def configure_inner_search(model: Any) -> None:
@@ -196,10 +274,20 @@ def phase_two_attempt_limit(
     neighborhood: NeighborhoodLevel,
     *,
     vns_seed_count: int,
+    f1_live_seed_count: int = 0,
     recourse_active: bool,
 ) -> int:
     """Return how many independent natural phase-two solves to permit."""
 
+    if (
+        Procedure(procedure) is Procedure.F1
+        and NeighborhoodLevel(neighborhood) is NeighborhoodLevel.N2
+        and int(f1_live_seed_count) > 1
+    ):
+        return min(
+            PHASE_TWO_MAX_SEED_ATTEMPTS,
+            int(f1_live_seed_count) - 1,
+        )
     if (
         not bool(recourse_active)
         or Procedure(procedure) is not Procedure.F3

@@ -1,0 +1,10 @@
+seed=42
+snapshot_sha256=0f41e5035ef4affe6417d7aec921f873ab78d00d253ff5cdaa09b77b5fe2f620
+solver_objective=805.2599999999999
+solver_cmax=805.0
+verified_cmax=805.0
+global_makespan=805.0
+subtask_count=18
+task_count=20
+station_count=2
+robot_count=3

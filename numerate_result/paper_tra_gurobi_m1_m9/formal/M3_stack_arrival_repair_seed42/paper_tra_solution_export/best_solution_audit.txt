@@ -1,0 +1,5 @@
+[Paper TRA-Gurobi Best Solution Audit]
+coverage_ok=True
+makespan_consistent=True
+has_unreasonable_solution=False
+verified_cmax=830.000000

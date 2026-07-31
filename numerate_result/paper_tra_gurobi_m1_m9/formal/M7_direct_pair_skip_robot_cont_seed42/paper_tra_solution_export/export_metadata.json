@@ -1,0 +1,20 @@
+{
+  "case": "M7",
+  "export_complete": true,
+  "file_sha256": {
+    "best_solution_audit.json": "3c317bc53fe8af272d6ddecb362c4cf4effba8ced8fe7365740e76a1d8ea5ccd",
+    "best_solution_audit.txt": "e7e1f0c0d1361da103fa3402f8378522d98a14acb2749fa3cf13fd84f6c45b31",
+    "best_solution_full_dump.txt": "9f7fd1ae10ed41f00be6926bb017dba18e204fd4c87e828f44b9d7cd172a8f88",
+    "best_solution_objectives.json": "69a037231d5c8d370e31f18fe2fd50ac4dfcfe660d834d0f989d915f92e1119c",
+    "best_solution_objectives.txt": "338141d14987946c2f129a098735dc22b257ba848b62b4b489dc0de2b6a77c18",
+    "tra_makespan_verification.json": "1614c7c7a5371504b35c9ded1870b9a614252ad89fe66ead8ef802efd5f3c5ef",
+    "tra_makespan_verification.txt": "a47e8814e9e9ff9642ae3dee8c651d96429db051eb76fff871d671c0b9ef8db7",
+    "xyzu_variable_values.json": "18c9fb5e3da095f25c6f83d0b9045fb989a012404f263797217a02bf0cd44c93"
+  },
+  "manifest_sha256": "0cc3fe87e80df5610a87dfa76b4b1aafda32556118b40790fcb4f565150b78b0",
+  "run_id": "m7-formal-direct-pair-skip-robot-cont-seed42",
+  "schema_version": 1,
+  "snapshot_sha256": "7e0a78b253fa94778eb2a854cf269c0e9fb1ecc8218757b098f93cbe1bf8cfe1",
+  "verified_cmax": 1535.0,
+  "verifier_error_codes": []
+}

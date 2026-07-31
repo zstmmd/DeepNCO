@@ -52,10 +52,13 @@ def global_config_from_policy(
     cfg.gurobi_best_obj_stop = None
     cfg.gurobi_cutoff = None
     # Wall-clock-limited OR-Tools local search changes protected warm arcs.
-    # Formal TRA keeps the deterministic first solution from the same warm pipeline.
-    cfg.warm_start_sp4_guided_local_search = False
+    # Formal TRA keeps the deterministic first solution unless the archived
+    # policy explicitly records the guided-local-search setting.
+    if "warm_start_sp4_guided_local_search" not in policy_values:
+        cfg.warm_start_sp4_guided_local_search = False
     cfg.master_domain_manifest = None
     cfg.master_domain_strict = False
+    cfg.master_domain_enforce_warm_start_contract = True
     cfg.tra_inner_no_station_wait = False
     for field_name in (
         "fixed_work_units_by_order_slot",
@@ -79,17 +82,29 @@ def compile_paper_tra_templates(
 ) -> PaperTRATemplates:
     """Compile both templates before the formal timer and lock them to one domain."""
 
+    frozen_manifest = (
+        normalize_master_domain_manifest(cfg.master_domain_manifest)
+        if cfg.master_domain_manifest
+        else None
+    )
     full_cfg = copy.deepcopy(cfg)
-    full_cfg.master_domain_manifest = None
-    full_cfg.master_domain_strict = False
+    full_cfg.master_domain_manifest = (
+        dict(frozen_manifest) if frozen_manifest is not None else None
+    )
+    full_cfg.master_domain_strict = bool(frozen_manifest is not None)
+    full_cfg.master_domain_enforce_warm_start_contract = bool(frozen_manifest is None)
     full_cfg.tra_inner_no_station_wait = False
     full_solver = GlobalXYZUSolver()
     full_compiled = full_solver.compile_model(copy.deepcopy(problem), full_cfg)
-    manifest = normalize_master_domain_manifest(
-        build_master_domain_manifest(
-            full_compiled,
-            canonical_seed=int(canonical_seed),
-            instance_name=instance_name,
+    manifest = (
+        dict(frozen_manifest)
+        if frozen_manifest is not None
+        else normalize_master_domain_manifest(
+            build_master_domain_manifest(
+                full_compiled,
+                canonical_seed=int(canonical_seed),
+                instance_name=instance_name,
+            )
         )
     )
     prepared_domain = prepared_domain_from_manifest(manifest)
@@ -102,7 +117,12 @@ def compile_paper_tra_templates(
     inner_cfg = copy.deepcopy(cfg)
     inner_cfg.master_domain_manifest = dict(manifest)
     inner_cfg.master_domain_strict = True
+    inner_cfg.master_domain_enforce_warm_start_contract = False
     inner_cfg.tra_inner_no_station_wait = True
+    # The formal child shares the full model's manifest/domain but should not
+    # regenerate a separate warm start; large M cases can otherwise produce a
+    # different protected warm fingerprint while retaining the same domain.
+    inner_cfg.enable_warm_start = False
     inner_solver = GlobalXYZUSolver()
     inner_compiled = inner_solver.compile_model(copy.deepcopy(problem), inner_cfg)
     prepared_domain.assert_payload_compatible(inner_compiled.vars_payload)
